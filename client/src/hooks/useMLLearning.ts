@@ -68,8 +68,8 @@ export function useMLLearning(movies: Movie[]) {
   const nextPair = useCallback((): [Movie, Movie] => {
     if (movies.length < 2) {
       return [
-        { id: 'loading1', name: 'Loading...', year: 2024, poster: '', yt: '', isSeries: false, lenShort: 0, tags: [], x: zeros(DIMENSION) },
-        { id: 'loading2', name: 'Loading...', year: 2024, poster: '', yt: '', isSeries: false, lenShort: 0, tags: [], x: zeros(DIMENSION) }
+        { id: 'loading1', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) },
+        { id: 'loading2', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) }
       ];
     }
 
@@ -86,7 +86,7 @@ export function useMLLearning(movies: Movie[]) {
           continue;
         }
 
-        const diff = subtract(A.x, B.x);
+        const diff = subtract(A.features, B.features);
         const margin = Math.abs(dot(state.preferences.w, diff));
         const dist = Math.sqrt(diff.reduce((s, v) => s + v * v, 0));
         const score = dist - Math.min(margin, 1.5);
@@ -114,7 +114,7 @@ export function useMLLearning(movies: Movie[]) {
 
   const learnChoice = useCallback((winner: Movie, loser: Movie) => {
     setState(prev => {
-      const diff = subtract(winner.x, loser.x);
+      const diff = subtract(winner.features, loser.features);
       const p = logistic(dot(prev.preferences.w, diff));
       const gradScale = 1 - p;
       
