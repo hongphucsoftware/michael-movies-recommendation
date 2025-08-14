@@ -32,7 +32,7 @@ function AppEnhanced() {
     skipPair,
     reset: resetML,
     getAdventurousnessLabel
-  } = useMLLearning(movies);
+  } = useMLLearning(movies || []);
 
   // Combined reset function
   const handleReset = () => {
@@ -105,7 +105,7 @@ function AppEnhanced() {
     );
   }
 
-  const watchlistMovies = getWatchlistMovies();
+  const watchlistMovies = getWatchlistMovies() || [];
 
   return (
     <div className="bg-netflix-black text-white min-h-screen">
@@ -130,13 +130,13 @@ function AppEnhanced() {
 
       <main className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
         {/* Onboarding Phase */}
-        {!onboardingComplete && currentPair && (
+        {!onboardingComplete && currentPair && currentPair.length >= 2 && (
           <OnboardingSection
             currentPair={currentPair}
             choices={preferences.choices}
             onSelectPoster={learnChoice}
             onSkipPair={skipPair}
-            adventurousness={preferences.eps}
+            adventurousness={getAdventurousnessLabel()}
             onAdjustAdventurousness={adjustAdventurousness}
             getAdventurousnessLabel={getAdventurousnessLabel}
             totalMovies={movies.length}

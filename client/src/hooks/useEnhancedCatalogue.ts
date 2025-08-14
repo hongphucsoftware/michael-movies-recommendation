@@ -48,8 +48,8 @@ export function useEnhancedCatalogue() {
 
   // Save state to localStorage
   const saveState = useCallback((watchlist: Set<string>, hidden: Set<string>, recent: string[]) => {
-    localStorage.setItem('ts_likes', JSON.stringify([...watchlist]));
-    localStorage.setItem('ts_hidden', JSON.stringify([...hidden]));
+    localStorage.setItem('ts_likes', JSON.stringify(Array.from(watchlist)));
+    localStorage.setItem('ts_hidden', JSON.stringify(Array.from(hidden)));
     localStorage.setItem('ts_recent', JSON.stringify(recent.slice(-60)));
   }, []);
 
@@ -76,7 +76,9 @@ export function useEnhancedCatalogue() {
             catalogueSize: movies.length,
             isLoading: false,
             loadingMessage: `Loaded ${movies.length} titles with trailers`,
-            ...savedState
+            watchlist: savedState.watchlist,
+            hiddenItems: savedState.hiddenItems,
+            recentItems: savedState.recentItems
           }));
         }
       } catch (error) {
