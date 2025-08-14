@@ -86,13 +86,11 @@ export default function OnboardingSection({
         <div className="grid md:grid-cols-2 gap-8 mb-8">
           {/* Left Poster */}
           <div 
-            className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl" 
+            className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-netflix-red/25" 
             onClick={() => onSelectPoster(movieA, movieB)}
             data-testid="poster-left"
           >
             <div className="gradient-border relative overflow-hidden">
-              {/* Hover overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-netflix-red/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
               <div className="p-6 relative">
                 <RobustImage 
                   src={movieA.poster} 
@@ -132,13 +130,11 @@ export default function OnboardingSection({
 
           {/* Right Poster */}
           <div 
-            className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl" 
+            className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-electric-blue/25" 
             onClick={() => onSelectPoster(movieB, movieA)}
             data-testid="poster-right"
           >
             <div className="gradient-border relative overflow-hidden">
-              {/* Hover overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-electric-blue/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
               <div className="p-6 relative">
                 <RobustImage 
                   src={movieB.poster} 
