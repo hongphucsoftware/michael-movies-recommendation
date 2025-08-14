@@ -3,7 +3,7 @@ import { Movie } from "@/types/movie";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Play, ExternalLink } from "lucide-react";
+import { Trash2, ExternalLink } from "lucide-react";
 
 interface EnhancedWatchlistProps {
   watchlistMovies: Movie[];
@@ -47,7 +47,7 @@ export function EnhancedWatchlist({ watchlistMovies, onRemoveFromWatchlist }: En
                   onClick={() => window.open(`https://www.youtube.com/watch?v=${movie.youtube}`, '_blank')}
                   data-testid={`button-watch-${movie.id}`}
                 >
-                  <Play className="w-4 h-4 mr-2" />
+                  <ExternalLink className="w-4 h-4 mr-2" />
                   Watch Trailer
                 </Button>
               </div>

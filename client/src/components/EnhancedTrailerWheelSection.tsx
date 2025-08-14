@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Movie } from "@/types/movie";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Heart, Eye, EyeOff, SkipForward, Play, Shuffle } from "lucide-react";
+import { Heart, Eye, EyeOff, SkipForward, Shuffle } from "lucide-react";
 
 interface EnhancedTrailerWheelProps {
   movies: Movie[];
@@ -224,8 +224,8 @@ export function EnhancedTrailerWheelSection({
           className="bg-electric-blue hover:bg-blue-600 text-white font-semibold px-6 py-3 shadow-lg"
           data-testid="button-next"
         >
-          <Play className="w-5 h-5 mr-2" />
-          Next
+          <SkipForward className="w-5 h-5 mr-2" />
+          Skip
         </Button>
       </div>
 

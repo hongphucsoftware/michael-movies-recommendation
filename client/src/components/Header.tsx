@@ -18,8 +18,13 @@ export default function Header({ choices, onboardingComplete, catalogueSize, wat
             </div>
             <div>
               <h1 className="text-3xl font-bold text-gradient">PickaFlick</h1>
-              <p className="text-electric-blue text-sm font-medium mb-1">Seconds now will save you hours later</p>
-              <p className="text-gray-400 text-xs">Pick posters based on your gut feeling. Our AI learns your taste in real-time and curates the perfect trailer queue for you.</p>
+              <p className="text-electric-blue text-sm font-medium mb-1">Find Your Next Favourite in Minutes</p>
+              <p className="text-gray-400 text-xs">Tired of scrolling endlessly? We've flipped the script.</p>
+              <div className="text-gray-500 text-xs mt-2 space-y-1">
+                <p><span className="text-electric-blue font-medium">Quick Picks</span> – We'll show you pairs of movie posters. Tap the one you'd rather watch.</p>
+                <p><span className="text-electric-blue font-medium">Smart Match</span> – Our system learns your tastes in genres, styles, and vibes — without a single boring form.</p>
+                <p><span className="text-electric-blue font-medium">Trailer Feed</span> – Sit back and watch a hand-picked reel of trailers perfectly matched to you.</p>
+              </div>
               <p className="text-gray-500 text-xs mt-1">
                 {catalogueSize ? `${catalogueSize} titles with trailers` : ''}
                 {watchlistSize ? ` • ${watchlistSize} saved` : ''}

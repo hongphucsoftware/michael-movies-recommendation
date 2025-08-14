@@ -8,7 +8,8 @@ Preferred communication style: Simple, everyday language.
 
 # Recent Changes (August 2025)
 
-- **Branding Update**: Changed from "Trailer Shuffle" to "PickaFlick" with new tagline "Seconds now will save you hours later" and description "Pick posters based on your gut feeling. Our AI learns your taste in real-time and curates the perfect trailer queue for you."
+- **Latest Branding Update**: Updated to new tagline "Find Your Next Favourite in Minutes" with description "Tired of scrolling endlessly? We've flipped the script." Added detailed feature explanations for Quick Picks, Smart Match, and Trailer Feed
+- **UI Enhancement**: Removed all play button logos from trailer interface as requested, using Skip/Save buttons with appropriate icons instead
 - **Authentic Data Integration**: Switched from TMDb "top rated" to real IMDb Top 250 data via movie-monk-b0t repository for authentic classic movies
 - **Duplicate Prevention**: Enhanced ML choice system to prevent repeated poster pairs during onboarding
 - **Button Enhancement**: Improved trailer page button visibility with bright Netflix-themed colors and better contrast
