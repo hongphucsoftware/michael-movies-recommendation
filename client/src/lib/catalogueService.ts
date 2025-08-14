@@ -64,134 +64,64 @@ export class CatalogueService {
     return `https://i.ytimg.com/vi/${ytKey}/sddefault.jpg`;
   }
 
-  // Build massive catalogue from multiple endpoints
+  // Build focused Top 100 movies catalogue
   async buildCatalogue(): Promise<Movie[]> {
-    const buckets = [
-      ["popular", "movie", 1], ["popular", "movie", 2], ["popular", "movie", 3],
-      ["top_rated", "movie", 1], ["top_rated", "movie", 2],
-      ["now_playing", "movie", 1], ["upcoming", "movie", 1],
-      ["popular", "tv", 1], ["popular", "tv", 2], ["popular", "tv", 3],
-      ["top_rated", "tv", 1], ["top_rated", "tv", 2],
-      ["airing_today", "tv", 1], ["on_the_air", "tv", 1]
-    ];
+    const pages = [1, 2, 3, 4, 5]; // 5 × 20 = 100 top movies
+    const out: Movie[] = [];
+    const seen = new Set<string>();
 
-    const allMovies: Movie[] = [];
-    const seenIds = new Set<string>();
-
-    // Fetch from all buckets with small delays
-    for (const [kind, type, page] of buckets) {
+    for (const page of pages) {
       try {
-        const data = await this.list(kind as string, type as string, page as number);
-        
-        for (const item of (data.results || [])) {
-          const id = `${type}_${item.id}`;
-          if (seenIds.has(id)) continue;
-          
-          // Fetch trailer for this title
+        const data = await this.list("top_rated", "movie", page);
+        for (const r of (data.results || [])) {
+          const id = `movie_${r.id}`;
+          if (seen.has(id)) continue;
+
+          // Find a YouTube trailer/teaser
+          let vs;
           try {
-            const videoData = await this.videos(type as string, item.id.toString());
-            const trailer = (videoData.results || []).find((v: any) => 
-              v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
-            );
-            
-            if (!trailer) continue;
-            
-            const poster = this.posterFromYouTube(trailer.key);
-            const name = item.title || item.name || "Untitled";
-            const year = (item.release_date || item.first_air_date || "????").slice(0, 4);
-            const tags: string[] = [];
-            
-            if (type === "tv") tags.push("Series");
-            (item.genre_ids || []).slice(0, 3).forEach((genreId: number) => {
-              tags.push(this.getGenreLabel(genreId));
-            });
-
-            const movie: Movie = {
-              id,
-              name,
-              year,
-              poster,
-              youtube: trailer.key,
-              isSeries: type === "tv",
-              tags,
-              features: this.generateFeatureVector(item.genre_ids || [], type as string)
-            };
-
-            allMovies.push(movie);
-            seenIds.add(id);
-          } catch (videoError) {
-            // Skip if no trailer available
-            continue;
+            vs = await this.videos("movie", r.id);
+          } catch {
+            vs = { results: [] };
           }
-        }
-        
-        // Small delay to avoid overwhelming the API
-        await new Promise(resolve => setTimeout(resolve, 50));
-      } catch (error) {
-        console.error(`Error fetching ${kind} ${type} page ${page}:`, error);
-        continue;
-      }
-    }
-
-    // Also include trending
-    try {
-      const trendingMovies = await this.trending("movie");
-      const trendingTV = await this.trending("tv");
-      
-      for (const item of [...(trendingMovies.results || []), ...(trendingTV.results || [])]) {
-        const type = item.media_type || (item.title ? "movie" : "tv");
-        const id = `${type}_${item.id}`;
-        if (seenIds.has(id)) continue;
-        
-        try {
-          const videoData = await this.videos(type, item.id.toString());
-          const trailer = (videoData.results || []).find((v: any) => 
-            v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
+          
+          const v = (vs.results || []).find((x: any) => 
+            x.site === "YouTube" && (x.type === "Trailer" || x.type === "Teaser")
           );
-          
-          if (!trailer) continue;
-          
-          const poster = this.posterFromYouTube(trailer.key);
-          const name = item.title || item.name || "Untitled";
-          const year = (item.release_date || item.first_air_date || "????").slice(0, 4);
-          const tags: string[] = [];
-          
-          if (type === "tv") tags.push("Series");
-          (item.genre_ids || []).slice(0, 3).forEach((genreId: number) => {
-            tags.push(this.getGenreLabel(genreId));
-          });
+          if (!v) continue;
 
-          const movie: Movie = {
+          // Reliable poster: YouTube thumbnail
+          const poster = this.posterFromYouTube(v.key);
+          if (!poster) continue;
+
+          const name = r.title || "Untitled";
+          const year = (r.release_date || "????").slice(0, 4);
+          const tags: string[] = [];
+          (r.genre_ids || []).slice(0, 3).forEach((gid: number) => tags.push(this.getGenreLabel(gid)));
+
+          out.push({
             id,
             name,
             year,
             poster,
-            youtube: trailer.key,
-            isSeries: type === "tv",
+            youtube: v.key,
+            isSeries: false,
             tags,
-            features: this.generateFeatureVector(item.genre_ids || [], type)
-          };
+            features: this.generateFeatureVector(r.genre_ids || [], "movie")
+          });
 
-          allMovies.push(movie);
-          seenIds.add(id);
-        } catch (videoError) {
-          continue;
+          seen.add(id);
         }
+        // Short delay to be nice to the API
+        await new Promise(res => setTimeout(res, 25));
+      } catch (error) {
+        console.warn(`Failed to fetch page ${page}:`, error);
+        continue;
       }
-    } catch (error) {
-      console.error("Error fetching trending:", error);
     }
 
-    // Sort and shuffle for variety
-    allMovies.sort((a, b) => a.name.localeCompare(b.name) || a.year.localeCompare(b.year));
-    
-    // Fisher-Yates shuffle
-    for (let i = allMovies.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [allMovies[i], allMovies[j]] = [allMovies[j], allMovies[i]];
-    }
-
-    return allMovies.slice(0, 250); // Cap at 250 for performance
+    // Return top 100 movies in TMDb ranking order
+    return out.slice(0, 100);
   }
 }
 

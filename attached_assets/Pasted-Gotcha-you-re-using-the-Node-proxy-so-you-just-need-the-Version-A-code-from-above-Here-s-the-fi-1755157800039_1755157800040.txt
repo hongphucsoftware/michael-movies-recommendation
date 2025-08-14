@@ -1,0 +1,63 @@
+Gotcha — you’re using the Node proxy, so you just need the Version A code from above.
+
+Here’s the final drop-in for your buildCatalogue() that will make your movie list the Top 100 movies of all time from TMDb’s top_rated list (pages 1–5), using your proxy routes and keeping your existing app logic intact.
+
+/* ---- helper (near your other API helpers if not already present) ---- */
+async function list(kind, type, page = 1) {
+  const r = await fetch(`/api/list/${kind}/${type}/${page}`);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+/* ---- REPLACE your buildCatalogue() with this ---- */
+async function buildCatalogue() {
+  const pages = [1, 2, 3, 4, 5]; // 5 × 20 = 100
+  const out = [];
+  const seen = new Set();
+
+  for (const page of pages) {
+    const data = await list("top_rated", "movie", page);
+    for (const r of (data.results || [])) {
+      const id = `movie_${r.id}`;
+      if (seen.has(id)) continue;
+
+      // Find a YouTube trailer/teaser
+      const vs = await videos("movie", r.id).catch(() => ({ results: [] }));
+      const v = (vs.results || []).find(
+        x => x.site === "YouTube" && (x.type === "Trailer" || x.type === "Teaser")
+      );
+      if (!v) continue;
+
+      // Reliable poster: YouTube thumbnail
+      const poster = `https://i.ytimg.com/vi/${v.key}/sddefault.jpg`;
+      // If you want TMDb posters instead, swap for:
+      // const poster = r.poster_path ? `/img/t/p/w500${r.poster_path}` :
+      //                r.backdrop_path ? `/img/t/p/w500${r.backdrop_path}` : null;
+      if (!poster) continue;
+
+      const name = r.title || "Untitled";
+      const year = (r.release_date || "????").slice(0, 4);
+      const tags = [];
+      (r.genre_ids || []).slice(0, 3).forEach(gid => tags.push(genreLabel(gid)));
+
+      out.push({
+        id,
+        name,
+        year,
+        poster,
+        yt: v.key,
+        isSeries: false,
+        lenShort: 0,
+        tags,
+        x: fVec(r.genre_ids || [], "movie")
+      });
+
+      seen.add(id);
+    }
+    // short delay to be nice to the API
+    await new Promise(res => setTimeout(res, 25));
+  }
+
+  // Preserve TMDb ranking order (top rated)
+  return out.slice(0, 100);
+}
