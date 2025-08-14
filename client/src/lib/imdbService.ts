@@ -106,7 +106,7 @@ export class IMDbService {
 
       // For each IMDb ID, map to TMDb movie, then get a trailer, then build entry
       for (const row of items) {
-        const { imdbId, title: fallbackName, year: fallbackYear } = row;
+        const { imdbId, title: fallbackName, year: fallbackYear, rank } = row;
 
         // Map to TMDb
         const tmdbMovie = await this.mapImdbToTmdb(imdbId);
@@ -123,8 +123,9 @@ export class IMDbService {
         // Poster: use YouTube thumb (rock-solid)
         const poster = this.posterFromYouTube(youtubeKey);
 
-        const name = tmdbMovie.title || fallbackName || "Untitled";
-        const year = (tmdbMovie.release_date || fallbackYear || "????").slice(0, 4);
+        // Use TMDb title as primary source since it's more reliable than HTML parsing
+        const name = tmdbMovie.title || tmdbMovie.original_title || fallbackName || "Classic Movie";
+        const year = (tmdbMovie.release_date || fallbackYear || "0000").slice(0, 4);
         const genreIds = Array.isArray(tmdbMovie.genre_ids) ? tmdbMovie.genre_ids : [];
 
         const tags: string[] = [];
@@ -138,7 +139,8 @@ export class IMDbService {
           youtube: youtubeKey,
           isSeries: false,
           tags,
-          features: this.generateFeatureVector(genreIds)
+          features: this.generateFeatureVector(genreIds),
+          imdbRank: rank // Preserve IMDb ranking for authentic ordering
         };
 
         out.push(movie);

@@ -9,6 +9,7 @@ export interface Movie {
   features: number[]; // 12-dimensional feature vector
   rating?: number;
   duration?: string;
+  imdbRank?: number; // Authentic IMDb Top 250 ranking
 }
 
 export interface UserPreferences {

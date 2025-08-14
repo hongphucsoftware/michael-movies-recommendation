@@ -28,20 +28,20 @@ export function useEnhancedCatalogue() {
   // Load saved state from localStorage
   const loadSavedState = useCallback(() => {
     try {
-      const watchlist = JSON.parse(localStorage.getItem('ts_likes') || '[]');
-      const hidden = JSON.parse(localStorage.getItem('ts_hidden') || '[]');
-      const recent = JSON.parse(localStorage.getItem('ts_recent') || '[]');
+      const watchlist = JSON.parse(localStorage.getItem('ts_likes') || '[]') as string[];
+      const hidden = JSON.parse(localStorage.getItem('ts_hidden') || '[]') as string[];
+      const recent = JSON.parse(localStorage.getItem('ts_recent') || '[]') as string[];
       
       return {
-        watchlist: new Set(watchlist),
-        hiddenItems: new Set(hidden),
+        watchlist: new Set<string>(watchlist),
+        hiddenItems: new Set<string>(hidden),
         recentItems: recent.slice(-60) // Keep last 60
       };
     } catch {
       return {
         watchlist: new Set<string>(),
         hiddenItems: new Set<string>(),
-        recentItems: []
+        recentItems: [] as string[]
       };
     }
   }, []);
@@ -78,7 +78,8 @@ export function useEnhancedCatalogue() {
             loadingMessage: `Loaded ${movies.length} titles with trailers`,
             watchlist: savedState.watchlist,
             hiddenItems: savedState.hiddenItems,
-            recentItems: savedState.recentItems
+            recentItems: [...savedState.recentItems],
+            error: null
           }));
         }
       } catch (error) {
