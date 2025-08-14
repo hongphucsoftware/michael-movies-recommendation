@@ -92,12 +92,12 @@ export default function OnboardingSection({
           >
             <div className="gradient-border relative overflow-hidden">
               {/* Hover overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-netflix-red/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
+              <div className="absolute inset-0 bg-gradient-to-t from-netflix-red/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
               <div className="p-6 relative">
                 <RobustImage 
                   src={movieA.poster} 
                   alt={`${movieA.name} poster`} 
-                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-110"
+                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
 
                 />
                 
@@ -138,12 +138,12 @@ export default function OnboardingSection({
           >
             <div className="gradient-border relative overflow-hidden">
               {/* Hover overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-electric-blue/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
+              <div className="absolute inset-0 bg-gradient-to-t from-electric-blue/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
               <div className="p-6 relative">
                 <RobustImage 
                   src={movieB.poster} 
                   alt={`${movieB.name} poster`} 
-                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-110"
+                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
 
                 />
                 
