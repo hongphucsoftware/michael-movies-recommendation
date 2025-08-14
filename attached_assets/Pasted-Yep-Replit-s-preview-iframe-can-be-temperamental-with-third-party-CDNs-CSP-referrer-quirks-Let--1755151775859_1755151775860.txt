@@ -1,0 +1,337 @@
+Yep — Replit’s preview iframe can be temperamental with third-party CDNs (CSP/referrer quirks). Let’s ship two working fixes you can paste straight in:
+
+Option A — Quick fix (no server)
+
+Uses a free image proxy (weserv) to fetch TMDb posters. It keeps your HTML/CSS/JS repl and usually dodges the Replit preview issues.
+
+What to do: replace your whole index.html with this version (identical logic, but with a tiny change in how poster URLs are built).
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Trailer Shuffle — TMDb (Proxy Posters)</title>
+<style>
+  :root { --bg:#0b0e11; --card:#151a21; --ink:#e9eef5; --muted:#9fb0c3; --acc:#7c8cff; --line:#1f2733; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px; }
+  h1,h2 { margin:8px 0 16px; }
+  .pill { display:inline-block; background:#1e2631; color:var(--muted); padding:6px 10px; border-radius:999px; font-size:12px; letter-spacing:.3px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+  .grid { display:grid; gap:16px; }
+  .two { grid-template-columns:1fr 1fr; }
+  .poster { border-radius:12px; overflow:hidden; cursor:pointer; border:2px solid transparent; transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+  .poster:hover { transform: translateY(-2px); border-color: var(--acc); box-shadow: 0 6px 24px rgba(124,140,255,0.14); }
+  .poster img { width:100%; display:block; height:480px; object-fit:cover; background:#0d1117; }
+  .meta { padding:8px 6px 0; font-size:14px; color:var(--muted); display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .row { display:flex; gap:12px; align-items:center; }
+  .row.spread { justify-content:space-between; }
+  .btn { background:var(--acc); color:#0a0f14; border:none; padding:12px 16px; border-radius:12px; font-weight:700; cursor:pointer; }
+  .btn.small { padding:8px 12px; font-weight:600; }
+  .btn.ghost { background:#1e2631; color:#e9eef5; }
+  .stack { display:flex; gap:12px; flex-wrap:wrap; }
+  .bar { height:8px; background:#1e2631; border-radius:999px; overflow:hidden; }
+  .bar > div { height:100%; width:0%; background:var(--acc); }
+  iframe { width:100%; aspect-ratio:16/9; border:0; border-radius:12px; background:#000; }
+  .hidden { display:none !important; }
+  .watchlist-item { font-size:14px; color:#9fb0c3; padding:8px 0; border-bottom:1px dashed #243142; display:flex; justify-content:space-between; align-items:center; }
+  .tiny { font-size:12px; color:#95a7bb; }
+  .tag { background:#202a39; color:#b8c6d8; font-size:11px; padding:4px 8px; border-radius:999px; }
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; background:#10151c; padding:2px 6px; border-radius:6px; border:1px solid #243142; color:#cbd6e2; }
+  .loader { display:inline-block; width:16px; height:16px; border:3px solid #2b3442; border-top-color: var(--acc); border-radius:50%; animation:spin .9s linear infinite; vertical-align:middle; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎬 Trailer Shuffle</h1>
+  <div class="tiny">Live posters & trailers via TMDb. Using a proxy for images to avoid Replit preview quirks.</div>
+
+  <section id="loading" class="card">
+    <div class="row"><span class="loader"></span><span>&nbsp;Loading trending titles & trailers…</span></div>
+    <div class="tiny" id="loadMsg" style="margin-top:8px;">Fetching from TMDb…</div>
+  </section>
+
+  <section id="onboarding" class="card hidden">
+    <div class="row spread" style="margin-bottom:10px;">
+      <h2>Which would you rather watch?</h2>
+      <div class="stack">
+        <span class="pill" id="progressLabel">0 / 12</span>
+        <span class="pill" id="adventLabel">Adventurous: Balanced</span>
+      </div>
+    </div>
+    <div class="bar"><div id="progressBar"></div></div>
+    <div class="grid two" style="margin-top:16px;" id="pairGrid"></div>
+    <div class="row spread" style="margin-top:12px;">
+      <span class="tiny">Go with your gut — we learn tone/pace/genre from fast choices.</span>
+      <div class="stack">
+        <button class="btn ghost small" id="lessWild">− Less Wild</button>
+        <button class="btn ghost small" id="moreWild">+ More Wild</button>
+        <button class="btn ghost small" id="skipBtn">Skip pair</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="shuffle" class="card hidden">
+    <div class="row spread">
+      <h2>Your trailer wheel</h2>
+      <div class="stack">
+        <button class="btn ghost small" id="surpriseBtn">Surprise me</button>
+        <button class="btn ghost small" id="resetBtn">Reset</button>
+      </div>
+    </div>
+    <div style="margin-top:12px;">
+      <iframe id="yt" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      <div class="row spread" style="margin-top:10px;">
+        <div>
+          <div id="titleLine" style="font-weight:800;"></div>
+          <div id="subLine" class="tiny"></div>
+          <div id="tags" class="stack" style="margin-top:6px;"></div>
+        </div>
+        <div class="stack">
+          <button class="btn ghost" id="dislikeBtn">👎</button>
+          <button class="btn" id="likeBtn">👍 Add</button>
+          <button class="btn ghost" id="nextBtn">Next ▶</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="watchlist" class="card hidden" style="margin-top:16px;">
+    <div class="row spread">
+      <h2>Watchlist</h2>
+      <div class="tiny">Tip: use <span class="kbd">▶</span> to keep exploring.</div>
+    </div>
+    <div id="watchlistList"></div>
+  </section>
+</div>
+
+<script>
+const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
+const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
+const PROXY = "https://images.weserv.nl/?url="; // public image proxy
+const POSTER_SIZE = "w500";
+
+const loadEl = document.getElementById('loading');
+const loadMsg = document.getElementById('loadMsg');
+const onboardingEl = document.getElementById('onboarding');
+
+async function fetchJSON(u){ const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); }
+async function fetchTrending(t){ return fetchJSON(`https://api.themoviedb.org/3/trending/${t}/week?api_key=${TMDB_KEY}&language=en-US`); }
+async function fetchVideos(t,id){ return fetchJSON(`https://api.themoviedb.org/3/${t}/${id}/videos?api_key=${TMDB_KEY}&language=en-US`); }
+
+function toProxy(url){
+  // Strip https:// for proxy requirement (it expects a host-only url)
+  const stripped = url.replace(/^https?:\/\//,'');
+  return `${PROXY}${encodeURIComponent(stripped)}&n=-1`; // n=-1 = no cache limit
+}
+function posterUrl(pathOrNull, backdrop){
+  const p = pathOrNull || backdrop;
+  if(!p) return null;
+  const raw = `${TMDB_IMG_BASE}/${POSTER_SIZE}${p}`;
+  return toProxy(raw);
+}
+
+const GENRE={Comedy:35, Drama:18, Action:28, Thriller:53, SciFi:878, Fantasy:14, Documentary:99, Animation:16, Horror:27, Crime:80, Adventure:12, Family:10751, Romance:10749, Mystery:9648};
+function featureFromGenres(genre_ids, mediaType){
+  const g=id=>genre_ids.includes(id)?1:0;
+  const comedy=g(GENRE.Comedy), drama=g(GENRE.Drama), action=g(GENRE.Action);
+  const thriller=g(GENRE.Thriller)||g(GENRE.Mystery)||g(GENRE.Crime);
+  const scifi=g(GENRE.SciFi), fantasy=g(GENRE.Fantasy)||g(GENRE.Animation), doc=g(GENRE.Documentary);
+  const light=Math.min(1, comedy*.8+fantasy*.4+g(GENRE.Family)*.6+g(GENRE.Romance)*.4);
+  const dark=Math.min(1, thriller*.6+drama*.4+g(GENRE.Horror)*.8+g(GENRE.Crime)*.5);
+  const fast=Math.min(1, action*.8+thriller*.6+scifi*.4+fantasy*.3);
+  const slow=Math.min(1, drama*.6+doc*.4);
+  const short=(mediaType==="tv" && comedy)?1:0;
+  return [comedy,drama,action,thriller,scifi,fantasy,doc, light,dark,fast,slow,short];
+}
+function genreLabel(id){
+  for(const [k,v] of Object.entries(GENRE)) if(v===id) return k.replace("SciFi","Sci-Fi");
+  return "Genre";
+}
+
+async function buildCatalogue(){
+  loadMsg.textContent="Fetching trending movies…";
+  const movies=await fetchTrending("movie");
+  loadMsg.textContent="Fetching trending TV…";
+  const tv=await fetchTrending("tv");
+  const combined=[...(movies.results||[]),...(tv.results||[])]
+    .filter(Boolean).sort((a,b)=>(b.popularity||0)-(a.popularity||0)).slice(0,36);
+
+  loadMsg.textContent="Getting posters & trailers…";
+  const out=[];
+  for(const r of combined){
+    const mediaType = r.media_type || (r.title ? "movie" : "tv");
+    const poster = posterUrl(r.poster_path, r.backdrop_path);
+    if(!poster) continue;
+    const vids = await fetchVideos(mediaType, r.id).catch(()=>({results:[]}));
+    const v = (vids.results||[]).find(x=>x.site==="YouTube" && (x.type==="Trailer"||x.type==="Teaser"));
+    if(!v) continue;
+    const name=r.title||r.name||"Untitled";
+    const year=(r.release_date||r.first_air_date||"????").slice(0,4);
+    const tags=[]; if(mediaType==="tv") tags.push("Series");
+    (r.genre_ids||[]).slice(0,3).forEach(id=>tags.push(genreLabel(id)));
+    out.push({ id:`${mediaType}_${r.id}`, name, year, poster, yt:v.key, isSeries:mediaType==="tv", lenShort:(mediaType==="tv"&&(r.genre_ids||[]).includes(GENRE.Comedy))?1:0, tags, x:featureFromGenres(r.genre_ids||[],mediaType) });
+    await new Promise(r=>setTimeout(r,40));
+  }
+  return out;
+}
+
+/* ---------- Learning + UI (same as before) ---------- */
+let items=[]; const D=12, LR=.6, NEED=12, EPS0=.12;
+const state={ w:Array(D).fill(0), explored:new Set(), hidden:new Set(), likes:new Set(), choices:0, eps:EPS0, queue:[] };
+const LS=localStorage;
+(function loadState(){ try{
+  const p=k=>JSON.parse(LS.getItem(k)||"null");
+  const w=p('ts_w'); if(w&&w.length===D) state.w=w;
+  state.explored=new Set(p('ts_seen')||[]);
+  state.hidden=new Set(p('ts_hidden')||[]);
+  state.likes=new Set(p('ts_likes')||[]);
+  state.choices=p('ts_choices')||0;
+  state.eps=Number(LS.getItem('ts_eps')||EPS0);
+}catch{} })();
+function save(){ LS.setItem('ts_w',JSON.stringify(state.w)); LS.setItem('ts_seen',JSON.stringify([...state.explored])); LS.setItem('ts_hidden',JSON.stringify([...state.hidden])); LS.setItem('ts_likes',JSON.stringify([...state.likes])); LS.setItem('ts_choices',JSON.stringify(state.choices)); LS.setItem('ts_eps',String(state.eps)); }
+const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0), sub=(a,b)=>a.map((v,i)=>v-b[i]), sig=z=>1/(1+Math.abs(Math.E**(-z)));
+function nextPair(){ const pool=shuffle(items.filter(it=>!state.hidden.has(it.id))); let best=null,bS=-1;
+  for(let i=0;i<12 && i<pool.length-1;i++){ for(let j=i+1;j<pool.length && j<i+8;j++){
+    const A=pool[i],B=pool[j]; const d=sub(A.x,B.x); const m=Math.abs(dot(state.w,d)); const dist=Math.hypot(...d); const s=dist-Math.min(m,1.5); if(s>bS){bS=s; best=[A,B];}
+  }} return best||[items[0],items[1]]; }
+function learn(A,B){ const d=sub(A.x,B.x); const p=sig(dot(state.w,d)); const g=(1-p)*LR; for(let i=0;i<D;i++) state.w[i]+=g*d[i]; state.choices++; state.explored.add(A.id); state.explored.add(B.id); save(); }
+function baseS(it){ return sig(dot(state.w,it.x)); }
+function nov(it){ return (state.explored.has(it.id)?0:.08) + (it.isSeries&&it.lenShort? .05:0); }
+function rank(){ const cand=items.filter(it=>!state.hidden.has(it.id)); const s=cand.map(it=>({it, s:baseS(it)+nov(it)})).sort((a,b)=>b.s-a.s);
+  if(Math.random()<state.eps && s.length>6){ const k=3+Math.floor(Math.random()*Math.min(12,s.length-1)); [s[0],s[k]]=[s[k],s[0]]; }
+  state.queue=s.map(z=>z.it);
+}
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+const pairGrid=document.getElementById('pairGrid'), progressBar=document.getElementById('progressBar'), progressLabel=document.getElementById('progressLabel'), skipBtn=document.getElementById('skipBtn'), lessWild=document.getElementById('lessWild'), moreWild=document.getElementById('moreWild'), adventLabel=document.getElementById('adventLabel');
+const shuffleEl=document.getElementById('shuffle'), yt=document.getElementById('yt'), titleLine=document.getElementById('titleLine'), subLine=document.getElementById('subLine'), tagsEl=document.getElementById('tags'), likeBtn=document.getElementById('likeBtn'), dislikeBtn=document.getElementById('dislikeBtn'), nextBtn=document.getElementById('nextBtn'), surpriseBtn=document.getElementById('surpriseBtn'), resetBtn=document.getElementById('resetBtn');
+const watchlistEl=document.getElementById('watchlist'), watchlistList=document.getElementById('watchlistList');
+
+function setProgress(){ const pct=Math.min(100,Math.round(100*state.choices/NEED)); progressBar.style.width=pct+"%"; progressLabel.textContent=`${Math.min(state.choices,NEED)} / ${NEED}`; }
+function wildLabel(){ return state.eps<=.06?"Adventurous: Tame": state.eps<=.16?"Adventurous: Balanced":"Adventurous: Wild"; }
+function renderPair(){ setProgress(); adventLabel.textContent=wildLabel(); pairGrid.innerHTML="";
+  const [A,B]=nextPair();
+  [A,B].forEach((it,idx)=>{ const d=document.createElement('div'); d.className="poster";
+    d.innerHTML=`<img src="${it.poster}" alt="${it.name} poster" loading="lazy" decoding="async"/><div class="meta"><strong>${it.name}</strong><span class="tiny">(${it.year})</span></div>`;
+    d.querySelector("img").addEventListener("error",()=>{ state.hidden.add(it.id); save(); renderPair(); });
+    d.onclick=()=>{ const win=it, lose=(idx===0)?B:A; learn(win,lose);
+      if(state.choices>=NEED){ onboardingEl.classList.add('hidden'); shuffleEl.classList.remove('hidden'); watchlistEl.classList.remove('hidden'); startShuffle(); } else { renderPair(); }
+    };
+    pairGrid.appendChild(d);
+  });
+}
+skipBtn.onclick=()=>{ state.choices=Math.max(0,state.choices-1); renderPair(); };
+lessWild.onclick=()=>{ state.eps=Math.max(.02,state.eps-.05); save(); renderPair(); };
+moreWild.onclick=()=>{ state.eps=Math.min(.35,state.eps+.05); save(); renderPair(); };
+
+function startShuffle(){ rank(); showTop(); }
+function showTop(){ if(state.queue.length===0) rank(); const it=state.queue[0]; if(!it){ titleLine.textContent="No items"; return; }
+  yt.src=`https://www.youtube.com/embed/${it.yt}?autoplay=1&rel=0`; titleLine.textContent=it.name; subLine.textContent=`${it.isSeries?"Series":"Film"} · ${it.year}`; tagsEl.innerHTML=""; (it.tags||[]).forEach(t=>{ const s=document.createElement('span'); s.className="tag"; s.textContent=t; tagsEl.appendChild(s);});
+}
+function popNext(hide=false){ const it=state.queue.shift(); if(it){ state.explored.add(it.id); if(hide) state.hidden.add(it.id); save(); } showTop(); }
+likeBtn.onclick=()=>{ const it=state.queue[0]; if(it){ state.likes.add(it.id); save(); renderWatchlist(); } popNext(false); };
+dislikeBtn.onclick=()=>popNext(true);
+nextBtn.onclick=()=>popNext(false);
+surpriseBtn.onclick=()=>{ const prev=state.eps; state.eps=Math.min(.45,state.eps+.10); rank(); showTop(); setTimeout(()=>{ state.eps=prev; },800); };
+resetBtn.onclick=()=>{ if(!confirm("Reset your learning and watchlist?")) return; state.w=Array(D).fill(0); state.explored=new Set(); state.hidden=new Set(); state.likes=new Set(); state.choices=0; state.eps=EPS0; save(); shuffleEl.classList.add('hidden'); watchlistEl.classList.add('hidden'); onboardingEl.classList.remove('hidden'); renderPair(); };
+
+function renderWatchlist(){ watchlistList.innerHTML=""; items.filter(it=>state.likes.has(it.id)).forEach(it=>{ const row=document.createElement('div'); row.className="watchlist-item"; row.innerHTML=`<div>👍 <strong>${it.name}</strong> <span class="tiny">(${it.isSeries?"Series":"Film"}, ${it.year})</span></div><button class="btn ghost small" data-id="${it.id}">Remove</button>`; row.querySelector("button").onclick=(e)=>{ state.likes.delete(it.id); save(); renderWatchlist(); }; watchlistList.appendChild(row); }); }
+
+(async function init(){
+  try{
+    const movies=await fetchTrending("movie"), tv=await fetchTrending("tv");
+    const list=[...(movies.results||[]),...(tv.results||[])]
+      .filter(Boolean).sort((a,b)=>(b.popularity||0)-(a.popularity||0)).slice(0,36);
+    const out=[];
+    for(const r of list){
+      const mediaType=r.media_type || (r.title?"movie":"tv");
+      const poster=posterUrl(r.poster_path,r.backdrop_path); if(!poster) continue;
+      const vids=await fetchVideos(mediaType,r.id).catch(()=>({results:[]}));
+      const v=(vids.results||[]).find(x=>x.site==="YouTube"&&(x.type==="Trailer"||x.type==="Teaser")); if(!v) continue;
+      const name=r.title||r.name||"Untitled"; const year=(r.release_date||r.first_air_date||"????").slice(0,4);
+      const tags=[]; if(mediaType==="tv") tags.push("Series"); (r.genre_ids||[]).slice(0,3).forEach(id=>tags.push(genreLabel(id)));
+      out.push({ id:`${mediaType}_${r.id}`, name, year, poster, yt:v.key, isSeries:mediaType==="tv", lenShort:(mediaType==="tv"&&(r.genre_ids||[]).includes(GENRE.Comedy))?1:0, tags, x:featureFromGenres(r.genre_ids||[],mediaType) });
+      await new Promise(r=>setTimeout(r,30));
+    }
+    items=out;
+    loadEl.classList.add('hidden'); onboardingEl.classList.remove('hidden');
+    if(state.choices>=NEED){ onboardingEl.classList.add('hidden'); document.getElementById('shuffle').classList.remove('hidden'); document.getElementById('watchlist').classList.remove('hidden'); startShuffle(); renderWatchlist(); }
+    else { renderPair(); }
+  }catch(e){ loadMsg.textContent="Error loading TMDb data (key/network). Refresh and try again."; console.error(e); }
+})();
+</script>
+</body>
+</html>
+
+
+If that fixes it, you’re done. If you want the most reliable setup (and better for production), use a tiny proxy.
+
+Option B — Robust fix (Node proxy inside Replit)
+
+This rehosts poster images through your domain, which avoids iframe/CSP blockers entirely.
+
+Steps (copy–paste):
+
+Create a Node.js repl (instead of HTML).
+
+Add these three files.
+
+package.json
+
+{
+  "name": "trailer-shuffle-proxy",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "module",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2",
+    "cors": "^2.8.5"
+  }
+}
+
+
+server.js
+
+import express from "express";
+import fetch from "node-fetch";
+import cors from "cors";
+
+const app = express();
+app.use(cors());
+app.use(express.static("public")); // serves index.html
+
+// simple proxy: /img/<path> where <path> starts with t/p/...
+app.get("/img/*", async (req, res) => {
+  try {
+    const upstream = "https://image.tmdb.org/" + req.params[0]; // e.g., t/p/w500/abcd.jpg
+    const r = await fetch(upstream, { redirect: "follow" });
+    if (!r.ok) return res.status(r.status).send("Upstream error");
+    // Pass through content-type and cache headers
+    res.set("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    res.set("Cache-Control", "public, max-age=86400");
+    r.body.pipe(res);
+  } catch (e) {
+    res.status(502).send("Proxy error");
+  }
+});
+
+app.listen(3000, () => console.log("Server running on http://localhost:3000"));
+
+
+public/index.html
+Paste your existing app here, and make one small change in the poster URL builder:
+
+// BEFORE (direct TMDb CDN):
+// const url = `https://image.tmdb.org/t/p/w500${poster_path}`;
+
+// AFTER (proxy through your repl):
+const url = `/img/t/p/w500${poster_path}`;
+
+
+Run the repl → open the webview link → posters should load consistently.

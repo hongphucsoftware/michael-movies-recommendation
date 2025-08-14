@@ -2,7 +2,8 @@ import { Movie } from "@/types/movie";
 
 const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
 const TMDB_IMG = "https://image.tmdb.org/t/p";
-const POSTER_SIZES = ["w500", "w342", "w780", "original"]; // try multiple sizes for reliability
+const POSTER_SIZE = "w500";
+const PROXY = "https://images.weserv.nl/?url="; // public image proxy to bypass Replit CORS issues
 const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
   `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='900'>
      <rect width='100%' height='100%' fill='#0f141b'/>
@@ -63,46 +64,25 @@ async function fetchVideos(mediaType: 'movie' | 'tv', id: number) {
   return fetchJSON(url);
 }
 
-// Robust poster resolution with fallback and preflight test
-async function resolvePosterPath(poster_path: string | null, backdrop_path: string | null): Promise<string | null> {
+// Convert URL to use proxy service (bypasses Replit CORS restrictions)
+function toProxy(url: string): string {
+  // Strip https:// for proxy requirement (it expects a host-only url)
+  const stripped = url.replace(/^https?:\/\//, '');
+  return `${PROXY}${encodeURIComponent(stripped)}&n=-1`; // n=-1 = no cache limit
+}
+
+// Generate poster URL using proxy to bypass Replit restrictions
+function buildPosterUrl(poster_path: string | null, backdrop_path: string | null): string {
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
-  // Try the primary poster URL first without checking (checking might be causing CORS issues)
-  const primaryUrl = `${TMDB_IMG}/w500${basePath}`;
-  console.log(`Trying poster URL: ${primaryUrl}`);
-  return primaryUrl;
-  
-  // Commenting out the checking for now to see if CORS is the issue
-  /*
-  for (const size of POSTER_SIZES) {
-    const url = `${TMDB_IMG}/${size}${basePath}`;
-    const isValid = await quickImgCheck(url);
-    if (isValid) return url;
-  }
-  return PLACEHOLDER;
-  */
+  const rawUrl = `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
+  const proxiedUrl = toProxy(rawUrl);
+  console.log(`Using proxied poster URL: ${proxiedUrl}`);
+  return proxiedUrl;
 }
 
-function quickImgCheck(url: string): Promise<boolean> {
-  // Using <img> load events is more reliable than HEAD on many CDNs
-  return new Promise(resolve => {
-    const img = new Image();
-    img.referrerPolicy = "no-referrer";
-    img.loading = "eager";
-    img.decoding = "async";
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      console.log(`✓ Image loaded successfully: ${url}`);
-      resolve(true);
-    };
-    img.onerror = () => {
-      console.log(`✗ Image failed to load: ${url}`);
-      resolve(false);
-    };
-    img.src = url;
-  });
-}
+// Removed quickImgCheck function since we're using proxy URLs
 
 function featureFromGenres(genre_ids: number[], mediaType: string): number[] {
   const g = (id: number) => genre_ids.includes(id) ? 1 : 0;
@@ -176,9 +156,9 @@ export async function buildCatalogue(onProgress?: (message: string, stats?: { ok
     for (const r of combined) {
       const mediaType = r.media_type || (r.title ? "movie" : "tv");
       
-      // Robust poster resolution with fallback checks
-      const posterUrl = await resolvePosterPath(r.poster_path, r.backdrop_path);
-      imgOk++; // Count as success since we're not pre-checking
+      // Generate proxied poster URL to bypass Replit CORS restrictions
+      const posterUrl = buildPosterUrl(r.poster_path, r.backdrop_path);
+      imgOk++; // Count as success
       onProgress?.(`Processing trailers...`, { ok: imgOk, failed: imgFail });
 
       try {
