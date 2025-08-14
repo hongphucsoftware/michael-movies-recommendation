@@ -53,7 +53,7 @@ export function useEnhancedCatalogue() {
     localStorage.setItem('ts_recent', JSON.stringify(recent.slice(-60)));
   }, []);
 
-  // Load massive catalogue
+  // Load catalogue with smart caching and progressive loading
   useEffect(() => {
     let isMounted = true;
 
@@ -63,10 +63,12 @@ export function useEnhancedCatalogue() {
           ...prev, 
           isLoading: true, 
           error: null, 
-          loadingMessage: "Building large catalogue..." 
+          loadingMessage: "Loading authentic IMDb Top 100..." 
         }));
 
         const savedState = loadSavedState();
+        
+        // This will return quickly (either from cache or first 15 movies)
         const movies = await imdbService.buildCatalogue();
 
         if (isMounted) {
@@ -75,7 +77,7 @@ export function useEnhancedCatalogue() {
             movies,
             catalogueSize: movies.length,
             isLoading: false,
-            loadingMessage: `Loaded ${movies.length} titles with trailers`,
+            loadingMessage: `Ready! ${movies.length} movies loaded`,
             watchlist: savedState.watchlist,
             hiddenItems: savedState.hiddenItems,
             recentItems: [...savedState.recentItems],
@@ -86,7 +88,7 @@ export function useEnhancedCatalogue() {
         if (isMounted) {
           setState(prev => ({
             ...prev,
-            error: "Failed to build catalogue. Please check your connection.",
+            error: "Failed to load catalogue. Please check your connection.",
             isLoading: false
           }));
         }

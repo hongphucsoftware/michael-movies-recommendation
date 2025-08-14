@@ -98,14 +98,56 @@ export class IMDbService {
   // Build Top 100 IMDb movies catalogue using server endpoints
   async buildCatalogue(): Promise<Movie[]> {
     try {
+      // Check for cached catalogue first (30 minute cache)
+      const cacheKey = 'ts_imdb_catalogue_v2';
+      const timestampKey = 'ts_imdb_timestamp_v2';
+      const cachedData = localStorage.getItem(cacheKey);
+      const cacheTime = localStorage.getItem(timestampKey);
+      const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
+      
+      // Use cache if less than 30 minutes old
+      if (cachedData && cacheAge < 30 * 60 * 1000) {
+        console.log("✓ Using cached IMDb catalogue");
+        return JSON.parse(cachedData);
+      }
+      
+      console.log("Building fresh IMDb catalogue...");
+      
       // Get the Top 100 IMDb items from our server
       const { items } = await this.fetchJSON("/api/imdb/top100");
       
       const out: Movie[] = [];
       const seen = new Set<string>();
 
-      // For each IMDb ID, map to TMDb movie, then get a trailer, then build entry
-      for (const row of items) {
+      // Process first 15 movies for immediate display
+      const quickBatch = items.slice(0, 15);
+      const quickMovies = await this.processBatch(quickBatch, seen);
+      out.push(...quickMovies);
+      
+      // Cache the quick batch immediately for instant loading
+      localStorage.setItem(cacheKey, JSON.stringify(out));
+      localStorage.setItem(timestampKey, Date.now().toString());
+      
+      console.log(`✓ Quick start: ${out.length} movies ready for immediate use`);
+      
+      // Process remaining movies in background (don't await)
+      this.processRemainingMovies(items.slice(15), out, seen, cacheKey, timestampKey);
+      
+      return out;
+      
+    } catch (error) {
+      console.error('Error building IMDb catalogue:', error);
+      // Return empty array instead of throwing to prevent app crash
+      return [];
+    }
+  }
+
+  // Process a batch of movies efficiently
+  private async processBatch(items: any[], seen: Set<string>): Promise<Movie[]> {
+    const movies: Movie[] = [];
+    
+    for (const row of items) {
+      try {
         const { imdbId, title: fallbackName, year: fallbackYear, rank } = row;
 
         // Map to TMDb
@@ -118,12 +160,12 @@ export class IMDbService {
 
         // Find a YouTube Trailer/Teaser
         const youtubeKey = await this.getYouTubeTrailer(tmdbId);
-        if (!youtubeKey) continue; // Skip if no trailer available
+        if (!youtubeKey) continue;
 
         // Poster: use YouTube thumb (rock-solid)
         const poster = this.posterFromYouTube(youtubeKey);
 
-        // Use TMDb title as primary source since it's more reliable than HTML parsing
+        // Use TMDb title as primary source
         const name = tmdbMovie.title || tmdbMovie.original_title || fallbackName || "Classic Movie";
         const year = (tmdbMovie.release_date || fallbackYear || "0000").slice(0, 4);
         const genreIds = Array.isArray(tmdbMovie.genre_ids) ? tmdbMovie.genre_ids : [];
@@ -140,23 +182,52 @@ export class IMDbService {
           isSeries: false,
           tags,
           features: this.generateFeatureVector(genreIds),
-          imdbRank: rank // Preserve IMDb ranking for authentic ordering
+          imdbRank: rank
         };
 
-        out.push(movie);
+        movies.push(movie);
         seen.add(id);
         
-        // Tiny pacing so we don't hammer APIs
-        await new Promise(res => setTimeout(res, 20));
+      } catch (error) {
+        console.warn(`Failed to process movie ${row.imdbId}:`, error);
+        continue;
       }
+    }
+    
+    return movies;
+  }
 
-      // Keep IMDb order (no shuffle) — this preserves the Top ranking feel
-      console.log(`Successfully processed ${out.length} movies from IMDb Top 100`);
-      return out.slice(0, 100);
+  // Process remaining movies in background
+  private async processRemainingMovies(
+    remainingItems: any[], 
+    existingMovies: Movie[], 
+    seen: Set<string>,
+    cacheKey: string,
+    timestampKey: string
+  ) {
+    try {
+      console.log(`Processing remaining ${remainingItems.length} movies in background...`);
+      
+      // Process in chunks of 10 for better performance
+      const chunkSize = 10;
+      for (let i = 0; i < remainingItems.length; i += chunkSize) {
+        const chunk = remainingItems.slice(i, i + chunkSize);
+        const chunkMovies = await this.processBatch(chunk, seen);
+        
+        existingMovies.push(...chunkMovies);
+        
+        // Update cache with expanded catalogue
+        localStorage.setItem(cacheKey, JSON.stringify(existingMovies));
+        localStorage.setItem(timestampKey, Date.now().toString());
+        
+        // Small delay between chunks
+        await new Promise(res => setTimeout(res, 100));
+      }
+      
+      console.log(`✓ Background processing complete: ${existingMovies.length} total movies`);
       
     } catch (error) {
-      console.error('Error building IMDb catalogue:', error);
-      return [];
+      console.error('Background processing failed:', error);
     }
   }
 }

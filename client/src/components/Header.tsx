@@ -26,7 +26,7 @@ export default function Header({ choices, onboardingComplete, catalogueSize, wat
                 <p><span className="text-electric-blue font-medium">Trailer Feed</span> – Sit back and watch a hand-picked reel of trailers perfectly matched to you.</p>
               </div>
               <p className="text-gray-500 text-xs mt-1">
-                {catalogueSize ? `${catalogueSize} titles with trailers` : ''}
+                {catalogueSize ? `${catalogueSize} titles with trailers` : 'Loading catalogue...'}
                 {watchlistSize ? ` • ${watchlistSize} saved` : ''}
               </p>
             </div>

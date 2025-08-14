@@ -8,6 +8,7 @@ Preferred communication style: Simple, everyday language.
 
 # Recent Changes (August 2025)
 
+- **Performance Optimization**: Implemented smart caching and progressive loading - app now loads in seconds instead of minutes with 30-minute cache and background processing
 - **Latest Branding Update**: Updated to new tagline "Find Your Next Favourite in Minutes" with description "Tired of scrolling endlessly? We've flipped the script." Added detailed feature explanations for Quick Picks, Smart Match, and Trailer Feed
 - **UI Enhancement**: Removed all play button logos from trailer interface as requested, using Skip/Save buttons with appropriate icons instead
 - **Authentic Data Integration**: Switched from TMDb "top rated" to real IMDb Top 250 data via movie-monk-b0t repository for authentic classic movies
