@@ -82,7 +82,10 @@ export function useMLLearning(movies: Movie[]) {
         const A = pool[i];
         const B = pool[j];
         
-        if (state.preferences.hidden.has(A.id) || state.preferences.hidden.has(B.id)) {
+        // Skip if hidden, already explored together, or same movie
+        if (state.preferences.hidden.has(A.id) || state.preferences.hidden.has(B.id) || 
+            state.preferences.explored.has(A.id) || state.preferences.explored.has(B.id) ||
+            A.id === B.id) {
           continue;
         }
 

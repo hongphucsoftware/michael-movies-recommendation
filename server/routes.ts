@@ -81,6 +81,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     await proxyJSON(url, res);
   });
 
+  // Find movie by IMDb ID
+  app.get("/api/find/:imdb_id", async (req, res) => {
+    const { imdb_id } = req.params;
+    const url = `${TMDB_API_BASE}/find/${encodeURIComponent(imdb_id)}?external_source=imdb_id&api_key=${TMDB_KEY}&language=en-US`;
+    await proxyJSON(url, res);
+  });
+
   // Image proxy for TMDb posters (bulletproof image loading)
   app.get("/img/*", async (req, res) => {
     try {

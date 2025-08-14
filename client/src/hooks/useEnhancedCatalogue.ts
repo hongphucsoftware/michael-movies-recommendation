@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Movie } from "@/types/movie";
-import { catalogueService } from "@/lib/catalogueService";
+import { imdbService } from "@/lib/imdbService";
 
 export interface EnhancedState {
   movies: Movie[];
@@ -67,7 +67,7 @@ export function useEnhancedCatalogue() {
         }));
 
         const savedState = loadSavedState();
-        const movies = await catalogueService.buildCatalogue();
+        const movies = await imdbService.buildCatalogue();
 
         if (isMounted) {
           setState(prev => ({
