@@ -4,8 +4,18 @@ import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
 import TrailerWheelSection from "./components/TrailerWheelSection";
 import WatchlistSection from "./components/WatchlistSection";
+import LoadingScreen from "./components/LoadingScreen";
+import { RefreshCw, AlertCircle } from "lucide-react";
 
 function App() {
+  const { 
+    movies, 
+    isLoading, 
+    error, 
+    playTrailer, 
+    refreshMovies 
+  } = useMovieData();
+
   const {
     preferences,
     currentPair,
@@ -22,11 +32,61 @@ function App() {
     updateQueue,
     getAdventurousnessLabel,
     getWatchlist
-  } = useMLLearning();
-
-  const { playTrailer } = useMovieData();
+  } = useMLLearning(movies);
 
   const watchlist = getWatchlist();
+
+  // Show loading screen while fetching data
+  if (isLoading) {
+    return (
+      <div className="bg-netflix-black text-white min-h-screen">
+        <div className="fixed inset-0 opacity-5">
+          <div 
+            className="absolute inset-0" 
+            style={{
+              backgroundImage: "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.3) 1px, transparent 0)",
+              backgroundSize: "20px 20px"
+            }}
+          ></div>
+        </div>
+        <Header choices={0} onboardingComplete={false} />
+        <LoadingScreen onComplete={() => {}} />
+      </div>
+    );
+  }
+
+  // Show error state if data loading failed
+  if (error) {
+    return (
+      <div className="bg-netflix-black text-white min-h-screen">
+        <div className="fixed inset-0 opacity-5">
+          <div 
+            className="absolute inset-0" 
+            style={{
+              backgroundImage: "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.3) 1px, transparent 0)",
+              backgroundSize: "20px 20px"
+            }}
+          ></div>
+        </div>
+        <Header choices={0} onboardingComplete={false} />
+        <section className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
+          <div className="glass-card p-12 rounded-2xl text-center">
+            <AlertCircle className="w-16 h-16 text-netflix-red mx-auto mb-6" />
+            <h2 className="text-3xl font-bold mb-4">Unable to Load Content</h2>
+            <p className="text-gray-400 mb-8 max-w-md mx-auto">{error}</p>
+            <button
+              onClick={refreshMovies}
+              className="bg-netflix-red hover:bg-netflix-red/80 px-8 py-4 rounded-lg font-semibold transition-colors flex items-center mx-auto"
+              data-testid="button-retry"
+            >
+              <RefreshCw className="mr-3" size={20} />
+              Try Again
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-netflix-black text-white min-h-screen">

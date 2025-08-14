@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { Movie, UserPreferences, MLState } from "@/types/movie";
-import { movies } from "@/lib/movieData";
 import { 
   zeros, 
   dot, 
@@ -15,7 +14,7 @@ import {
 
 const DIMENSION = 12;
 
-export function useMLLearning() {
+export function useMLLearning(movies: Movie[]) {
   const [state, setState] = useState<MLState>(() => {
     // Load from localStorage on initialization
     const storedPrefs = localStorage.getItem('ts_preferences');
@@ -57,9 +56,9 @@ export function useMLLearning() {
   useEffect(() => {
     const toStore = {
       w: state.preferences.w,
-      explored: [...state.preferences.explored],
-      hidden: [...state.preferences.hidden],
-      likes: [...state.preferences.likes],
+      explored: Array.from(state.preferences.explored),
+      hidden: Array.from(state.preferences.hidden),
+      likes: Array.from(state.preferences.likes),
       choices: state.preferences.choices,
       eps: state.preferences.eps
     };
@@ -67,6 +66,13 @@ export function useMLLearning() {
   }, [state.preferences]);
 
   const nextPair = useCallback((): [Movie, Movie] => {
+    if (movies.length < 2) {
+      return [
+        { id: 'loading1', name: 'Loading...', year: 2024, poster: '', yt: '', isSeries: false, lenShort: 0, tags: [], x: zeros(DIMENSION) },
+        { id: 'loading2', name: 'Loading...', year: 2024, poster: '', yt: '', isSeries: false, lenShort: 0, tags: [], x: zeros(DIMENSION) }
+      ];
+    }
+
     const pool = shuffle([...movies]);
     let best: [Movie, Movie] | null = null;
     let bestScore = -1;
@@ -93,7 +99,7 @@ export function useMLLearning() {
     }
 
     return best || [movies[0], movies[1]];
-  }, [state.preferences.w, state.preferences.hidden]);
+  }, [movies, state.preferences.w, state.preferences.hidden]);
 
   const learnChoice = useCallback((winner: Movie, loser: Movie) => {
     setState(prev => {
@@ -136,6 +142,10 @@ export function useMLLearning() {
   }, [state.preferences.explored]);
 
   const rankQueue = useCallback((): Movie[] => {
+    if (movies.length === 0) {
+      return [];
+    }
+    
     const candidates = movies.filter(movie => !state.preferences.hidden.has(movie.id));
     const scored = candidates
       .map(movie => ({
@@ -153,7 +163,7 @@ export function useMLLearning() {
     }
 
     return scored.map(item => item.movie);
-  }, [state.preferences.hidden, state.preferences.eps, baseScore, noveltyBoost]);
+  }, [movies, state.preferences.hidden, state.preferences.eps, baseScore, noveltyBoost]);
 
   const updateQueue = useCallback(() => {
     setState(prev => ({

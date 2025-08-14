@@ -1,0 +1,501 @@
+here is the api key: 5806f2f63f3875fd9e1755ce864ee15f please write the code for the replit app to incorporate this
+ChatGPT said:
+Thought for 16s
+
+Perfect — here’s a single-file Replit app wired to your TMDb API key that:
+
+pulls live trending Movies + TV from TMDb (AU-friendly),
+
+builds the poster-only vetting (A/B picks) to learn your taste,
+
+then runs the Trailer Shuffle wheel with 👍/👎 and a Surprise me button,
+
+all client-side (no server), saving to localStorage.
+
+Replit → Create Repl → HTML/CSS/JS → open index.html → replace everything with the code below → Run.
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Trailer Shuffle — Live TMDb</title>
+<style>
+  :root { --bg:#0b0e11; --card:#151a21; --ink:#e9eef5; --muted:#9fb0c3; --acc:#7c8cff; --line:#1f2733; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px; }
+  h1,h2 { margin:8px 0 16px; }
+  .pill { display:inline-block; background:#1e2631; color:var(--muted); padding:6px 10px; border-radius:999px; font-size:12px; letter-spacing:.3px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+  .grid { display:grid; gap:16px; }
+  .two { grid-template-columns:1fr 1fr; }
+  .poster { border-radius:12px; overflow:hidden; cursor:pointer; border:2px solid transparent; transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+  .poster:hover { transform: translateY(-2px); border-color: var(--acc); box-shadow: 0 6px 24px rgba(124,140,255,0.14); }
+  .poster img { width:100%; display:block; height:480px; object-fit:cover; background:#0d1117; }
+  .meta { padding:8px 6px 0; font-size:14px; color:var(--muted); display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .row { display:flex; gap:12px; align-items:center; }
+  .row.spread { justify-content:space-between; }
+  .btn { background:var(--acc); color:#0a0f14; border:none; padding:12px 16px; border-radius:12px; font-weight:700; cursor:pointer; }
+  .btn.small { padding:8px 12px; font-weight:600; }
+  .btn.ghost { background:#1e2631; color:var(--ink); }
+  .stack { display:flex; gap:12px; flex-wrap:wrap; }
+  .bar { height:8px; background:#1e2631; border-radius:999px; overflow:hidden; }
+  .bar > div { height:100%; width:0%; background:var(--acc); }
+  iframe { width:100%; aspect-ratio:16/9; border:0; border-radius:12px; background:#000; }
+  .hidden { display:none !important; }
+  .watchlist-item { font-size:14px; color:var(--muted); padding:8px 0; border-bottom:1px dashed #243142; display:flex; justify-content:space-between; align-items:center; }
+  .tiny { font-size:12px; color:#95a7bb; }
+  .tag { background:#202a39; color:#b8c6d8; font-size:11px; padding:4px 8px; border-radius:999px; }
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; background:#10151c; padding:2px 6px; border-radius:6px; border:1px solid #243142; color:#cbd6e2; }
+  .hr { height:1px; background:var(--line); margin:12px 0; }
+  .center { text-align:center; }
+  .loader { display:inline-block; width:16px; height:16px; border:3px solid #2b3442; border-top-color: var(--acc); border-radius:50%; animation:spin 0.9s linear infinite; vertical-align:middle; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎬 Trailer Shuffle</h1>
+  <div class="tiny">Live posters & trailers via TMDb. Pick posters → we learn your taste → spin the trailer wheel. All on-device.</div>
+
+  <!-- Loading -->
+  <section id="loading" class="card">
+    <div class="row"><span class="loader"></span><span> Loading trending titles & trailers…</span></div>
+    <div class="tiny" id="loadMsg" style="margin-top:8px;">Fetching from TMDb…</div>
+  </section>
+
+  <!-- Onboarding -->
+  <section id="onboarding" class="card hidden" role="region" aria-label="Onboarding">
+    <div class="row spread" style="margin-bottom:10px;">
+      <h2>Which would you rather watch?</h2>
+      <div class="stack">
+        <span class="pill" id="progressLabel">0 / 12</span>
+        <span class="pill" id="adventLabel">Adventurous: Balanced</span>
+      </div>
+    </div>
+    <div class="bar"><div id="progressBar"></div></div>
+    <div class="grid two" style="margin-top:16px;" id="pairGrid"></div>
+    <div class="row spread" style="margin-top:12px;">
+      <span class="tiny">Tip: go with your gut — we learn tone/pace/genre from fast choices.</span>
+      <div class="stack">
+        <button class="btn ghost small" id="lessWild">− Less Wild</button>
+        <button class="btn ghost small" id="moreWild">+ More Wild</button>
+        <button class="btn ghost small" id="skipBtn">Skip pair</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Shuffle -->
+  <section id="shuffle" class="card hidden" role="region" aria-label="Trailer Shuffle">
+    <div class="row spread">
+      <h2>Your trailer wheel</h2>
+      <div class="stack">
+        <button class="btn ghost small" id="surpriseBtn">Surprise me</button>
+        <button class="btn ghost small" id="resetBtn" title="Reset learning and start over">Reset</button>
+      </div>
+    </div>
+    <div id="playerWrap" style="margin-top:12px;">
+      <iframe id="yt" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      <div class="row spread" style="margin-top:10px;">
+        <div>
+          <div id="titleLine" style="font-weight:800;"></div>
+          <div id="subLine" class="tiny"></div>
+          <div id="tags" class="stack" style="margin-top:6px;"></div>
+        </div>
+        <div class="stack">
+          <button class="btn ghost" id="dislikeBtn">👎</button>
+          <button class="btn" id="likeBtn">👍 Add</button>
+          <button class="btn ghost" id="nextBtn">Next ▶</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Watchlist -->
+  <section id="watchlist" class="card hidden" role="region" aria-label="Watchlist" style="margin-top:16px;">
+    <div class="row spread">
+      <h2>Watchlist</h2>
+      <div class="tiny">Tip: Click <span class="kbd">▶</span> in the trailer wheel to keep exploring.</div>
+    </div>
+    <div id="watchlistList"></div>
+  </section>
+
+  <section class="card" style="margin-top:16px;">
+    <div class="tiny">Note: Exposing your TMDb key in the browser is fine for an MVP. For production, proxy calls via a tiny backend to hide your key and handle quotas.</div>
+  </section>
+</div>
+
+<script>
+/* ======================= CONFIG (YOUR TMDb KEY) ======================= */
+const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
+const TMDB_IMG = "https://image.tmdb.org/t/p";
+const POSTER_SIZE = "w500"; // good balance of quality/size
+
+/* ======================= FETCH LIVE CATALOGUE ======================= */
+const loadEl = document.getElementById('loading');
+const loadMsg = document.getElementById('loadMsg');
+const onboardingEl = document.getElementById('onboarding');
+
+async function fetchJSON(url){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return res.json();
+}
+
+async function fetchTrending(mediaType){ // 'movie' or 'tv'
+  // Using worldwide trending; region specific availability is a later add-on via JustWatch.
+  const url = `https://api.themoviedb.org/3/trending/${mediaType}/week?api_key=${TMDB_KEY}&language=en-US`;
+  return fetchJSON(url);
+}
+
+async function fetchVideos(mediaType, id){
+  const url = `https://api.themoviedb.org/3/${mediaType}/${id}/videos?api_key=${TMDB_KEY}&language=en-US`;
+  return fetchJSON(url);
+}
+
+function buildPosterUrl(path){
+  return path ? `${TMDB_IMG}/${POSTER_SIZE}${path}` : null;
+}
+
+/* Convert TMDb genres to our 12-dim lightweight feature vector:
+   [Comedy,Drama,Action,Thriller,SciFi,Fantasy,Doc,LightTone,DarkTone,FastPace,SlowPace,EpLenShort]
+   Heuristic only — good enough to learn a vibe quickly. */
+const GENRE = {
+  Comedy: 35, Drama: 18, Action: 28, Thriller: 53, SciFi: 878, Fantasy: 14, Documentary: 99,
+  Animation: 16, Horror: 27, Crime: 80, Adventure: 12, Family: 10751, Romance: 10749, Mystery: 9648
+};
+function featureFromGenres(genre_ids, mediaType){
+  const g = (id)=> genre_ids.includes(id) ? 1 : 0;
+  const comedy   = g(GENRE.Comedy);
+  const drama    = g(GENRE.Drama);
+  const action   = g(GENRE.Action);
+  const thriller = g(GENRE.Thriller) || g(GENRE.Mystery) || g(GENRE.Crime);
+  const scifi    = g(GENRE.SciFi);
+  const fantasy  = g(GENRE.Fantasy) || g(GENRE.Animation);
+  const doc      = g(GENRE.Documentary);
+
+  // Tone & pace heuristics
+  const lightTone = Math.min(1, comedy*0.8 + fantasy*0.4 + g(GENRE.Family)*0.6 + g(GENRE.Romance)*0.4);
+  const darkTone  = Math.min(1, thriller*0.6 + drama*0.4 + g(GENRE.Horror)*0.8 + g(GENRE.Crime)*0.5);
+  const fastPace  = Math.min(1, action*0.8 + thriller*0.6 + scifi*0.4 + fantasy*0.3);
+  const slowPace  = Math.min(1, drama*0.6 + doc*0.4);
+
+  // Short-episode heuristic: TV comedies are often short; otherwise 0
+  const epLenShort = (mediaType === "tv" && comedy) ? 1 : 0;
+
+  return [
+    comedy, drama, action, thriller, scifi, fantasy, doc,
+    lightTone, darkTone, fastPace, slowPace, epLenShort
+  ];
+}
+
+async function buildCatalogue(){
+  loadMsg.textContent = "Fetching trending movies…";
+  const movies = await fetchTrending("movie");
+  loadMsg.textContent = "Fetching trending TV…";
+  const tv     = await fetchTrending("tv");
+
+  // Combine and lightly rank by popularity
+  const combined = [...(movies.results||[]), ...(tv.results||[])]
+    .filter(r => r && (r.poster_path || r.backdrop_path))
+    .sort((a,b)=> (b.popularity||0) - (a.popularity||0))
+    .slice(0, 30); // cap for speed
+
+  // For each title, fetch a trailer on YouTube
+  loadMsg.textContent = "Getting trailers…";
+  const out = [];
+  for(let i=0;i<combined.length;i++){
+    const r = combined[i];
+    const mediaType = r.media_type || (r.title ? "movie" : "tv");
+    try{
+      const vids = await fetchVideos(mediaType, r.id);
+      const v = (vids.results||[]).find(x => x.site === "YouTube" && (x.type==="Trailer" || x.type==="Teaser"));
+      if(!v) continue;
+
+      const poster = buildPosterUrl(r.poster_path || r.backdrop_path);
+      if(!poster) continue;
+
+      const name = r.title || r.name || "Untitled";
+      const year = (r.release_date || r.first_air_date || "????").slice(0,4);
+      const tags = [];
+      if(mediaType==="tv") tags.push("Series");
+      (r.genre_ids||[]).slice(0,3).forEach(id => tags.push(genreLabel(id)));
+
+      out.push({
+        id: `${mediaType}_${r.id}`,
+        name, year, poster,
+        yt: v.key,
+        isSeries: mediaType==="tv",
+        lenShort: (mediaType==="tv" && (r.genre_ids||[]).includes(GENRE.Comedy)) ? 1 : 0,
+        tags,
+        x: featureFromGenres(r.genre_ids || [], mediaType)
+      });
+      // Small pause to be gentle
+      await new Promise(res=>setTimeout(res, 60));
+    }catch(e){
+      // Skip problematic titles
+      continue;
+    }
+  }
+  return out;
+}
+
+function genreLabel(id){
+  switch(id){
+    case GENRE.Comedy: return "Comedy";
+    case GENRE.Drama: return "Drama";
+    case GENRE.Action: return "Action";
+    case GENRE.Thriller: return "Thriller";
+    case GENRE.SciFi: return "Sci-Fi";
+    case GENRE.Fantasy: return "Fantasy";
+    case GENRE.Documentary: return "Doc";
+    case GENRE.Animation: return "Animation";
+    case GENRE.Horror: return "Horror";
+    case GENRE.Crime: return "Crime";
+    case GENRE.Adventure: return "Adventure";
+    case GENRE.Family: return "Family";
+    case GENRE.Romance: return "Romance";
+    case GENRE.Mystery: return "Mystery";
+    default: return "Genre";
+  }
+}
+
+/* ======================= LEARNING / SHUFFLE (same as before) ======================= */
+let items = []; // live-loaded
+
+const D = 12; // feature length
+const LEARNING_RATE = 0.6;
+const TARGET_CHOICES = 12;
+const EPS_DEFAULT = 0.12;
+
+function zeros(n){ return Array.from({length:n},()=>0); }
+function dot(a,b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+function add_inplace(a,b,scale=1){ for(let i=0;i<a.length;i++) a[i]+=scale*b[i]; }
+function sub(a,b){ return a.map((v,i)=>v-b[i]); }
+function logistic(z){ return 1/(1+Math.exp(-z)); }
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
+
+const state = {
+  w: JSON.parse(localStorage.getItem('ts_w')) || zeros(D),
+  explored: new Set(JSON.parse(localStorage.getItem('ts_seen')) || []),
+  hidden: new Set(JSON.parse(localStorage.getItem('ts_hidden')) || []),
+  likes: new Set(JSON.parse(localStorage.getItem('ts_likes')) || []),
+  choices: JSON.parse(localStorage.getItem('ts_choices')) || 0,
+  eps: Number(localStorage.getItem('ts_eps') || EPS_DEFAULT),
+  queue: []
+};
+function persist(){
+  localStorage.setItem('ts_w', JSON.stringify(state.w));
+  localStorage.setItem('ts_seen', JSON.stringify([...state.explored]));
+  localStorage.setItem('ts_hidden', JSON.stringify([...state.hidden]));
+  localStorage.setItem('ts_likes', JSON.stringify([...state.likes]));
+  localStorage.setItem('ts_choices', JSON.stringify(state.choices));
+  localStorage.setItem('ts_eps', String(state.eps));
+}
+
+/* Pair selection preferring distant+uncertain pairs */
+function nextPair(){
+  const pool = shuffle(items.slice());
+  let best = null, bestScore = -1;
+  for(let i=0;i<12 && i<pool.length-1;i++){
+    for(let j=i+1;j<pool.length && j<i+6;j++){
+      const A=pool[i], B=pool[j];
+      if(state.hidden.has(A.id) || state.hidden.has(B.id)) continue;
+      const diff = sub(A.x, B.x);
+      const margin = Math.abs(dot(state.w, diff));
+      const dist = Math.sqrt(diff.reduce((s,v)=>s+v*v,0));
+      const score = dist - Math.min(margin, 1.5); // distant & uncertain (P≈0.5)
+      if(score > bestScore){ bestScore=score; best=[A,B]; }
+    }
+  }
+  return best || [items[0], items[1]];
+}
+function learnChoice(A,B){
+  const diff = sub(A.x, B.x);
+  const p = logistic(dot(state.w, diff));
+  const gradScale = (1 - p);
+  add_inplace(state.w, diff, LEARNING_RATE * gradScale);
+  state.choices += 1;
+  state.explored.add(A.id); state.explored.add(B.id);
+  persist();
+}
+function baseScore(it){ return logistic(dot(state.w, it.x)); }
+function noveltyBoost(it){
+  const notSeen = state.explored.has(it.id) ? 0 : 0.08;
+  const short = it.isSeries && it.lenShort ? 0.05 : 0;
+  return notSeen + short;
+}
+function rankQueue(){
+  const cands = items.filter(it => !state.hidden.has(it.id));
+  const scored = cands.map(it => ({it, s: baseScore(it)+noveltyBoost(it)}))
+                      .sort((a,b)=>b.s-a.s);
+  if(Math.random() < state.eps && scored.length > 6){
+    const k = 3 + Math.floor(Math.random()*Math.min(12, scored.length-1));
+    const tmp = scored[0]; scored[0] = scored[k]; scored[k] = tmp;
+  }
+  state.queue = scored.map(z=>z.it);
+}
+
+/* ======================= UI WIRING ======================= */
+const pairGrid = document.getElementById('pairGrid');
+const progressBar = document.getElementById('progressBar');
+const progressLabel = document.getElementById('progressLabel');
+const skipBtn = document.getElementById('skipBtn');
+const lessWildBtn = document.getElementById('lessWild');
+const moreWildBtn = document.getElementById('moreWild');
+const adventLabel = document.getElementById('adventLabel');
+
+const shuffleEl = document.getElementById('shuffle');
+const yt = document.getElementById('yt');
+const titleLine = document.getElementById('titleLine');
+const subLine = document.getElementById('subLine');
+const tagsEl = document.getElementById('tags');
+const likeBtn = document.getElementById('likeBtn');
+const dislikeBtn = document.getElementById('dislikeBtn');
+const nextBtn = document.getElementById('nextBtn');
+const surpriseBtn = document.getElementById('surpriseBtn');
+const resetBtn = document.getElementById('resetBtn');
+
+const watchlistEl = document.getElementById('watchlist');
+const watchlistList = document.getElementById('watchlistList');
+
+function setProgress(){
+  const pct = Math.min(100, Math.round(100*state.choices/TARGET_CHOICES));
+  progressBar.style.width = pct + "%";
+  progressLabel.textContent = `${Math.min(state.choices,TARGET_CHOICES)} / ${TARGET_CHOICES}`;
+}
+function wildnessLabel(){
+  if(state.eps <= 0.06) return "Adventurous: Tame";
+  if(state.eps <= 0.16) return "Adventurous: Balanced";
+  return "Adventurous: Wild";
+}
+function renderPair(){
+  setProgress();
+  adventLabel.textContent = wildnessLabel();
+  pairGrid.innerHTML = "";
+  const [A,B] = nextPair();
+  [A,B].forEach((it,idx)=>{
+    const node = document.createElement('div');
+    node.className = "poster";
+    node.innerHTML = `
+      <img src="${it.poster}" alt="${it.name} poster" />
+      <div class="meta"><strong>${it.name}</strong><span class="tiny">(${it.year})</span></div>
+    `;
+    node.onclick = ()=>{
+      const win = it;
+      const lose = (idx===0)? B : A;
+      learnChoice(win, lose);
+      if(state.choices >= TARGET_CHOICES){
+        onboardingEl.classList.add('hidden');
+        shuffleEl.classList.remove('hidden');
+        watchlistEl.classList.remove('hidden');
+        startShuffle();
+      } else {
+        renderPair();
+      }
+    };
+    pairGrid.appendChild(node);
+  });
+}
+skipBtn.onclick = ()=>{ state.choices = Math.max(0, state.choices-1); renderPair(); };
+lessWildBtn.onclick = ()=>{ state.eps = Math.max(0.02, state.eps - 0.05); persist(); renderPair(); };
+moreWildBtn.onclick = ()=>{ state.eps = Math.min(0.35, state.eps + 0.05); persist(); renderPair(); };
+
+function startShuffle(){ rankQueue(); showTop(); }
+function showTop(){
+  if(state.queue.length === 0) rankQueue();
+  const it = state.queue[0];
+  if(!it){ titleLine.textContent = "No items"; return; }
+  yt.src = `https://www.youtube.com/embed/${it.yt}?autoplay=1&rel=0`;
+  titleLine.textContent = `${it.name}`;
+  subLine.textContent   = `${it.isSeries ? "Series" : "Film"} · ${it.year}`;
+  tagsEl.innerHTML = "";
+  (it.tags || []).forEach(t => { const span = document.createElement('span'); span.className="tag"; span.textContent=t; tagsEl.appendChild(span); });
+}
+function popAndNext(hide=false){
+  const it = state.queue.shift();
+  if(it){
+    state.explored.add(it.id);
+    if(hide) state.hidden.add(it.id);
+    persist();
+  }
+  showTop();
+}
+likeBtn.onclick = ()=>{
+  const it = state.queue[0];
+  if(it){ state.likes.add(it.id); persist(); renderWatchlist(); }
+  popAndNext(false);
+};
+dislikeBtn.onclick = ()=> popAndNext(true);
+nextBtn.onclick = ()=> popAndNext(false);
+surpriseBtn.onclick = ()=>{
+  const prev = state.eps;
+  state.eps = Math.min(0.45, state.eps + 0.10);
+  rankQueue(); showTop();
+  setTimeout(()=>{ state.eps = prev; }, 800);
+};
+resetBtn.onclick = ()=>{
+  if(!confirm("Reset your learning and watchlist?")) return;
+  state.w = zeros(D);
+  state.explored = new Set();
+  state.hidden = new Set();
+  state.likes = new Set();
+  state.choices = 0;
+  state.eps = EPS_DEFAULT;
+  persist();
+  shuffleEl.classList.add('hidden');
+  watchlistEl.classList.add('hidden');
+  onboardingEl.classList.remove('hidden');
+  renderPair();
+};
+function renderWatchlist(){
+  watchlistList.innerHTML = "";
+  const liked = items.filter(it => state.likes.has(it.id));
+  liked.forEach(it=>{
+    const row = document.createElement('div');
+    row.className = "watchlist-item";
+    row.innerHTML = `
+      <div>👍 <strong>${it.name}</strong> <span class="tiny">(${it.isSeries?"Series":"Film"}, ${it.year})</span></div>
+      <button class="btn ghost small" data-id="${it.id}">Remove</button>
+    `;
+    row.querySelector("button").onclick = (e)=>{
+      const id = e.currentTarget.getAttribute("data-id");
+      state.likes.delete(id); persist(); renderWatchlist();
+    };
+    watchlistList.appendChild(row);
+  });
+}
+
+/* ======================= BOOTSTRAP ======================= */
+(async function init(){
+  try{
+    items = await buildCatalogue();
+    if(items.length < 8){
+      loadMsg.textContent = "Not enough titles with trailers found. Try again in a bit.";
+      return;
+    }
+    loadEl.classList.add('hidden');
+    onboardingEl.classList.remove('hidden');
+    if(state.choices >= TARGET_CHOICES){
+      onboardingEl.classList.add('hidden');
+      shuffleEl.classList.remove('hidden');
+      watchlistEl.classList.remove('hidden');
+      startShuffle(); renderWatchlist();
+    } else {
+      renderPair();
+    }
+  }catch(err){
+    loadMsg.textContent = "Error loading TMDb data. Check your API key or network, then refresh.";
+    console.error(err);
+  }
+})();
+</script>
+</body>
+</html>
+
+Notes
+
+This uses your TMDb key directly in the browser — great for an MVP. For production, put a tiny proxy (FastAPI/Express) in front to hide the key and add caching.
+
+Right now it fetches trending and grabs a YouTube trailer/teaser per title. Easy next step is to add AU availability filters (via JustWatch + TMDb providers) and service toggles.
