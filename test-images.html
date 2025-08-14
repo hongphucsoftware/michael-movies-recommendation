@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Image Test</title>
+    <style>
+        body { font-family: system-ui; padding: 24px; }
+        img { width: 200px; height: 150px; object-fit: cover; border: 1px solid #ccc; margin: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Image Loading Test</h1>
+    
+    <h2>1. YouTube Thumbnail (should work everywhere)</h2>
+    <img src="https://i.ytimg.com/vi/mbCDMwmiGng/sddefault.jpg" alt="YouTube thumbnail">
+    
+    <h2>2. TMDb via our proxy</h2>
+    <img src="/img/t/p/original/hqcexYHbiTBfDIdDWxrxPtVndBX.jpg" alt="TMDb proxy">
+    
+    <h2>3. Generic test image</h2>
+    <img src="https://picsum.photos/400/300" alt="Generic image">
+    
+    <script>
+        document.querySelectorAll('img').forEach((img, i) => {
+            img.onload = () => console.log(`Image ${i+1} loaded successfully`);
+            img.onerror = () => console.log(`Image ${i+1} failed to load`);
+        });
+    </script>
+</body>
+</html>

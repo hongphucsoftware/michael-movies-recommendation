@@ -21,7 +21,7 @@ export default function RobustImage({
   onError 
 }: RobustImageProps) {
   const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
-    console.log(`✗ Image failed to load: ${src}`);
+    console.error(`✗ Image failed to load: ${src}`);
     const img = e.target as HTMLImageElement;
     if (img.src !== PLACEHOLDER) {
       img.src = PLACEHOLDER;

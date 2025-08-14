@@ -108,6 +108,40 @@ function App() {
         onboardingComplete={onboardingComplete} 
       />
 
+      {/* Debug Image Test - Remove this after fixing */}
+      <div className="relative z-10 max-w-7xl mx-auto px-6 py-4 bg-red-900/20 border border-red-500 rounded mb-4">
+        <h3 className="text-sm font-bold mb-2">Debug: Image Test</h3>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <p className="text-xs mb-1">YouTube Thumbnail:</p>
+            <img 
+              src="https://i.ytimg.com/vi/mbCDMwmiGng/sddefault.jpg" 
+              className="w-full h-20 object-cover"
+              onLoad={() => console.log("✓ Debug: YouTube image loaded")}
+              onError={() => console.error("✗ Debug: YouTube image failed")}
+            />
+          </div>
+          <div>
+            <p className="text-xs mb-1">TMDb via Proxy:</p>
+            <img 
+              src="/img/t/p/original/hqcexYHbiTBfDIdDWxrxPtVndBX.jpg" 
+              className="w-full h-20 object-cover"
+              onLoad={() => console.log("✓ Debug: TMDb proxy image loaded")}
+              onError={() => console.error("✗ Debug: TMDb proxy image failed")}
+            />
+          </div>
+          <div>
+            <p className="text-xs mb-1">Generic CDN:</p>
+            <img 
+              src="https://picsum.photos/200/300" 
+              className="w-full h-20 object-cover"
+              onLoad={() => console.log("✓ Debug: Generic image loaded")}
+              onError={() => console.error("✗ Debug: Generic image failed")}
+            />
+          </div>
+        </div>
+      </div>
+
       {!onboardingComplete ? (
         <OnboardingSection
           currentPair={currentPair}
