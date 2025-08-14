@@ -1,9 +1,9 @@
 import { Movie } from "@/types/movie";
 
-const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
-const TMDB_IMG = "https://image.tmdb.org/t/p";
+// Use our local proxy endpoints instead of external services
+const API_BASE = "/api";
+const IMG_BASE = "/img";
 const POSTER_SIZE = "w500";
-const PROXY = "https://images.weserv.nl/?url="; // public image proxy to bypass Replit CORS issues
 const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
   `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='900'>
      <rect width='100%' height='100%' fill='#0f141b'/>
@@ -55,31 +55,22 @@ async function fetchJSON(url: string) {
 }
 
 async function fetchTrending(mediaType: 'movie' | 'tv') {
-  const url = `https://api.themoviedb.org/3/trending/${mediaType}/week?api_key=${TMDB_KEY}&language=en-US`;
-  return fetchJSON(url);
+  return fetchJSON(`${API_BASE}/trending/${mediaType}`);
 }
 
 async function fetchVideos(mediaType: 'movie' | 'tv', id: number) {
-  const url = `https://api.themoviedb.org/3/${mediaType}/${id}/videos?api_key=${TMDB_KEY}&language=en-US`;
-  return fetchJSON(url);
+  return fetchJSON(`${API_BASE}/videos/${mediaType}/${id}`);
 }
 
-// Convert URL to use proxy service (bypasses Replit CORS restrictions)
-function toProxy(url: string): string {
-  // Strip https:// for proxy requirement (it expects a host-only url)
-  const stripped = url.replace(/^https?:\/\//, '');
-  return `${PROXY}${encodeURIComponent(stripped)}&n=-1`; // n=-1 = no cache limit
-}
-
-// Poster URL generation using proxy to bypass Replit restrictions
+// Generate poster URL using our local image proxy
 function buildPosterUrl(poster_path: string | null, backdrop_path: string | null): string {
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
-  const directUrl = `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
-  const proxiedUrl = toProxy(directUrl);
-  console.log(`Using proxied poster URL: ${proxiedUrl}`);
-  return proxiedUrl;
+  // Use our local image proxy: /img/t/p/w500/poster.jpg
+  const localProxyUrl = `${IMG_BASE}/t/p/${POSTER_SIZE}${basePath}`;
+  console.log(`Using local proxy poster URL: ${localProxyUrl}`);
+  return localProxyUrl;
 }
 
 // Removed quickImgCheck function since we're using proxy URLs
