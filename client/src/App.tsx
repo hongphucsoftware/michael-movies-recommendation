@@ -1,22 +1,30 @@
 import { useMLLearning } from "./hooks/useMLLearning";
-import { useMovieData } from "./hooks/useMovieData";
+import { useEnhancedCatalogue } from "./hooks/useEnhancedCatalogue";
 import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
-import TrailerWheelSection from "./components/TrailerWheelSection";
-import WatchlistSection from "./components/WatchlistSection";
+import { EnhancedTrailerWheelSection } from "./components/EnhancedTrailerWheelSection";
+import { EnhancedWatchlist } from "./components/EnhancedWatchlist";
 import LoadingScreen from "./components/LoadingScreen";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { RefreshCw, AlertCircle, Shuffle } from "lucide-react";
+import { Badge } from "./components/ui/badge";
 
 function App() {
-  const { 
-    movies, 
-    isLoading, 
-    error, 
+  const {
+    movies,
+    isLoading,
+    error,
     loadingMessage,
-    posterStats,
-    playTrailer, 
-    refreshMovies 
-  } = useMovieData();
+    catalogueSize,
+    watchlist,
+    hiddenItems,
+    saveToWatchlist,
+    removeFromWatchlist,
+    hideItem,
+    markAsRecent,
+    getAvailableMovies,
+    getWatchlistMovies,
+    resetAll
+  } = useEnhancedCatalogue();
 
   const {
     preferences,
@@ -26,17 +34,9 @@ function App() {
     learnChoice,
     adjustAdventurousness,
     skipPair,
-    addToWatchlist,
-    removeFromWatchlist,
-    hideMovie,
-    surpriseMe,
-    reset,
-    updateQueue,
-    getAdventurousnessLabel,
-    getWatchlist
+    reset: resetML,
+    getAdventurousnessLabel
   } = useMLLearning(movies);
-
-  const watchlist = getWatchlist();
 
   // Show loading screen while fetching data
   if (isLoading) {
@@ -51,8 +51,17 @@ function App() {
             }}
           ></div>
         </div>
-        <Header choices={0} onboardingComplete={false} />
-        <LoadingScreen message={loadingMessage} posterStats={posterStats} />
+        <Header choices={preferences.choices} onboardingComplete={false} />
+        <div className="relative z-10 max-w-7xl mx-auto px-6 pt-32">
+          <div className="glass-card p-12 rounded-2xl text-center">
+            <Shuffle className="w-16 h-16 mx-auto mb-6 text-netflix-red animate-spin" />
+            <h2 className="text-3xl font-bold mb-4">Building Massive Catalogue</h2>
+            <p className="text-xl text-gray-300 mb-6">{loadingMessage}</p>
+            <Badge variant="secondary" className="text-lg px-4 py-2">
+              Target: 250+ titles with trailers
+            </Badge>
+          </div>
+        </div>
       </div>
     );
   }

@@ -69,6 +69,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     await proxyJSON(url, res);
   });
 
+  // NEW: List endpoints with pagination for massive catalogue expansion
+  app.get("/api/list/:kind/:type/:page", async (req, res) => {
+    // kind: popular | top_rated | upcoming | now_playing | airing_today | on_the_air
+    // type: movie | tv
+    const { kind, type, page } = req.params;
+    const safeKind = encodeURIComponent(kind);
+    const safeType = encodeURIComponent(type);
+    const safePage = Number(page) || 1;
+    const url = `${TMDB_API_BASE}/${safeType}/${safeKind}?api_key=${TMDB_KEY}&language=en-US&page=${safePage}`;
+    await proxyJSON(url, res);
+  });
+
   // Image proxy for TMDb posters (bulletproof image loading)
   app.get("/img/*", async (req, res) => {
     try {

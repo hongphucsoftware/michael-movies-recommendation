@@ -1,0 +1,480 @@
+Love it — let’s (1) massively expand the catalogue and (2) add Skip / Save on trailers (with no repeats).
+
+Below are two paste-over files for your existing Node proxy Repl:
+
+1) server.js (drop-in replacement)
+
+Adds extra TMDb proxy endpoints so we can pull hundreds of titles fast (popular/top_rated/now_playing/upcoming for movies; airing_today/on_the_air/top_rated/popular for TV), plus the existing image and videos proxies.
+
+import express from "express";
+import cors from "cors";
+import fetch from "node-fetch";
+import { Readable } from "stream";
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ===== CONFIG =====
+const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
+const TMDB_IMG_BASE = "https://image.tmdb.org";
+const TMDB_API_BASE = "https://api.themoviedb.org/3";
+
+app.use(cors());
+app.use(express.static("public"));
+
+async function proxyJSON(url, res) {
+  try {
+    const r = await fetch(url, { redirect: "follow" });
+    if (!r.ok) return res.status(r.status).send(await r.text());
+    res.set("Cache-Control", "public, max-age=300");
+    res.type("application/json");
+    res.send(await r.text());
+  } catch (e) {
+    res.status(502).json({ error: "Upstream error", detail: String(e) });
+  }
+}
+
+// --- Simple health ---
+app.get("/ping", (_, res) => res.type("text/plain").send("pong"));
+
+// --- Existing endpoints ---
+app.get("/api/trending/:type", async (req, res) => {
+  const { type } = req.params; // movie|tv
+  const url = `${TMDB_API_BASE}/trending/${encodeURIComponent(type)}/week?api_key=${TMDB_KEY}&language=en-US`;
+  await proxyJSON(url, res);
+});
+
+app.get("/api/videos/:type/:id", async (req, res) => {
+  const { type, id } = req.params;
+  const url = `${TMDB_API_BASE}/${encodeURIComponent(type)}/${encodeURIComponent(id)}/videos?api_key=${TMDB_KEY}&language=en-US`;
+  await proxyJSON(url, res);
+});
+
+// --- NEW: list endpoints with pagination ---
+app.get("/api/list/:kind/:type/:page", async (req, res) => {
+  // kind: popular | top_rated | upcoming | now_playing | airing_today | on_the_air
+  // type: movie | tv
+  const { kind, type, page } = req.params;
+  const safeKind = encodeURIComponent(kind);
+  const safeType = encodeURIComponent(type);
+  const safePage = Number(page) || 1;
+  const url = `${TMDB_API_BASE}/${safeType}/${safeKind}?api_key=${TMDB_KEY}&language=en-US&page=${safePage}`;
+  await proxyJSON(url, res);
+});
+
+// --- Image proxy (bulletproof) ---
+app.get("/img/*", async (req, res) => {
+  try {
+    const upstream = `${TMDB_IMG_BASE}/${req.params[0]}`;
+    const r = await fetch(upstream, { redirect: "follow" });
+    if (!r.ok) return res.status(r.status).send("Upstream error");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.set("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    if (r.body && Readable.fromWeb) {
+      Readable.fromWeb(r.body).pipe(res);
+    } else {
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.end(buf);
+    }
+  } catch (e) {
+    res.status(502).send("Proxy error");
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+});
+
+2) public/index.html (drop-in replacement)
+
+Grabs ~240+ unique titles across many endpoints/pages (no repeats).
+
+Uses YouTube thumbnails as posters (super reliable), but code still keeps TMDb poster path for later if you want to switch back.
+
+Adds Save (to watchlist), Skip (keep item, go next), Hide (👎; removes from pool).
+
+Tracks recently served to avoid near-term repeats; also respects already-seen and hidden sets in localStorage.
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Trailer Shuffle — Big Catalogue + Skip/Save</title>
+<style>
+  :root { --bg:#0b0e11; --card:#151a21; --ink:#e9eef5; --muted:#9fb0c3; --acc:#7c8cff; --line:#1f2733; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px; }
+  h1,h2 { margin:8px 0 16px; }
+  .pill { display:inline-block; background:#1e2631; color:var(--muted); padding:6px 10px; border-radius:999px; font-size:12px; letter-spacing:.3px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+  .grid { display:grid; gap:16px; }
+  .two { grid-template-columns:1fr 1fr; }
+  .poster { border-radius:12px; overflow:hidden; cursor:pointer; border:2px solid transparent; transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+  .poster:hover { transform: translateY(-2px); border-color: var(--acc); box-shadow: 0 6px 24px rgba(124,140,255,0.14); }
+  .poster img { width:100%; display:block; height:480px; object-fit:cover; background:#0d1117; }
+  .meta { padding:8px 6px 0; font-size:14px; color:var(--muted); display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .row { display:flex; gap:12px; align-items:center; }
+  .row.spread { justify-content:space-between; }
+  .btn { background:var(--acc); color:#0a0f14; border:none; padding:12px 16px; border-radius:12px; font-weight:700; cursor:pointer; }
+  .btn.small { padding:8px 12px; font-weight:600; }
+  .btn.ghost { background:#1e2631; color:#e9eef5; }
+  .stack { display:flex; gap:12px; flex-wrap:wrap; }
+  .bar { height:8px; background:#1e2631; border-radius:999px; overflow:hidden; }
+  .bar > div { height:100%; width:0%; background:var(--acc); }
+  iframe { width:100%; aspect-ratio:16/9; border:0; border-radius:12px; background:#000; }
+  .hidden { display:none !important; }
+  .watchlist-item { font-size:14px; color:#9fb0c3; padding:8px 0; border-bottom:1px dashed #243142; display:flex; justify-content:space-between; align-items:center; }
+  .tiny { font-size:12px; color:#95a7bb; }
+  .tag { background:#202a39; color:#b8c6d8; font-size:11px; padding:4px 8px; border-radius:999px; }
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; background:#10151c; padding:2px 6px; border-radius:6px; border:1px solid #243142; color:#cbd6e2; }
+  .loader { display:inline-block; width:16px; height:16px; border:3px solid #2b3442; border-top-color: var(--acc); border-radius:50%; animation:spin .9s linear infinite; vertical-align:middle; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎬 Trailer Shuffle</h1>
+  <div class="tiny">Now loading a much bigger catalogue and adding Skip/Save on trailers. Posters use robust YouTube thumbnails.</div>
+
+  <!-- Loading -->
+  <section id="loading" class="card">
+    <div class="row"><span class="loader"></span><span>&nbsp;Loading titles & trailers…</span></div>
+    <div class="tiny" id="loadMsg" style="margin-top:8px;">Fetching from server…</div>
+  </section>
+
+  <!-- Onboarding -->
+  <section id="onboarding" class="card hidden" role="region" aria-label="Onboarding">
+    <div class="row spread" style="margin-bottom:10px;">
+      <h2>Which would you rather watch?</h2>
+      <div class="stack">
+        <span class="pill" id="progressLabel">0 / 12</span>
+        <span class="pill" id="adventLabel">Adventurous: Balanced</span>
+        <span class="pill" id="poolPill">Pool: 0</span>
+      </div>
+    </div>
+    <div class="bar"><div id="progressBar"></div></div>
+    <div class="grid two" style="margin-top:16px;" id="pairGrid"></div>
+    <div class="row spread" style="margin-top:12px;">
+      <span class="tiny">Go with your gut — fast choices teach tone/pace/genre.</span>
+      <div class="stack">
+        <button class="btn ghost small" id="lessWild">− Less Wild</button>
+        <button class="btn ghost small" id="moreWild">+ More Wild</button>
+        <button class="btn ghost small" id="skipBtn">Skip pair</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Shuffle -->
+  <section id="shuffle" class="card hidden" role="region" aria-label="Trailer Shuffle">
+    <div class="row spread">
+      <h2>Your trailer wheel</h2>
+      <div class="stack">
+        <button class="btn ghost small" id="surpriseBtn">Surprise me</button>
+        <button class="btn ghost small" id="resetBtn" title="Reset learning and start over">Reset</button>
+      </div>
+    </div>
+    <div id="playerWrap" style="margin-top:12px;">
+      <iframe id="yt" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      <div class="row spread" style="margin-top:10px;">
+        <div>
+          <div id="titleLine" style="font-weight:800;"></div>
+          <div id="subLine" class="tiny"></div>
+          <div id="tags" class="stack" style="margin-top:6px;"></div>
+        </div>
+        <div class="stack">
+          <button class="btn ghost" id="hideBtn">🙅 Hide</button>
+          <button class="btn ghost" id="skipOneBtn">⏭️ Skip</button>
+          <button class="btn" id="saveBtn">💾 Save</button>
+          <button class="btn ghost" id="nextBtn">Next ▶</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Watchlist -->
+  <section id="watchlist" class="card hidden" role="region" aria-label="Watchlist" style="margin-top:16px;">
+    <div class="row spread">
+      <h2>Watchlist</h2>
+      <div class="tiny">Tip: use <span class="kbd">▶</span> to keep exploring.</div>
+    </div>
+    <div id="watchlistList"></div>
+  </section>
+</div>
+
+<script>
+/* ======================= FETCH (via our Node proxy) ======================= */
+async function j(url){ const r=await fetch(url); if(!r.ok) throw new Error(r.status); return r.json(); }
+async function list(kind, type, page=1){ return j(`/api/list/${kind}/${type}/${page}`); }
+async function trending(type){ return j(`/api/trending/${type}`); }
+async function videos(type,id){ return j(`/api/videos/${type}/${id}`); }
+
+// Robust poster using YouTube thumbnail (works everywhere)
+function posterFromYouTube(ytKey){ return `https://i.ytimg.com/vi/${ytKey}/sddefault.jpg`; }
+// TMDb image (kept for future switch if you want): `/img/t/p/w500${poster_path}`
+
+/* ======================= BUILD BIG CATALOGUE ======================= */
+const GENRE={Comedy:35, Drama:18, Action:28, Thriller:53, SciFi:878, Fantasy:14, Documentary:99, Animation:16, Horror:27, Crime:80, Adventure:12, Family:10751, Romance:10749, Mystery:9648};
+function fVec(ids, type){
+  const g=id=>ids.includes(id)?1:0;
+  const c=g(GENRE.Comedy), d=g(GENRE.Drama), a=g(GENRE.Action), t=g(GENRE.Thriller)||g(GENRE.Mystery)||g(GENRE.Crime);
+  const s=g(GENRE.SciFi), f=g(GENRE.Fantasy)||g(GENRE.Animation), doc=g(GENRE.Documentary);
+  const light=Math.min(1, c*.8+f*.4+g(GENRE.Family)*.6+g(GENRE.Romance)*.4);
+  const dark=Math.min(1, t*.6+d*.4+g(GENRE.Horror)*.8+g(GENRE.Crime)*.5);
+  const fast=Math.min(1, a*.8+t*.6+s*.4+f*.3), slow=Math.min(1, d*.6+doc*.4);
+  const short=(type==="tv" && c)?1:0;
+  return [c,d,a,t,s,f,doc, light,dark,fast,slow,short];
+}
+function genreLabel(id){ for(const [k,v] of Object.entries(GENRE)) if(v===id) return k.replace("SciFi","Sci-Fi"); return "Genre"; }
+
+async function buildCatalogue() {
+  const buckets = [
+    ["popular","movie",1], ["popular","movie",2], ["popular","movie",3],
+    ["top_rated","movie",1], ["top_rated","movie",2],
+    ["now_playing","movie",1], ["upcoming","movie",1],
+    ["popular","tv",1], ["popular","tv",2], ["popular","tv",3],
+    ["top_rated","tv",1], ["top_rated","tv",2],
+    ["airing_today","tv",1], ["on_the_air","tv",1]
+  ];
+  const all = [];
+  const ids = new Set();
+
+  // pull in parallel-ish but with small pacing
+  for (const [kind, type, page] of buckets) {
+    try{
+      const data = await list(kind, type, page);
+      for (const r of (data.results||[])) {
+        const id = `${type}_${r.id}`;
+        if (ids.has(id)) continue;
+        // fetch a trailer for this title
+        const vs = await videos(type, r.id).catch(()=>({results:[]}));
+        const v  = (vs.results||[]).find(x => x.site==="YouTube" && (x.type==="Trailer"||x.type==="Teaser"));
+        if (!v) continue;
+        const poster = posterFromYouTube(v.key); // super reliable
+        const name = r.title || r.name || "Untitled";
+        const year = (r.release_date || r.first_air_date || "????").slice(0,4);
+        const tags = []; if(type==="tv") tags.push("Series"); (r.genre_ids||[]).slice(0,3).forEach(idg => tags.push(genreLabel(idg)));
+
+        all.push({
+          id, name, year, poster, yt: v.key,
+          isSeries: type==="tv",
+          lenShort: (type==="tv" && (r.genre_ids||[]).includes(GENRE.Comedy)) ? 1 : 0,
+          tags, x: fVec(r.genre_ids || [], type)
+        });
+        ids.add(id);
+      }
+      await new Promise(r=>setTimeout(r, 40));
+    }catch(e){ /* continue */ }
+  }
+
+  // Also include trending
+  try {
+    const tMovies = await trending("movie");
+    const tTv = await trending("tv");
+    for (const r of [...(tMovies.results||[]), ...(tTv.results||[])]) {
+      const type = r.media_type || (r.title ? "movie" : "tv");
+      const id = `${type}_${r.id}`;
+      if (ids.has(id)) continue;
+      const vs = await videos(type, r.id).catch(()=>({results:[]}));
+      const v  = (vs.results||[]).find(x => x.site==="YouTube" && (x.type==="Trailer"||x.type==="Teaser"));
+      if (!v) continue;
+      const poster = posterFromYouTube(v.key);
+      const name = r.title || r.name || "Untitled";
+      const year = (r.release_date || r.first_air_date || "????").slice(0,4);
+      const tags = []; if(type==="tv") tags.push("Series"); (r.genre_ids||[]).slice(0,3).forEach(idg => tags.push(genreLabel(idg)));
+      all.push({ id, name, year, poster, yt:v.key, isSeries:type==="tv", lenShort:(type==="tv"&&(r.genre_ids||[]).includes(GENRE.Comedy))?1:0, tags, x:fVec(r.genre_ids||[], type) });
+      ids.add(id);
+    }
+  } catch(e){}
+
+  // Sort by a rough popularity proxy: name + year (stable for demo), then shuffle
+  all.sort((a,b)=> a.name.localeCompare(b.name) || a.year.localeCompare(b.year));
+  for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [all[i],all[j]]=[all[j],all[i]]; }
+
+  return all.slice(0, 250); // cap to ~250 for speed; bump if you want more
+}
+
+/* ======================= LEARNING & STATE ======================= */
+const D=12, LR=.6, NEED=12, EPS0=.12;
+const state={ w:Array(D).fill(0), explored:new Set(), hidden:new Set(), likes:new Set(), choices:0, eps:EPS0, queue:[], recent:[] };
+const LS=localStorage;
+(function loadState(){ try{
+  const p=k=>JSON.parse(LS.getItem(k)||"null");
+  const w=p('ts_w'); if(w&&w.length===D) state.w=w;
+  state.explored=new Set(p('ts_seen')||[]); state.hidden=new Set(p('ts_hidden')||[]);
+  state.likes=new Set(p('ts_likes')||[]); state.choices=p('ts_choices')||0;
+  state.eps=Number(LS.getItem('ts_eps')||EPS0);
+  state.recent=p('ts_recent')||[];
+}catch{} })();
+function save(){
+  LS.setItem('ts_w',JSON.stringify(state.w));
+  LS.setItem('ts_seen',JSON.stringify([...state.explored]));
+  LS.setItem('ts_hidden',JSON.stringify([...state.hidden]));
+  LS.setItem('ts_likes',JSON.stringify([...state.likes]));
+  LS.setItem('ts_choices',JSON.stringify(state.choices));
+  LS.setItem('ts_eps',String(state.eps));
+  LS.setItem('ts_recent',JSON.stringify(state.recent.slice(-50)));
+}
+
+/* helpers */
+const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0), sub=(a,b)=>a.map((v,i)=>v-b[i]), sig=z=>1/(1+Math.exp(-z));
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+/* avoid near-term repeats by keeping a small "recent" ring buffer */
+function pushRecent(id){ state.recent.push(id); if(state.recent.length>60) state.recent.shift(); save(); }
+function isRecent(id){ return state.recent.includes(id); }
+
+/* pair selection prefers distant+uncertain & ignores hidden/recent */
+function nextPair(){
+  const pool = shuffle(items.filter(it => !state.hidden.has(it.id) && !isRecent(it.id)));
+  let best = null, bestScore = -1;
+  for(let i=0;i<16 && i<pool.length-1;i++){
+    for(let j=i+1;j<pool.length && j<i+10;j++){
+      const A=pool[i], B=pool[j];
+      const d=sub(A.x,B.x);
+      const margin = Math.abs(dot(state.w,d));
+      const dist = Math.hypot(...d);
+      const score = dist - Math.min(margin, 1.5);
+      if(score>bestScore){ bestScore=score; best=[A,B]; }
+    }
+  }
+  const fallback = pool.slice(0,2);
+  const pair = best || fallback;
+  pair.forEach(p => pushRecent(p.id));
+  return pair;
+}
+
+function learn(A,B){
+  const d=sub(A.x,B.x);
+  const p=sig(dot(state.w,d));
+  const g=(1-p)*LR;
+  for(let i=0;i<D;i++) state.w[i]+=g*d[i];
+  state.choices++;
+  state.explored.add(A.id); state.explored.add(B.id);
+  save();
+}
+
+function baseS(it){ return sig(dot(state.w,it.x)); }
+function nov(it){
+  const notSeen = state.explored.has(it.id) ? 0 : 0.08;
+  const short = it.isSeries && it.lenShort ? 0.05 : 0;
+  const notRecent = isRecent(it.id) ? -0.2 : 0; // push down recent items
+  return notSeen + short + notRecent;
+}
+function rankQueue(){
+  const cand = items.filter(it => !state.hidden.has(it.id));
+  const scored = cand.map(it => ({it, s: baseS(it)+nov(it)})).sort((a,b)=>b.s-a.s);
+  if(Math.random()<state.eps && scored.length>6){
+    const k = 3 + Math.floor(Math.random()*Math.min(12, scored.length-1));
+    [scored[0],scored[k]]=[scored[k],scored[0]];
+  }
+  state.queue = scored.map(z=>z.it).filter(it => !isRecent(it.id));
+}
+
+/* ======================= UI ======================= */
+let items=[];
+const loadEl=document.getElementById('loading'), loadMsg=document.getElementById('loadMsg');
+const onboardingEl=document.getElementById('onboarding'), pairGrid=document.getElementById('pairGrid'), progressBar=document.getElementById('progressBar'), progressLabel=document.getElementById('progressLabel'), lessWild=document.getElementById('lessWild'), moreWild=document.getElementById('moreWild'), adventLabel=document.getElementById('adventLabel'), skipBtn=document.getElementById('skipBtn'), poolPill=document.getElementById('poolPill');
+const shuffleEl=document.getElementById('shuffle'), yt=document.getElementById('yt'), titleLine=document.getElementById('titleLine'), subLine=document.getElementById('subLine'), tagsEl=document.getElementById('tags'), saveBtn=document.getElementById('saveBtn'), hideBtn=document.getElementById('hideBtn'), skipOneBtn=document.getElementById('skipOneBtn'), nextBtn=document.getElementById('nextBtn'), surpriseBtn=document.getElementById('surpriseBtn'), resetBtn=document.getElementById('resetBtn');
+const watchlistEl=document.getElementById('watchlist'), watchlistList=document.getElementById('watchlistList');
+
+function setProgress(){ const pct=Math.min(100,Math.round(100*state.choices/NEED)); progressBar.style.width=pct+"%"; progressLabel.textContent=`${Math.min(state.choices,NEED)} / ${NEED}`; }
+function wildLabel(){ return state.eps<=.06?"Adventurous: Tame": state.eps<=.16?"Adventurous: Balanced":"Adventurous: Wild"; }
+function renderPair(){
+  setProgress(); adventLabel.textContent=wildLabel(); pairGrid.innerHTML="";
+  const [A,B]=nextPair();
+  [A,B].forEach((it,idx)=>{
+    const d=document.createElement('div'); d.className="poster";
+    d.innerHTML=`<img src="${it.poster}" alt="${it.name} poster" loading="lazy" decoding="async"><div class="meta"><strong>${it.name}</strong><span class="tiny">(${it.year})</span></div>`;
+    d.onclick=()=>{
+      const win=it, lose=(idx===0)?B:A; learn(win,lose);
+      if(state.choices>=NEED){ onboardingEl.classList.add('hidden'); shuffleEl.classList.remove('hidden'); watchlistEl.classList.remove('hidden'); startShuffle(); }
+      else renderPair();
+    };
+    pairGrid.appendChild(d);
+  });
+}
+skipBtn.onclick=()=>{ state.choices=Math.max(0,state.choices-1); renderPair(); };
+lessWild.onclick=()=>{ state.eps=Math.max(.02,state.eps-.05); save(); renderPair(); };
+moreWild.onclick=()=>{ state.eps=Math.min(.35,state.eps+.05); save(); renderPair(); };
+
+/* ------- Trailer wheel with Save/Skip/Hide ------- */
+function startShuffle(){ rankQueue(); showTop(); }
+function showTop(){
+  if(state.queue.length===0) rankQueue();
+  const it = state.queue[0];
+  if(!it){ titleLine.textContent="No items"; return; }
+  yt.src = `https://www.youtube.com/embed/${it.yt}?autoplay=1&rel=0`;
+  titleLine.textContent = it.name;
+  subLine.textContent   = `${it.isSeries ? "Series" : "Film"} · ${it.year}`;
+  tagsEl.innerHTML = ""; (it.tags||[]).forEach(t => { const s=document.createElement('span'); s.className="tag"; s.textContent=t; tagsEl.appendChild(s); });
+  pushRecent(it.id);
+}
+function popNext({hide=false, skip=false, saveLike=false}={}){
+  const it = state.queue.shift();
+  if(!it){ showTop(); return; }
+  if(hide){ state.hidden.add(it.id); }
+  if(saveLike){ state.likes.add(it.id); }
+  state.explored.add(it.id);
+  save();
+  // If skip: push to back (not hidden)
+  if(skip){ state.queue.push(it); }
+  showTop();
+}
+saveBtn.onclick = ()=>{ popNext({saveLike:true}); renderWatchlist(); };
+hideBtn.onclick = ()=> popNext({hide:true});
+skipOneBtn.onclick = ()=> popNext({skip:true});
+nextBtn.onclick = ()=> popNext({});
+surpriseBtn.onclick = ()=>{
+  const prev=state.eps; state.eps=Math.min(.45,state.eps+.10);
+  rankQueue(); showTop();
+  setTimeout(()=>{ state.eps=prev; },800);
+};
+
+resetBtn.onclick=()=>{
+  if(!confirm("Reset your learning and watchlist?")) return;
+  state.w=Array(D).fill(0); state.explored=new Set(); state.hidden=new Set(); state.likes=new Set(); state.choices=0; state.eps=EPS0; state.recent=[];
+  save();
+  shuffleEl.classList.add('hidden'); watchlistEl.classList.add('hidden'); onboardingEl.classList.remove('hidden'); renderPair();
+};
+function renderWatchlist(){
+  watchlistList.innerHTML = "";
+  const liked = items.filter(it => state.likes.has(it.id));
+  liked.forEach(it=>{
+    const row = document.createElement('div');
+    row.className = "watchlist-item";
+    row.innerHTML = `<div>💾 <strong>${it.name}</strong> <span class="tiny">(${it.isSeries?"Series":"Film"}, ${it.year})</span></div><button class="btn ghost small" data-id="${it.id}">Remove</button>`;
+    row.querySelector("button").onclick = ()=>{ state.likes.delete(it.id); save(); renderWatchlist(); };
+    watchlistList.appendChild(row);
+  });
+}
+
+/* ======================= BOOTSTRAP ======================= */
+let itemsLoadedCount = 0;
+(async function init(){
+  try{
+    loadMsg.textContent = "Building large catalogue…";
+    items = await buildCatalogue();
+    itemsLoadedCount = items.length;
+    poolPill.textContent = `Pool: ${itemsLoadedCount}`;
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('onboarding').classList.remove('hidden');
+
+    if(state.choices>=NEED){
+      onboardingEl.classList.add('hidden');
+      document.getElementById('shuffle').classList.remove('hidden');
+      document.getElementById('watchlist').classList.remove('hidden');
+      startShuffle(); renderWatchlist();
+    } else {
+      renderPair();
+    }
+  }catch(e){
+    loadMsg.textContent = "Server/API fetch failed. Check server logs.";
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>

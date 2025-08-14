@@ -3,9 +3,11 @@ import { Play, Brain, Settings } from "lucide-react";
 interface HeaderProps {
   choices: number;
   onboardingComplete: boolean;
+  catalogueSize?: number;
+  watchlistSize?: number;
 }
 
-export default function Header({ choices, onboardingComplete }: HeaderProps) {
+export default function Header({ choices, onboardingComplete, catalogueSize, watchlistSize }: HeaderProps) {
   return (
     <header className="relative z-10 p-6">
       <div className="max-w-7xl mx-auto">
@@ -16,7 +18,10 @@ export default function Header({ choices, onboardingComplete }: HeaderProps) {
             </div>
             <div>
               <h1 className="text-3xl font-bold text-gradient">Trailer Shuffle</h1>
-              <p className="text-gray-400 text-sm">Discover your next obsession</p>
+              <p className="text-gray-400 text-sm">
+                {catalogueSize ? `${catalogueSize} titles with trailers` : 'Discover your next obsession'}
+                {watchlistSize ? ` • ${watchlistSize} saved` : ''}
+              </p>
             </div>
           </div>
           <div className="flex items-center space-x-4">

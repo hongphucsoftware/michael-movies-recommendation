@@ -1,13 +1,12 @@
 export interface Movie {
   id: string;
   name: string;
-  year: number;
+  year: string;
   poster: string;
-  yt: string;
+  youtube: string; // YouTube video ID for trailers
   isSeries: boolean;
-  lenShort: number;
   tags: string[];
-  x: number[]; // 12-dimensional feature vector
+  features: number[]; // 12-dimensional feature vector
   rating?: number;
   duration?: string;
 }
