@@ -71,27 +71,12 @@ function toProxy(url: string): string {
   return `${PROXY}${encodeURIComponent(stripped)}&n=-1`; // n=-1 = no cache limit
 }
 
-// Generate poster URL using proxy to bypass Replit restrictions
+// Simple poster URL generation - no pre-checking, just direct URLs
 function buildPosterUrl(poster_path: string | null, backdrop_path: string | null): string {
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
-  // Try direct URL first to test if proxy is the issue
-  const directUrl = `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
-  console.log(`Using direct poster URL: ${directUrl}`);
-  
-  // Temporary test with a known working image
-  if (basePath.includes('yvirUYrva23IudARHn3mMGVxWqM')) {
-    console.log('Using test image instead');
-    return 'https://via.placeholder.com/500x750/1a1a1a/ffffff?text=Test+Image';
-  }
-  
-  return directUrl;
-  
-  // If direct URLs don't work, we'll uncomment the proxy version below
-  // const proxiedUrl = toProxy(directUrl);
-  // console.log(`Using proxied poster URL: ${proxiedUrl}`);
-  // return proxiedUrl;
+  return `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
 }
 
 // Removed quickImgCheck function since we're using proxy URLs

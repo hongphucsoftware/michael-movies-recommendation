@@ -1,0 +1,276 @@
+Totally hear you — it shouldn’t be this hard. The culprit is our “pre-check/proxy” logic holding the app in the loading state if the preview iframe blocks image preloads. Let’s nuke the prechecks and just render posters directly, with a rock-solid onerror fallback so the UI never stalls.
+
+Below is a simplified, paste-ready index.html:
+
+No image proxy, no preflight checks.
+
+We always move past “Loading” once TMDb data is fetched.
+
+Each <img> has an onerror that swaps in a placeholder and keeps going.
+
+A tiny debug counter shows how many posters failed (useful on Replit).
+
+Replit → HTML/CSS/JS → open index.html → replace everything → Run
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Trailer Shuffle — Simple Posters</title>
+<style>
+  :root { --bg:#0b0e11; --card:#151a21; --ink:#e9eef5; --muted:#9fb0c3; --acc:#7c8cff; --line:#1f2733; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px; }
+  h1,h2 { margin:8px 0 16px; }
+  .pill { display:inline-block; background:#1e2631; color:var(--muted); padding:6px 10px; border-radius:999px; font-size:12px; letter-spacing:.3px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+  .grid { display:grid; gap:16px; }
+  .two { grid-template-columns:1fr 1fr; }
+  .poster { border-radius:12px; overflow:hidden; cursor:pointer; border:2px solid transparent; transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+  .poster:hover { transform: translateY(-2px); border-color: var(--acc); box-shadow: 0 6px 24px rgba(124,140,255,0.14); }
+  .poster img { width:100%; display:block; height:480px; object-fit:cover; background:#0d1117; }
+  .meta { padding:8px 6px 0; font-size:14px; color:var(--muted); display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .row { display:flex; gap:12px; align-items:center; }
+  .row.spread { justify-content:space-between; }
+  .btn { background:var(--acc); color:#0a0f14; border:none; padding:12px 16px; border-radius:12px; font-weight:700; cursor:pointer; }
+  .btn.small { padding:8px 12px; font-weight:600; }
+  .btn.ghost { background:#1e2631; color:#e9eef5; }
+  .stack { display:flex; gap:12px; flex-wrap:wrap; }
+  .bar { height:8px; background:#1e2631; border-radius:999px; overflow:hidden; }
+  .bar > div { height:100%; width:0%; background:var(--acc); }
+  iframe { width:100%; aspect-ratio:16/9; border:0; border-radius:12px; background:#000; }
+  .hidden { display:none !important; }
+  .watchlist-item { font-size:14px; color:#9fb0c3; padding:8px 0; border-bottom:1px dashed #243142; display:flex; justify-content:space-between; align-items:center; }
+  .tiny { font-size:12px; color:#95a7bb; }
+  .tag { background:#202a39; color:#b8c6d8; font-size:11px; padding:4px 8px; border-radius:999px; }
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; background:#10151c; padding:2px 6px; border-radius:6px; border:1px solid #243142; color:#cbd6e2; }
+  .loader { display:inline-block; width:16px; height:16px; border:3px solid #2b3442; border-top-color: var(--acc); border-radius:50%; animation:spin .9s linear infinite; vertical-align:middle; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎬 Trailer Shuffle</h1>
+  <div class="tiny">Simple, reliable posters from TMDb. No prechecks. Broken images auto-fallback so the UI never stalls.</div>
+
+  <!-- Loading -->
+  <section id="loading" class="card">
+    <div class="row"><span class="loader"></span><span>&nbsp;Loading trending titles & trailers…</span></div>
+    <div class="tiny" id="loadMsg" style="margin-top:8px;">Fetching from TMDb…</div>
+    <div class="tiny" id="imgStats" style="margin-top:6px;"></div>
+  </section>
+
+  <!-- Onboarding -->
+  <section id="onboarding" class="card hidden" role="region" aria-label="Onboarding">
+    <div class="row spread" style="margin-bottom:10px;">
+      <h2>Which would you rather watch?</h2>
+      <div class="stack">
+        <span class="pill" id="progressLabel">0 / 12</span>
+        <span class="pill" id="adventLabel">Adventurous: Balanced</span>
+      </div>
+    </div>
+    <div class="bar"><div id="progressBar"></div></div>
+    <div class="grid two" style="margin-top:16px;" id="pairGrid"></div>
+    <div class="row spread" style="margin-top:12px;">
+      <span class="tiny">Go with your gut — fast choices teach tone/pace/genre.</span>
+      <div class="stack">
+        <button class="btn ghost small" id="lessWild">− Less Wild</button>
+        <button class="btn ghost small" id="moreWild">+ More Wild</button>
+        <button class="btn ghost small" id="skipBtn">Skip pair</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Shuffle -->
+  <section id="shuffle" class="card hidden" role="region" aria-label="Trailer Shuffle">
+    <div class="row spread">
+      <h2>Your trailer wheel</h2>
+      <div class="stack">
+        <button class="btn ghost small" id="surpriseBtn">Surprise me</button>
+        <button class="btn ghost small" id="resetBtn" title="Reset learning and start over">Reset</button>
+      </div>
+    </div>
+    <div id="playerWrap" style="margin-top:12px;">
+      <iframe id="yt" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      <div class="row spread" style="margin-top:10px;">
+        <div>
+          <div id="titleLine" style="font-weight:800;"></div>
+          <div id="subLine" class="tiny"></div>
+          <div id="tags" class="stack" style="margin-top:6px;"></div>
+        </div>
+        <div class="stack">
+          <button class="btn ghost" id="dislikeBtn">👎</button>
+          <button class="btn" id="likeBtn">👍 Add</button>
+          <button class="btn ghost" id="nextBtn">Next ▶</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Watchlist -->
+  <section id="watchlist" class="card hidden" role="region" aria-label="Watchlist" style="margin-top:16px;">
+    <div class="row spread">
+      <h2>Watchlist</h2>
+      <div class="tiny">Tip: use <span class="kbd">▶</span> to keep exploring.</div>
+    </div>
+    <div id="watchlistList"></div>
+  </section>
+</div>
+
+<script>
+/* ---------------- CONFIG ---------------- */
+const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
+const TMDB_IMG = "https://image.tmdb.org/t/p";
+const POSTER_SIZE = "w500";
+const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
+  `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='900'>
+     <rect width='100%' height='100%' fill='#0f141b'/>
+     <text x='50%' y='50%' fill='#6f7d92' font-size='22' font-family='Arial' text-anchor='middle'>Poster unavailable</text>
+   </svg>`
+);
+
+/* ---------------- FETCH ---------------- */
+async function j(url){ const r=await fetch(url); if(!r.ok) throw new Error(r.status); return r.json(); }
+async function trending(type){ return j(`https://api.themoviedb.org/3/trending/${type}/week?api_key=${TMDB_KEY}&language=en-US`); }
+async function videos(type,id){ return j(`https://api.themoviedb.org/3/${type}/${id}/videos?api_key=${TMDB_KEY}&language=en-US`); }
+function posterUrl(poster_path, backdrop_path){
+  const p = poster_path || backdrop_path;
+  return p ? `${TMDB_IMG}/${POSTER_SIZE}${p}` : null;
+}
+
+/* ---- features (12-dim) ---- */
+const GENRE={Comedy:35, Drama:18, Action:28, Thriller:53, SciFi:878, Fantasy:14, Documentary:99, Animation:16, Horror:27, Crime:80, Adventure:12, Family:10751, Romance:10749, Mystery:9648};
+function fVec(ids, type){
+  const g=id=>ids.includes(id)?1:0;
+  const c=g(GENRE.Comedy), d=g(GENRE.Drama), a=g(GENRE.Action), t=g(GENRE.Thriller)||g(GENRE.Mystery)||g(GENRE.Crime);
+  const s=g(GENRE.SciFi), f=g(GENRE.Fantasy)||g(GENRE.Animation), doc=g(GENRE.Documentary);
+  const light=Math.min(1, c*.8+f*.4+g(GENRE.Family)*.6+g(GENRE.Romance)*.4);
+  const dark=Math.min(1, t*.6+d*.4+g(GENRE.Horror)*.8+g(GENRE.Crime)*.5);
+  const fast=Math.min(1, a*.8+t*.6+s*.4+f*.3), slow=Math.min(1, d*.6+doc*.4);
+  const short=(type==="tv" && c)?1:0;
+  return [c,d,a,t,s,f,doc, light,dark,fast,slow,short];
+}
+function genreLabel(id){ for(const [k,v] of Object.entries(GENRE)) if(v===id) return k.replace("SciFi","Sci-Fi"); return "Genre"; }
+
+/* ---------------- STATE ---------------- */
+let items=[];
+const D=12, LR=.6, NEED=12, EPS0=.12;
+const state={ w:Array(D).fill(0), explored:new Set(), hidden:new Set(), likes:new Set(), choices:0, eps:EPS0, queue:[] };
+const LS=localStorage;
+(function loadState(){ try{
+  const p=k=>JSON.parse(LS.getItem(k)||"null");
+  const w=p('ts_w'); if(w&&w.length===D) state.w=w;
+  state.explored=new Set(p('ts_seen')||[]); state.hidden=new Set(p('ts_hidden')||[]);
+  state.likes=new Set(p('ts_likes')||[]); state.choices=p('ts_choices')||0;
+  state.eps=Number(LS.getItem('ts_eps')||EPS0);
+}catch{} })();
+function save(){ LS.setItem('ts_w',JSON.stringify(state.w)); LS.setItem('ts_seen',JSON.stringify([...state.explored])); LS.setItem('ts_hidden',JSON.stringify([...state.hidden])); LS.setItem('ts_likes',JSON.stringify([...state.likes])); LS.setItem('ts_choices',JSON.stringify(state.choices)); LS.setItem('ts_eps',String(state.eps)); }
+
+/* ---------------- UI refs ---------------- */
+const loadEl=document.getElementById('loading'), loadMsg=document.getElementById('loadMsg'), imgStats=document.getElementById('imgStats');
+const onboardingEl=document.getElementById('onboarding'), pairGrid=document.getElementById('pairGrid'), progressBar=document.getElementById('progressBar'), progressLabel=document.getElementById('progressLabel'), lessWild=document.getElementById('lessWild'), moreWild=document.getElementById('moreWild'), adventLabel=document.getElementById('adventLabel'), skipBtn=document.getElementById('skipBtn');
+const shuffleEl=document.getElementById('shuffle'), yt=document.getElementById('yt'), titleLine=document.getElementById('titleLine'), subLine=document.getElementById('subLine'), tagsEl=document.getElementById('tags'), likeBtn=document.getElementById('likeBtn'), dislikeBtn=document.getElementById('dislikeBtn'), nextBtn=document.getElementById('nextBtn'), surpriseBtn=document.getElementById('surpriseBtn'), resetBtn=document.getElementById('resetBtn');
+const watchlistEl=document.getElementById('watchlist'), watchlistList=document.getElementById('watchlistList');
+
+let failCount=0;
+function setProgress(){ const pct=Math.min(100,Math.round(100*state.choices/NEED)); progressBar.style.width=pct+"%"; progressLabel.textContent=`${Math.min(state.choices,NEED)} / ${NEED}`; }
+function wildLabel(){ return state.eps<=.06?"Adventurous: Tame": state.eps<=.16?"Adventurous: Balanced":"Adventurous: Wild"; }
+function renderPair(){
+  setProgress(); adventLabel.textContent=wildLabel(); pairGrid.innerHTML="";
+  const [A,B]=nextPair();
+  [A,B].forEach((it,idx)=>{
+    const d=document.createElement('div'); d.className="poster";
+    d.innerHTML=`<img alt="${it.name} poster" loading="lazy" decoding="async"><div class="meta"><strong>${it.name}</strong><span class="tiny">(${it.year})</span></div>`;
+    const img = d.querySelector("img");
+    img.src = it.poster || PLACEHOLDER;
+    img.onerror = ()=>{
+      failCount++; imgStats.textContent = `poster fails: ${failCount}`;
+      img.src = PLACEHOLDER;
+    };
+    d.onclick=()=>{
+      const win=it, lose=(idx===0)?B:A; learn(win,lose);
+      if(state.choices>=NEED){ onboardingEl.classList.add('hidden'); shuffleEl.classList.remove('hidden'); watchlistEl.classList.remove('hidden'); startShuffle(); }
+      else renderPair();
+    };
+    pairGrid.appendChild(d);
+  });
+}
+skipBtn.onclick=()=>{ state.choices=Math.max(0,state.choices-1); renderPair(); };
+lessWild.onclick=()=>{ state.eps=Math.max(.02,state.eps-.05); save(); renderPair(); };
+moreWild.onclick=()=>{ state.eps=Math.min(.35,state.eps+.05); save(); renderPair(); };
+
+/* -------- learning + ranking -------- */
+const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0), sub=(a,b)=>a.map((v,i)=>v-b[i]), sig=z=>1/(1+Math.exp(-z));
+function nextPair(){ const pool=shuffle(items.filter(it=>!state.hidden.has(it.id))); let best=null,bS=-1;
+  for(let i=0;i<12&&i<pool.length-1;i++){ for(let j=i+1;j<pool.length && j<i+8;j++){
+    const A=pool[i],B=pool[j]; const d=sub(A.x,B.x); const m=Math.abs(dot(state.w,d)); const dist=Math.hypot(...d); const s=dist-Math.min(m,1.5); if(s>bS){bS=s; best=[A,B];}
+  }} return best||[items[0],items[1]];
+}
+function learn(A,B){ const d=sub(A.x,B.x); const p=sig(dot(state.w,d)); const g=(1-p)*LR; for(let i=0;i<D;i++) state.w[i]+=g*d[i]; state.choices++; state.explored.add(A.id); state.explored.add(B.id); save(); }
+function baseS(it){ return sig(dot(state.w,it.x)); }
+function nov(it){ return (state.explored.has(it.id)?0:.08) + (it.isSeries&&it.lenShort? .05:0); }
+function rank(){ const cand=items.filter(it=>!state.hidden.has(it.id)); const s=cand.map(it=>({it, s:baseS(it)+nov(it)})).sort((a,b)=>b.s-a.s);
+  if(Math.random()<state.eps && s.length>6){ const k=3+Math.floor(Math.random()*Math.min(12,s.length-1)); [s[0],s[k]]=[s[k],s[0]]; }
+  state.queue=s.map(z=>z.it);
+}
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+function startShuffle(){ rank(); showTop(); }
+function showTop(){ if(state.queue.length===0) rank(); const it=state.queue[0]; if(!it){ titleLine.textContent="No items"; return; }
+  yt.src=`https://www.youtube.com/embed/${it.yt}?autoplay=1&rel=0`; titleLine.textContent=it.name; subLine.textContent=`${it.isSeries?"Series":"Film"} · ${it.year}`;
+  tagsEl.innerHTML=""; (it.tags||[]).forEach(t=>{ const s=document.createElement('span'); s.className="tag"; s.textContent=t; tagsEl.appendChild(s); });
+}
+function popNext(hide=false){ const it=state.queue.shift(); if(it){ state.explored.add(it.id); if(hide) state.hidden.add(it.id); save(); } showTop(); }
+likeBtn.onclick=()=>{ const it=state.queue[0]; if(it){ state.likes.add(it.id); save(); renderWatchlist(); } popNext(false); };
+dislikeBtn.onclick=()=>popNext(true);
+nextBtn.onclick=()=>popNext(false);
+surpriseBtn.onclick=()=>{ const prev=state.eps; state.eps=Math.min(.45,state.eps+.10); rank(); showTop(); setTimeout(()=>{ state.eps=prev; },800); };
+resetBtn.onclick=()=>{ if(!confirm("Reset your learning and watchlist?")) return; state.w=Array(D).fill(0); state.explored=new Set(); state.hidden=new Set(); state.likes=new Set(); state.choices=0; state.eps=EPS0; save(); shuffleEl.classList.add('hidden'); watchlistEl.classList.add('hidden'); onboardingEl.classList.remove('hidden'); renderPair(); };
+function renderWatchlist(){ watchlistList.innerHTML=""; items.filter(it=>state.likes.has(it.id)).forEach(it=>{ const row=document.createElement('div'); row.className="watchlist-item"; row.innerHTML=`<div>👍 <strong>${it.name}</strong> <span class="tiny">(${it.isSeries?"Series":"Film"}, ${it.year})</span></div><button class="btn ghost small" data-id="${it.id}">Remove</button>`; row.querySelector("button").onclick=(e)=>{ state.likes.delete(it.id); save(); renderWatchlist(); }; watchlistList.appendChild(row); }); }
+
+/* ---------------- BOOT ---------------- */
+(async function init(){
+  try{
+    const movies=await trending("movie");
+    const tv=await trending("tv");
+    const list=[...(movies.results||[]),...(tv.results||[])]
+      .filter(Boolean).sort((a,b)=>(b.popularity||0)-(a.popularity||0)).slice(0,36);
+    const out=[];
+    for(const r of list){
+      const type=r.media_type || (r.title?"movie":"tv");
+      const poster=posterUrl(r.poster_path,r.backdrop_path);
+      if(!poster) continue;
+      const vs=await videos(type,r.id).catch(()=>({results:[]}));
+      const v=(vs.results||[]).find(x=>x.site==="YouTube"&&(x.type==="Trailer"||x.type==="Teaser"));
+      if(!v) continue;
+      const name=r.title||r.name||"Untitled"; const year=(r.release_date||r.first_air_date||"????").slice(0,4);
+      const tags=[]; if(type==="tv") tags.push("Series"); (r.genre_ids||[]).slice(0,3).forEach(id=>tags.push(genreLabel(id)));
+      out.push({ id:`${type}_${r.id}`, name, year, poster, yt:v.key, isSeries:type==="tv", lenShort:(type==="tv"&&(r.genre_ids||[]).includes(GENRE.Comedy))?1:0, tags, x:fVec(r.genre_ids||[],type) });
+      await new Promise(r=>setTimeout(r,20));
+    }
+    items=out;
+
+    // Always leave loading state, even if some posters will 404 later (we fallback per-image)
+    loadEl.classList.add('hidden');
+    onboardingEl.classList.remove('hidden');
+
+    if(state.choices>=NEED){
+      onboardingEl.classList.add('hidden');
+      document.getElementById('shuffle').classList.remove('hidden');
+      document.getElementById('watchlist').classList.remove('hidden');
+      startShuffle(); renderWatchlist();
+    } else {
+      renderPair();
+    }
+  }catch(e){
+    loadMsg.textContent = "TMDb fetch failed (key/network). Open the public repl URL (not the mini preview) and refresh.";
+    console.error(e);
+    // Fallback to zero state so UI doesn't hang
+    loadEl.classList.add('hidden'); onboardingEl.classList.remove('hidden');
+  }
+})();
+</script>
+</body>
+</html>
