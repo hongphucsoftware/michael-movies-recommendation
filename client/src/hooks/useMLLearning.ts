@@ -101,6 +101,17 @@ export function useMLLearning(movies: Movie[]) {
     return best || [movies[0], movies[1]];
   }, [movies, state.preferences.w, state.preferences.hidden]);
 
+  // Update currentPair when movies are loaded
+  useEffect(() => {
+    if (movies.length >= 2 && !state.onboardingComplete && 
+        (!state.currentPair || state.currentPair[0].id === 'loading1')) {
+      setState(prev => ({
+        ...prev,
+        currentPair: nextPair()
+      }));
+    }
+  }, [movies, state.onboardingComplete, state.currentPair, nextPair]);
+
   const learnChoice = useCallback((winner: Movie, loser: Movie) => {
     setState(prev => {
       const diff = subtract(winner.x, loser.x);
