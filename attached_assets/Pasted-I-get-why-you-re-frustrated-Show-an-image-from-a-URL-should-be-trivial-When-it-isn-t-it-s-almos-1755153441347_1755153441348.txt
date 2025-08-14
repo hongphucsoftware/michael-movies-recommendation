@@ -1,0 +1,72 @@
+I get why you’re frustrated. “Show an image from a URL” should be trivial. When it isn’t, it’s almost never your code—it’s one of a few boring-but-real blockers:
+
+Why this keeps failing (the un-fun truth):
+
+The Replit preview pane is an iframe with strict sandbox/CSP. Some external CDNs (including TMDb’s) behave inconsistently there.
+
+Ad-blockers / privacy extensions / DNS filters sometimes block image.tmdb.org outright (it looks like a tracker-ish CDN to some lists).
+
+Replit + node-fetch v3 stream mismatch (we fixed this in the last message) can make proxies “look fine” but return no bytes → images never render.
+
+Corporate/Wi-Fi filtering: some networks block certain media CDNs (esp. schools, offices).
+
+Mini preview vs public URL: the tiny side preview often fails where the public *.repl.co page works.
+
+Rather than keep guessing, here’s a 2-minute, definitive diagnosis and then a zero-drama workaround that doesn’t rely on TMDb at all.
+
+Step 1 — 10-line litmus test (paste-only)
+
+Create a new HTML/CSS/JS repl, replace index.html with this, run it, and open the public URL (ends with .repl.co), not the side preview:
+
+<!doctype html>
+<meta charset="utf-8">
+<title>Image Litmus</title>
+<body style="font-family:system-ui;padding:24px">
+  <h1>Image Litmus</h1>
+  <p>1) TMDb poster:</p>
+  <img src="https://image.tmdb.org/t/p/w500/6DrHO1jr3qVrViUO6s6kFiAGM7.jpg" width="250" height="375" style="object-fit:cover;border:1px solid #ccc"><br><br>
+  <p>2) YouTube thumbnail (always public):</p>
+  <img src="https://i.ytimg.com/vi/8hP9D6kZseM/hqdefault.jpg" width="250" height="140" style="border:1px solid #ccc"><br><br>
+  <p>3) Generic CDN (Picsum):</p>
+  <img src="https://picsum.photos/400/600" width="250" height="375" style="object-fit:cover;border:1px solid #ccc">
+</body>
+
+
+Interpretation:
+
+If all 3 show → your environment’s fine; our earlier proxy/code was the issue (use the fixed Node proxy I sent with Readable.fromWeb).
+
+If #2 and #3 show, but TMDb (#1) doesn’t → your ad-block/DNS is blocking image.tmdb.org. That explains everything.
+
+If none show → the side preview is being used, or your network is blocking externals.
+
+Step 2 — Stop relying on TMDb images (easiest path)
+
+If TMDb is the blocker in your network/browser, the fastest reliable path is: use YouTube thumbnails as posters (they’re robust and public), since you’re already grabbing YouTube trailer IDs.
+
+Here’s a tiny drop-in change for your current app:
+
+Replace your posterUrl(...) function with this:
+
+// use the trailer thumbnail as the "poster" so no CDN quirks are involved
+function posterFromYouTube(ytKey) {
+  // hqdefault is 480p-ish, sddefault is larger; both are very reliable
+  return `https://i.ytimg.com/vi/${ytKey}/sddefault.jpg`;
+}
+
+
+…and when you build each item (after you found the YouTube trailer key v.key), set:
+
+const poster = posterFromYouTube(v.key);
+
+
+That’s it. No proxies. No TMDb image domain. 99.9% of the time these thumbnails just work.
+
+Step 3 — If you must use TMDb posters
+
+Use the fixed Node proxy I sent last (with Readable.fromWeb(r.body).pipe(res) or arrayBuffer() fallback) and open the public URL. Add one more hardening line to the image route:
+
+res.set("Access-Control-Allow-Origin", "*");
+
+
+If /test.html in that Node repl shows the sample poster, your UI will too.

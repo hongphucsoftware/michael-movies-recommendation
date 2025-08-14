@@ -62,14 +62,18 @@ async function fetchVideos(mediaType: 'movie' | 'tv', id: number) {
   return fetchJSON(`${API_BASE}/videos/${mediaType}/${id}`);
 }
 
-// Generate poster URL using our local image proxy
+// Generate poster URL from YouTube thumbnail (most reliable)
+function posterFromYouTube(ytKey: string): string {
+  // sddefault is larger quality, very reliable across all networks
+  return `https://i.ytimg.com/vi/${ytKey}/sddefault.jpg`;
+}
+
+// Fallback to TMDb proxy if no YouTube trailer available
 function buildPosterUrl(poster_path: string | null, backdrop_path: string | null): string {
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
-  // Use "original" size for maximum reliability (TMDb always has original)
   const localProxyUrl = `${IMG_BASE}/t/p/original${basePath}`;
-  console.log(`Using local proxy poster URL: ${localProxyUrl}`);
   return localProxyUrl;
 }
 
@@ -121,6 +125,8 @@ function genreLabel(id: number): string {
   }
 }
 
+export { posterFromYouTube };
+
 export async function buildCatalogue(onProgress?: (message: string, stats?: { ok: number; failed: number }) => void): Promise<Movie[]> {
   try {
     let imgOk = 0;
@@ -147,12 +153,6 @@ export async function buildCatalogue(onProgress?: (message: string, stats?: { ok
     for (const r of combined) {
       const mediaType = r.media_type || (r.title ? "movie" : "tv");
       
-      // Generate poster URL
-      const posterUrl = buildPosterUrl(r.poster_path, r.backdrop_path);
-      console.log(`Movie: ${r.title || r.name}, Poster: ${r.poster_path}, URL: ${posterUrl}`);
-      imgOk++; // Count as success
-      onProgress?.(`Processing trailers...`, { ok: imgOk, failed: imgFail });
-
       try {
         const vidsData = await fetchVideos(mediaType as 'movie' | 'tv', r.id);
         const trailer = (vidsData.results || []).find((v: TMDbVideo) => 
@@ -160,6 +160,12 @@ export async function buildCatalogue(onProgress?: (message: string, stats?: { ok
         );
         
         if (!trailer) continue;
+
+        // Use YouTube thumbnail as poster (most reliable)
+        const posterUrl = posterFromYouTube(trailer.key);
+        console.log(`Movie: ${r.title || r.name}, YouTube: ${trailer.key}, Poster: ${posterUrl}`);
+        imgOk++; // Count as success
+        onProgress?.(`Processing trailers...`, { ok: imgOk, failed: imgFail });
 
         const name = r.title || r.name || "Untitled";
         const year = (r.release_date || r.first_air_date || "").slice(0, 4) || "Unknown";
@@ -172,7 +178,7 @@ export async function buildCatalogue(onProgress?: (message: string, stats?: { ok
           id: `${mediaType}_${r.id}`,
           name,
           year: parseInt(year) || 2024,
-          poster: posterUrl || PLACEHOLDER,
+          poster: posterUrl,
           yt: trailer.key,
           isSeries: mediaType === "tv",
           lenShort: (mediaType === "tv" && (r.genre_ids || []).includes(GENRE.Comedy)) ? 1 : 0,
