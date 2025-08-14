@@ -76,10 +76,22 @@ function buildPosterUrl(poster_path: string | null, backdrop_path: string | null
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
-  const rawUrl = `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
-  const proxiedUrl = toProxy(rawUrl);
-  console.log(`Using proxied poster URL: ${proxiedUrl}`);
-  return proxiedUrl;
+  // Try direct URL first to test if proxy is the issue
+  const directUrl = `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
+  console.log(`Using direct poster URL: ${directUrl}`);
+  
+  // Temporary test with a known working image
+  if (basePath.includes('yvirUYrva23IudARHn3mMGVxWqM')) {
+    console.log('Using test image instead');
+    return 'https://via.placeholder.com/500x750/1a1a1a/ffffff?text=Test+Image';
+  }
+  
+  return directUrl;
+  
+  // If direct URLs don't work, we'll uncomment the proxy version below
+  // const proxiedUrl = toProxy(directUrl);
+  // console.log(`Using proxied poster URL: ${proxiedUrl}`);
+  // return proxiedUrl;
 }
 
 // Removed quickImgCheck function since we're using proxy URLs

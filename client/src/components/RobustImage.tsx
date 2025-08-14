@@ -23,17 +23,20 @@ export default function RobustImage({
   const imgRef = useRef<HTMLImageElement>(null);
 
   const handleLoad = () => {
+    console.log(`✓ Image loaded successfully: ${currentSrc}`);
     setIsLoading(false);
     setHasError(false);
     onLoad?.();
   };
 
   const handleError = () => {
+    console.log(`✗ Image failed to load: ${currentSrc}`);
     setIsLoading(false);
     setHasError(true);
     
     // Try fallback if available and not already using it
     if (fallbackSrc && currentSrc !== fallbackSrc) {
+      console.log(`Trying fallback: ${fallbackSrc}`);
       setCurrentSrc(fallbackSrc);
       setIsLoading(true);
       setHasError(false);
@@ -76,8 +79,6 @@ export default function RobustImage({
         className={`${className} ${isLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}
         onLoad={handleLoad}
         onError={handleError}
-        loading="lazy"
-        decoding="async"
       />
       {isLoading && (
         <div className={`absolute inset-0 bg-netflix-gray/20 animate-pulse ${className}`} />
