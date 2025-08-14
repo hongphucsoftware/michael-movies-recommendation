@@ -71,12 +71,15 @@ function toProxy(url: string): string {
   return `${PROXY}${encodeURIComponent(stripped)}&n=-1`; // n=-1 = no cache limit
 }
 
-// Simple poster URL generation - no pre-checking, just direct URLs
+// Poster URL generation using proxy to bypass Replit restrictions
 function buildPosterUrl(poster_path: string | null, backdrop_path: string | null): string {
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
-  return `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
+  const directUrl = `${TMDB_IMG}/${POSTER_SIZE}${basePath}`;
+  const proxiedUrl = toProxy(directUrl);
+  console.log(`Using proxied poster URL: ${proxiedUrl}`);
+  return proxiedUrl;
 }
 
 // Removed quickImgCheck function since we're using proxy URLs
@@ -153,8 +156,9 @@ export async function buildCatalogue(onProgress?: (message: string, stats?: { ok
     for (const r of combined) {
       const mediaType = r.media_type || (r.title ? "movie" : "tv");
       
-      // Generate proxied poster URL to bypass Replit CORS restrictions
+      // Generate poster URL
       const posterUrl = buildPosterUrl(r.poster_path, r.backdrop_path);
+      console.log(`Movie: ${r.title || r.name}, Poster: ${r.poster_path}, URL: ${posterUrl}`);
       imgOk++; // Count as success
       onProgress?.(`Processing trailers...`, { ok: imgOk, failed: imgFail });
 
