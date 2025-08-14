@@ -57,7 +57,9 @@ function AppEnhanced() {
         <div className="relative z-10 max-w-7xl mx-auto px-6 pt-32">
           <div className="glass-card p-12 rounded-2xl text-center">
             <Shuffle className="w-16 h-16 mx-auto mb-6 text-netflix-red animate-spin" />
-            <h2 className="text-3xl font-bold mb-4">Building Massive Catalogue</h2>
+            <h2 className="text-3xl font-bold mb-4">PickaFlick</h2>
+            <p className="text-electric-blue text-lg font-medium mb-2">Seconds now will save you hours later</p>
+            <p className="text-gray-300 text-base mb-6">Pick posters based on your gut feeling. Our AI learns your taste in real-time and curates the perfect trailer queue for you.</p>
             <p className="text-xl text-gray-300 mb-6">{loadingMessage}</p>
             <div className="flex justify-center gap-4">
               <Badge variant="secondary" className="text-lg px-4 py-2">

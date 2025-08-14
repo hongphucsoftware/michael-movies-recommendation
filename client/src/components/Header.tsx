@@ -17,9 +17,11 @@ export default function Header({ choices, onboardingComplete, catalogueSize, wat
               <Play className="text-white text-xl fill-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-gradient">Trailer Shuffle</h1>
-              <p className="text-gray-400 text-sm">
-                {catalogueSize ? `${catalogueSize} titles with trailers` : 'Discover your next obsession'}
+              <h1 className="text-3xl font-bold text-gradient">PickaFlick</h1>
+              <p className="text-electric-blue text-sm font-medium mb-1">Seconds now will save you hours later</p>
+              <p className="text-gray-400 text-xs">Pick posters based on your gut feeling. Our AI learns your taste in real-time and curates the perfect trailer queue for you.</p>
+              <p className="text-gray-500 text-xs mt-1">
+                {catalogueSize ? `${catalogueSize} titles with trailers` : ''}
                 {watchlistSize ? ` • ${watchlistSize} saved` : ''}
               </p>
             </div>

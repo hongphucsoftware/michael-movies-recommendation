@@ -1,10 +1,18 @@
 # Overview
 
-Trailer Shuffle is a React-based movie recommendation application that uses machine learning to learn user preferences and curate personalized trailer queues. The app employs a Netflix-style interface where users initially pick between movie poster pairs during an onboarding phase. Once enough preference data is collected, users can spin a "trailer wheel" to discover new content, rate trailers with thumbs up/down, and build a watchlist. The application uses browser localStorage for data persistence and features a responsive design with Tailwind CSS and shadcn/ui components.
+PickaFlick is a React-based movie recommendation application with the tagline "Seconds now will save you hours later" that uses machine learning to learn user preferences and curate personalized trailer queues from the authentic IMDb Top 250. The app employs a Netflix-style interface where users pick posters based on gut feeling during an onboarding phase. Our AI learns taste in real-time and curates the perfect trailer queue. Users can watch YouTube trailers with Skip/Save functionality and build a watchlist. The application uses browser localStorage for data persistence and features a responsive design with Tailwind CSS and shadcn/ui components.
 
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
+
+# Recent Changes (August 2025)
+
+- **Branding Update**: Changed from "Trailer Shuffle" to "PickaFlick" with new tagline "Seconds now will save you hours later" and description "Pick posters based on your gut feeling. Our AI learns your taste in real-time and curates the perfect trailer queue for you."
+- **Authentic Data Integration**: Switched from TMDb "top rated" to real IMDb Top 250 data via movie-monk-b0t repository for authentic classic movies
+- **Duplicate Prevention**: Enhanced ML choice system to prevent repeated poster pairs during onboarding
+- **Button Enhancement**: Improved trailer page button visibility with bright Netflix-themed colors and better contrast
+- **Title & SEO**: Updated document title and meta description to match new branding
 
 # System Architecture
 
@@ -37,6 +45,9 @@ The application implements a custom logistic regression model for learning user 
 
 ## Data Storage
 The application currently uses browser localStorage for all user data persistence, with a planned migration path to PostgreSQL database.
+
+## Data Sources
+The application now uses authentic IMDb Top 250 data sourced from the movie-monk-b0t GitHub repository (auto-updated every 6 hours) instead of TMDb's "top rated" endpoint. This provides real classic movies like "The Shawshank Redemption", "Whiplash", "WALL-E", and "Warrior". YouTube trailers are obtained by cross-referencing IMDb IDs with TMDb's database.
 
 **Key architectural decisions:**
 - **Development Storage**: localStorage for immediate functionality without backend dependencies
