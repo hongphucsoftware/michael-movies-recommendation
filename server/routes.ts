@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import fetch from "node-fetch";
+import { Readable } from "stream";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // TMDb Configuration
@@ -28,6 +29,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Test endpoint for image proxy (known working TMDb poster)
+  app.get("/imgtest", async (req, res) => {
+    try {
+      const demoUrl = "https://image.tmdb.org/t/p/w500/6DrHO1jr3qVrViUO6s6kFiAGM7.jpg";
+      console.log(`[imgtest] Fetching: ${demoUrl}`);
+      const response = await fetch(demoUrl);
+      
+      if (!response.ok) {
+        console.log(`[imgtest] Upstream error: ${response.status}`);
+        return res.status(response.status).send("Upstream error (imgtest)");
+      }
+      
+      res.set("Cache-Control", "public, max-age=86400");
+      res.set("Content-Type", response.headers.get("content-type") || "image/jpeg");
+      
+      // Use buffer approach for simplicity in testing
+      const buffer = Buffer.from(await response.arrayBuffer());
+      console.log(`[imgtest] Image buffered, size: ${buffer.length} bytes`);
+      res.end(buffer);
+    } catch (error) {
+      console.error(`[imgtest] Error:`, error);
+      res.status(502).send(`Proxy error (imgtest): ${error}`);
+    }
   });
 
   // TMDb API Proxies (hide API key + avoid CORS)
@@ -59,12 +85,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const contentType = response.headers.get("content-type") || "image/jpeg";
       res.set("Content-Type", contentType);
       
-      // Stream the image data
-      if (response.body) {
-        response.body.pipe(res);
-      } else {
-        res.status(500).send("No image data");
-      }
+      // Use simpler buffer approach for reliability  
+      const buffer = Buffer.from(await response.arrayBuffer());
+      console.log(`[img-proxy] Image buffered, size: ${buffer.length} bytes for ${imagePath}`);
+      res.end(buffer);
     } catch (e) {
       console.error("Image proxy error:", e);
       res.status(502).send("Proxy error");

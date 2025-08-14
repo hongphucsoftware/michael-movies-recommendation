@@ -1,0 +1,107 @@
+You’re right — this should be the easy part. I think we’ve hit a very specific gotcha: in my Node proxy I used node-fetch@3, whose response.body is a WHATWG stream, not a Node stream — so r.body.pipe(res) silently fails in many environments. That would make every poster “hang” (your “Loading…” symptom).
+
+Here’s a fixed proxy that converts the web stream to a Node stream (or buffers it). Paste these updates into your Node repl:
+
+✅ Replace your server.js with this
+import express from "express";
+import cors from "cors";
+import fetch from "node-fetch";
+import { Readable } from "stream";
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ===== CONFIG =====
+const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
+const TMDB_IMG_BASE = "https://image.tmdb.org";
+const TMDB_API_BASE = "https://api.themoviedb.org/3";
+
+app.use(cors());
+app.use(express.static("public"));
+
+// Simple health checks
+app.get("/ping", (_, res) => res.type("text/plain").send("pong"));
+app.get("/imgtest", async (_, res) => {
+  // Known working poster path (TMDb demo image)
+  const demo = `${TMDB_IMG_BASE}/t/p/w500/6DrHO1jr3qVrViUO6s6kFiAGM7.jpg`;
+  try {
+    const r = await fetch(demo);
+    if (!r.ok) return res.status(r.status).send("Upstream error (imgtest)");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.set("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    // convert WHATWG stream -> Node stream
+    if (r.body && Readable.fromWeb) {
+      Readable.fromWeb(r.body).pipe(res);
+    } else {
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.end(buf);
+    }
+  } catch (e) {
+    res.status(502).send("Proxy error (imgtest)");
+  }
+});
+
+// ---- JSON proxy helper (keeps your key server-side)
+async function proxyJSON(url, res) {
+  try {
+    const r = await fetch(url, { redirect: "follow" });
+    if (!r.ok) return res.status(r.status).send(await r.text());
+    res.set("Cache-Control", "public, max-age=300");
+    res.type("application/json");
+    res.send(await r.text());
+  } catch (e) {
+    res.status(502).json({ error: "Upstream error", detail: String(e) });
+  }
+}
+
+// ---- API endpoints
+app.get("/api/trending/:type", async (req, res) => {
+  const { type } = req.params; // movie | tv
+  const url = `${TMDB_API_BASE}/trending/${encodeURIComponent(type)}/week?api_key=${TMDB_KEY}&language=en-US`;
+  await proxyJSON(url, res);
+});
+
+app.get("/api/videos/:type/:id", async (req, res) => {
+  const { type, id } = req.params;
+  const url = `${TMDB_API_BASE}/${encodeURIComponent(type)}/${encodeURIComponent(id)}/videos?api_key=${TMDB_KEY}&language=en-US`;
+  await proxyJSON(url, res);
+});
+
+// ---- IMAGE proxy (the key fix is stream conversion)
+app.get("/img/*", async (req, res) => {
+  try {
+    const upstream = `${TMDB_IMG_BASE}/${req.params[0]}`; // e.g. t/p/w500/xxx.jpg
+    const r = await fetch(upstream, { redirect: "follow" });
+    if (!r.ok) return res.status(r.status).send("Upstream error");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.set("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    if (r.body && Readable.fromWeb) {
+      Readable.fromWeb(r.body).pipe(res);
+    } else {
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.end(buf);
+    }
+  } catch (e) {
+    res.status(502).send("Proxy error");
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Server on http://localhost:${PORT}`);
+  console.log(`Try /imgtest and /ping to sanity-check.`);
+});
+
+✅ Add this quick sanity test page: public/test.html
+
+This isolates images from the app logic. If this loads, the proxy is fixed.
+
+<!doctype html>
+<meta charset="utf-8" />
+<title>Proxy Image Test</title>
+<body style="font-family:system-ui;margin:24px">
+  <h1>Proxy Image Test</h1>
+  <p>If you see a poster below, the proxy works.</p>
+  <p><a href="/ping" target="_blank">/ping</a> • <a href="/imgtest" target="_blank">/imgtest</a></p>
+  <hr>
+  <img src="/img/t/p/w500/6DrHO1jr3qVrViUO6s6kFiAGM7.jpg" width="300" height="450" style="object-fit:cover;border-radius:12px;border:1px solid #ccc" />
+</body>
