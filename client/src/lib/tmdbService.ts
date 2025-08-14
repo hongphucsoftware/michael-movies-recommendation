@@ -67,8 +67,8 @@ function buildPosterUrl(poster_path: string | null, backdrop_path: string | null
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
-  // Use our local image proxy: /img/t/p/w500/poster.jpg
-  const localProxyUrl = `${IMG_BASE}/t/p/${POSTER_SIZE}${basePath}`;
+  // Use "original" size for maximum reliability (TMDb always has original)
+  const localProxyUrl = `${IMG_BASE}/t/p/original${basePath}`;
   console.log(`Using local proxy poster URL: ${localProxyUrl}`);
   return localProxyUrl;
 }

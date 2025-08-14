@@ -82,6 +82,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       res.set("Cache-Control", "public, max-age=86400"); // 1 day cache
+      res.set("Access-Control-Allow-Origin", "*"); // CORS header for embeds
       const contentType = response.headers.get("content-type") || "image/jpeg";
       res.set("Content-Type", contentType);
       
