@@ -1,0 +1,162 @@
+import { Movie } from "@/types/movie";
+
+// Seed data with 12-dimensional feature vectors
+// Feature vector: [Comedy,Drama,Action,Thriller,SciFi,Fantasy,Doc,LightTone,DarkTone,FastPace,SlowPace,EpLenShort]
+export const movies: Movie[] = [
+  {
+    id: "tt1375666",
+    name: "Inception",
+    year: 2010,
+    poster: "https://image.tmdb.org/t/p/w500/qmDpIHrmpJINaRKAfWQfftjCdyi.jpg",
+    yt: "8hP9D6kZseM",
+    isSeries: false,
+    lenShort: 0,
+    tags: ["Sci-Fi", "Thriller", "Mind-bend"],
+    x: [0, 0.2, 0.4, 0.5, 0.7, 0.2, 0, 0.2, 0.7, 0.7, 0.3, 0],
+    rating: 8.8,
+    duration: "2h 28m"
+  },
+  {
+    id: "tt0903747",
+    name: "Breaking Bad",
+    year: 2008,
+    poster: "https://image.tmdb.org/t/p/w500/ggFHVNu6YYI5L9pCfOacjizRGt.jpg",
+    yt: "HhesaQXLuRY",
+    isSeries: true,
+    lenShort: 0,
+    tags: ["Crime", "Drama", "Tense"],
+    x: [0, 0.6, 0.2, 0.6, 0.1, 0.1, 0, 0.2, 0.8, 0.6, 0.4, 0],
+    rating: 9.5,
+    duration: "5 Seasons"
+  },
+  {
+    id: "tt7366338",
+    name: "Chernobyl",
+    year: 2019,
+    poster: "https://image.tmdb.org/t/p/w500/hlLXt2tOPT6RRnjiUmoxyG1LTFi.jpg",
+    yt: "s9APLXM9Ei8",
+    isSeries: true,
+    lenShort: 0,
+    tags: ["Miniseries", "Drama", "Dark"],
+    x: [0, 0.8, 0.1, 0.7, 0, 0, 0.4, 0.1, 0.9, 0.3, 0.7, 0],
+    rating: 9.4,
+    duration: "5 Episodes"
+  },
+  {
+    id: "tt4574334",
+    name: "Stranger Things",
+    year: 2016,
+    poster: "https://image.tmdb.org/t/p/w500/x2LSRK2Cm7MZhjluni1msVJ3wDF.jpg",
+    yt: "b9EkMc79ZSU",
+    isSeries: true,
+    lenShort: 0,
+    tags: ["80s", "Supernatural", "Adventure"],
+    x: [0.2, 0.4, 0.2, 0.4, 0.4, 0.6, 0, 0.5, 0.5, 0.6, 0.4, 0],
+    rating: 8.7,
+    duration: "4 Seasons"
+  },
+  {
+    id: "tt4154756",
+    name: "Avengers: Infinity War",
+    year: 2018,
+    poster: "https://image.tmdb.org/t/p/w500/7WsyChQLEftFiDOVTGkv3hFpyyt.jpg",
+    yt: "6ZfuNTqbHE8",
+    isSeries: false,
+    lenShort: 0,
+    tags: ["Action", "Superhero", "Epic"],
+    x: [0.2, 0.2, 0.9, 0.5, 0.4, 0.3, 0, 0.6, 0.4, 0.8, 0.2, 0],
+    rating: 8.4,
+    duration: "2h 29m"
+  },
+  {
+    id: "tt2395695",
+    name: "Zootopia",
+    year: 2016,
+    poster: "https://image.tmdb.org/t/p/w500/sM33SANp9z6rXW8Itn7NnG1GOEs.jpg",
+    yt: "jWM0ct-OLsM",
+    isSeries: false,
+    lenShort: 0,
+    tags: ["Animated", "Buddy", "Uplifting"],
+    x: [0.8, 0.2, 0.1, 0.1, 0.2, 0.3, 0, 0.9, 0.1, 0.7, 0.3, 0],
+    rating: 8.0,
+    duration: "1h 48m"
+  },
+  {
+    id: "tt1839578",
+    name: "Person of Interest",
+    year: 2011,
+    poster: "https://image.tmdb.org/t/p/w500/7nO3Ohv1cW5x2dlr5XxhxL7sRK1.jpg",
+    yt: "xqdEno1X5G0",
+    isSeries: true,
+    lenShort: 0,
+    tags: ["Surveillance", "Action", "Thriller"],
+    x: [0.1, 0.5, 0.4, 0.7, 0.2, 0.1, 0, 0.2, 0.8, 0.7, 0.3, 0],
+    rating: 8.8,
+    duration: "5 Seasons"
+  },
+  {
+    id: "tt1119646",
+    name: "The Hangover",
+    year: 2009,
+    poster: "https://image.tmdb.org/t/p/w500/kfX8Ctin3fSZbdnjh6CXSNZUOVP.jpg",
+    yt: "tcdUhdOlz9M",
+    isSeries: false,
+    lenShort: 0,
+    tags: ["Comedy", "Buddy", "Chaos"],
+    x: [0.95, 0.1, 0, 0.1, 0, 0, 0, 0.9, 0.1, 0.8, 0.2, 1],
+    rating: 7.7,
+    duration: "1h 40m"
+  },
+  {
+    id: "tt2395427",
+    name: "Avengers: Age of Ultron",
+    year: 2015,
+    poster: "https://image.tmdb.org/t/p/w500/4ssDuvEDkSArWEdyBl2X5EHvYKU.jpg",
+    yt: "tmeOjFno6Do",
+    isSeries: false,
+    lenShort: 0,
+    tags: ["Action", "Superhero"],
+    x: [0.2, 0.2, 0.85, 0.5, 0.3, 0.3, 0, 0.5, 0.5, 0.8, 0.2, 0],
+    rating: 7.3,
+    duration: "2h 21m"
+  },
+  {
+    id: "tt6468322",
+    name: "Money Heist",
+    year: 2017,
+    poster: "https://image.tmdb.org/t/p/w500/reEMJA1uzscCbkpeRJeTT2bjqUp.jpg",
+    yt: "To_kVMMu-Ls",
+    isSeries: true,
+    lenShort: 0,
+    tags: ["Heist", "Thriller", "Spanish"],
+    x: [0.1, 0.6, 0.3, 0.8, 0, 0, 0, 0.2, 0.8, 0.7, 0.3, 0],
+    rating: 8.2,
+    duration: "5 Seasons"
+  },
+  {
+    id: "tt2861424",
+    name: "Rick and Morty",
+    year: 2013,
+    poster: "https://image.tmdb.org/t/p/w500/qJDFGIBvS9KJfUw7xupddzr2C1I.jpg",
+    yt: "Ej6K3Zw8I9Q",
+    isSeries: true,
+    lenShort: 1,
+    tags: ["Adult Animation", "Sci-Fi", "Absurd"],
+    x: [0.9, 0.1, 0.1, 0.1, 0.6, 0.4, 0, 0.9, 0.1, 0.9, 0.1, 1],
+    rating: 9.2,
+    duration: "7 Seasons"
+  },
+  {
+    id: "tt1475582",
+    name: "Sherlock",
+    year: 2010,
+    poster: "https://image.tmdb.org/t/p/w500/f9zGxLHGyQB10cMDZNY5ZcGKhZi.jpg",
+    yt: "xK7S9mrFWL4",
+    isSeries: true,
+    lenShort: 0,
+    tags: ["Mystery", "Witty", "Detective"],
+    x: [0.3, 0.5, 0.2, 0.7, 0.2, 0.1, 0, 0.5, 0.6, 0.7, 0.3, 0],
+    rating: 9.1,
+    duration: "4 Seasons"
+  }
+];
