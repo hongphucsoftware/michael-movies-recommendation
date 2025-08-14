@@ -186,52 +186,54 @@ export function EnhancedTrailerWheelSection({
       </div>
 
       {/* Action Buttons */}
-      <div className="flex flex-wrap gap-3 justify-center">
+      <div className="flex flex-wrap gap-4 justify-center p-6 bg-black/20 rounded-xl border border-gray-800">
         <Button
           onClick={() => showNext({ hide: true })}
           variant="destructive"
           size="lg"
+          className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 shadow-lg"
           data-testid="button-hide"
         >
-          <EyeOff className="w-4 h-4 mr-2" />
+          <EyeOff className="w-5 h-5 mr-2" />
           Hide
         </Button>
         
         <Button
           onClick={() => showNext({ skip: true })}
-          variant="outline"
           size="lg"
+          className="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-6 py-3 shadow-lg border border-gray-600"
           data-testid="button-skip"
         >
-          <SkipForward className="w-4 h-4 mr-2" />
+          <SkipForward className="w-5 h-5 mr-2" />
           Skip
         </Button>
         
         <Button
           onClick={() => showNext({ save: true })}
           size="lg"
+          className="bg-netflix-red hover:bg-red-700 text-white font-semibold px-6 py-3 shadow-lg"
           data-testid="button-save"
         >
-          <Heart className="w-4 h-4 mr-2" />
+          <Heart className="w-5 h-5 mr-2" />
           Save
         </Button>
         
         <Button
           onClick={() => showNext()}
-          variant="outline"
           size="lg"
+          className="bg-electric-blue hover:bg-blue-600 text-white font-semibold px-6 py-3 shadow-lg"
           data-testid="button-next"
         >
-          <Play className="w-4 h-4 mr-2" />
+          <Play className="w-5 h-5 mr-2" />
           Next
         </Button>
       </div>
 
       {/* Controls */}
-      <div className="flex flex-wrap gap-3 justify-center">
+      <div className="flex flex-wrap gap-3 justify-center mt-4">
         <Button
           onClick={surpriseMe}
-          variant="ghost"
+          className="bg-purple-600 hover:bg-purple-700 text-white font-medium px-4 py-2 shadow"
           data-testid="button-surprise"
         >
           <Shuffle className="w-4 h-4 mr-2" />
@@ -240,16 +242,18 @@ export function EnhancedTrailerWheelSection({
         
         <Button
           onClick={() => onExplorationChange(Math.max(0.02, explorationRate - 0.05))}
-          variant="ghost"
+          variant="outline"
           size="sm"
+          className="bg-gray-800 hover:bg-gray-700 text-white border-gray-600"
         >
           − Less Wild
         </Button>
         
         <Button
           onClick={() => onExplorationChange(Math.min(0.35, explorationRate + 0.05))}
-          variant="ghost"
+          variant="outline"
           size="sm"
+          className="bg-gray-800 hover:bg-gray-700 text-white border-gray-600"
         >
           + More Wild
         </Button>
