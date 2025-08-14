@@ -7,6 +7,8 @@ export function useMovieData() {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState("Initializing...");
+  const [posterStats, setPosterStats] = useState<{ ok: number; failed: number } | undefined>();
 
   // Load movies from TMDb on initialization
   useEffect(() => {
@@ -33,7 +35,10 @@ export function useMovieData() {
         }
 
         // Fetch fresh data from TMDb
-        const fetchedMovies = await buildCatalogue();
+        const fetchedMovies = await buildCatalogue((message, stats) => {
+          setLoadingMessage(message);
+          setPosterStats(stats);
+        });
         
         if (isMounted) {
           if (fetchedMovies.length === 0) {
@@ -100,6 +105,8 @@ export function useMovieData() {
     movies,
     isLoading,
     error,
+    loadingMessage,
+    posterStats,
     currentTrailer,
     playTrailer,
     clearTrailer,

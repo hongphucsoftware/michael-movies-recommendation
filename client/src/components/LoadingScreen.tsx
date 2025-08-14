@@ -1,39 +1,11 @@
-import { useEffect, useState } from "react";
-import { Loader2, Film, Tv } from "lucide-react";
+import { Loader2, Film, Tv, Image, Check } from "lucide-react";
 
 interface LoadingScreenProps {
-  onComplete: () => void;
+  message: string;
+  posterStats?: { ok: number; failed: number };
 }
 
-export default function LoadingScreen({ onComplete }: LoadingScreenProps) {
-  const [loadingMessage, setLoadingMessage] = useState("Fetching trending movies...");
-  const [progress, setProgress] = useState(0);
-
-  useEffect(() => {
-    const messages = [
-      "Fetching trending movies...",
-      "Getting TV shows...", 
-      "Finding trailers...",
-      "Building your catalog...",
-      "Almost ready!"
-    ];
-
-    let currentIndex = 0;
-    const interval = setInterval(() => {
-      if (currentIndex < messages.length - 1) {
-        currentIndex++;
-        setLoadingMessage(messages[currentIndex]);
-        setProgress((currentIndex / (messages.length - 1)) * 100);
-      } else {
-        clearInterval(interval);
-        setTimeout(() => {
-          onComplete();
-        }, 500);
-      }
-    }, 1500);
-
-    return () => clearInterval(interval);
-  }, [onComplete]);
+export default function LoadingScreen({ message, posterStats }: LoadingScreenProps) {
 
   return (
     <section className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
@@ -55,24 +27,23 @@ export default function LoadingScreen({ onComplete }: LoadingScreenProps) {
         <div className="space-y-4">
           <div className="flex items-center justify-center space-x-3 text-lg">
             <div className="w-6 h-6 flex items-center justify-center">
-              {loadingMessage.includes("movie") && <Film className="w-5 h-5 text-netflix-red" />}
-              {loadingMessage.includes("TV") && <Tv className="w-5 h-5 text-electric-blue" />}
-              {loadingMessage.includes("trailer") && <span className="text-yellow-400">🎬</span>}
-              {loadingMessage.includes("catalog") && <span className="text-green-400">📚</span>}
-              {loadingMessage.includes("ready") && <span className="text-purple-400">✨</span>}
+              {message?.includes("movie") && <Film className="w-5 h-5 text-netflix-red" />}
+              {message?.includes("TV") && <Tv className="w-5 h-5 text-electric-blue" />}
+              {message?.includes("poster") && <Image className="w-5 h-5 text-yellow-400" />}
+              {message?.includes("trailer") && <span className="text-yellow-400">🎬</span>}
+              {message?.includes("ready") && <Check className="w-5 h-5 text-green-400" />}
             </div>
-            <span className="text-white font-medium">{loadingMessage}</span>
+            <span className="text-white font-medium">{message}</span>
           </div>
 
-          <div className="w-full max-w-md mx-auto">
-            <div className="w-full bg-netflix-gray rounded-full h-2 overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-netflix-red to-electric-blue h-full rounded-full transition-all duration-500 progress-glow" 
-                style={{ width: `${progress}%` }}
-              />
+          {posterStats && (
+            <div className="text-sm text-gray-400">
+              <span className="text-green-400">{posterStats.ok} posters loaded</span>
+              {posterStats.failed > 0 && (
+                <span className="text-red-400"> • {posterStats.failed} failed (using placeholders)</span>
+              )}
             </div>
-            <p className="text-sm text-gray-500 mt-2">{Math.round(progress)}% complete</p>
-          </div>
+          )}
         </div>
 
         <div className="mt-8 text-sm text-gray-500">

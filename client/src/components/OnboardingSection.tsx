@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Movie } from "@/types/movie";
 import { TARGET_CHOICES } from "@/lib/mlUtils";
 import { Lightbulb, Minus, Plus, SkipForward, MousePointer } from "lucide-react";
+import RobustImage from "./RobustImage";
 
 interface OnboardingSectionProps {
   currentPair: [Movie, Movie] | null;
@@ -91,7 +92,7 @@ export default function OnboardingSection({
           >
             <div className="gradient-border">
               <div className="p-6">
-                <img 
+                <RobustImage 
                   src={movieA.poster} 
                   alt={`${movieA.name} poster`} 
                   className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-shadow duration-300"
@@ -127,7 +128,7 @@ export default function OnboardingSection({
           >
             <div className="gradient-border">
               <div className="p-6">
-                <img 
+                <RobustImage 
                   src={movieB.poster} 
                   alt={`${movieB.name} poster`} 
                   className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-shadow duration-300"

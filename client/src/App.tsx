@@ -12,6 +12,8 @@ function App() {
     movies, 
     isLoading, 
     error, 
+    loadingMessage,
+    posterStats,
     playTrailer, 
     refreshMovies 
   } = useMovieData();
@@ -50,7 +52,7 @@ function App() {
           ></div>
         </div>
         <Header choices={0} onboardingComplete={false} />
-        <LoadingScreen onComplete={() => {}} />
+        <LoadingScreen message={loadingMessage} posterStats={posterStats} />
       </div>
     );
   }

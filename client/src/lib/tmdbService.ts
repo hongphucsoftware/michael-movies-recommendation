@@ -2,7 +2,13 @@ import { Movie } from "@/types/movie";
 
 const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
 const TMDB_IMG = "https://image.tmdb.org/t/p";
-const POSTER_SIZE = "w500";
+const POSTER_SIZES = ["w500", "w342", "w780", "original"]; // try multiple sizes for reliability
+const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
+  `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='900'>
+     <rect width='100%' height='100%' fill='#0f141b'/>
+     <text x='50%' y='50%' fill='#6f7d92' font-size='22' font-family='Arial' text-anchor='middle'>No Poster</text>
+   </svg>`
+);
 
 interface TMDbMovie {
   id: number;
@@ -57,8 +63,31 @@ async function fetchVideos(mediaType: 'movie' | 'tv', id: number) {
   return fetchJSON(url);
 }
 
-function buildPosterUrl(path: string | null): string | null {
-  return path ? `${TMDB_IMG}/${POSTER_SIZE}${path}` : null;
+// Robust poster resolution with fallback and preflight test
+async function resolvePosterPath(poster_path: string | null, backdrop_path: string | null): Promise<string | null> {
+  const basePath = poster_path || backdrop_path;
+  if (!basePath) return PLACEHOLDER;
+  
+  for (const size of POSTER_SIZES) {
+    const url = `${TMDB_IMG}/${size}${basePath}`;
+    const isValid = await quickImgCheck(url);
+    if (isValid) return url;
+  }
+  return PLACEHOLDER;
+}
+
+function quickImgCheck(url: string): Promise<boolean> {
+  // Using <img> load events is more reliable than HEAD on many CDNs
+  return new Promise(resolve => {
+    const img = new Image();
+    img.referrerPolicy = "no-referrer";
+    img.loading = "eager";
+    img.decoding = "async";
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
 }
 
 function featureFromGenres(genre_ids: number[], mediaType: string): number[] {
@@ -107,25 +136,38 @@ function genreLabel(id: number): string {
   }
 }
 
-export async function buildCatalogue(): Promise<Movie[]> {
+export async function buildCatalogue(onProgress?: (message: string, stats?: { ok: number; failed: number }) => void): Promise<Movie[]> {
   try {
-    // Fetch trending content
-    const [moviesData, tvData] = await Promise.all([
-      fetchTrending("movie"),
-      fetchTrending("tv")
-    ]);
+    let imgOk = 0;
+    let imgFail = 0;
+
+    onProgress?.("Fetching trending movies...");
+    const moviesData = await fetchTrending("movie");
+    
+    onProgress?.("Fetching trending TV shows...");
+    const tvData = await fetchTrending("tv");
 
     // Combine and sort by popularity
     const combined = [...(moviesData.results || []), ...(tvData.results || [])]
-      .filter((r: TMDbMovie) => r && (r.poster_path || r.backdrop_path))
+      .filter((r: TMDbMovie) => r)
       .sort((a: TMDbMovie, b: TMDbMovie) => (b.popularity || 0) - (a.popularity || 0))
-      .slice(0, 30);
+      .slice(0, 36);
 
-    // Fetch trailers for each title
+    onProgress?.("Resolving posters & trailers...");
     const movies: Movie[] = [];
     
     for (const r of combined) {
       const mediaType = r.media_type || (r.title ? "movie" : "tv");
+      
+      // Robust poster resolution with fallback checks
+      const posterUrl = await resolvePosterPath(r.poster_path, r.backdrop_path);
+      if (posterUrl === PLACEHOLDER) {
+        imgFail++;
+      } else {
+        imgOk++;
+      }
+      onProgress?.(`Resolving posters & trailers...`, { ok: imgOk, failed: imgFail });
+
       try {
         const vidsData = await fetchVideos(mediaType as 'movie' | 'tv', r.id);
         const trailer = (vidsData.results || []).find((v: TMDbVideo) => 
@@ -133,9 +175,6 @@ export async function buildCatalogue(): Promise<Movie[]> {
         );
         
         if (!trailer) continue;
-
-        const poster = buildPosterUrl(r.poster_path || r.backdrop_path);
-        if (!poster) continue;
 
         const name = r.title || r.name || "Untitled";
         const year = (r.release_date || r.first_air_date || "").slice(0, 4) || "Unknown";
@@ -148,7 +187,7 @@ export async function buildCatalogue(): Promise<Movie[]> {
           id: `${mediaType}_${r.id}`,
           name,
           year: parseInt(year) || 2024,
-          poster,
+          poster: posterUrl || PLACEHOLDER,
           yt: trailer.key,
           isSeries: mediaType === "tv",
           lenShort: (mediaType === "tv" && (r.genre_ids || []).includes(GENRE.Comedy)) ? 1 : 0,
@@ -159,7 +198,7 @@ export async function buildCatalogue(): Promise<Movie[]> {
         });
 
         // Small delay to be respectful to API
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, 40));
       } catch (e) {
         console.warn(`Failed to fetch trailer for ${r.title || r.name}:`, e);
         continue;
@@ -169,7 +208,6 @@ export async function buildCatalogue(): Promise<Movie[]> {
     return movies;
   } catch (error) {
     console.error("Failed to build catalogue:", error);
-    // Return empty array if API fails - we'll handle this in the UI
     return [];
   }
 }
