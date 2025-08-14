@@ -26,6 +26,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // Helper function to fetch text from URLs
+  async function fetchText(url: string): Promise<string> {
+    const r = await fetch(url, { redirect: "follow" });
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${url}`);
+    return r.text();
+  }
+
+  /**
+   * Parse IMDb Top page HTML and return [{imdbId, rank, title, year}]
+   * We target links like /title/tt1234567/ and read the visible title & year nearby.
+   */
+  function parseImdbTop(html: string, limit = 100) {
+    const out: Array<{imdbId: string, rank: number, title: string, year: string}> = [];
+    const seen = new Set<string>();
+    // Fallback-friendly: match title links and capture a window of text to extract name/year
+    const re = /\/title\/(tt\d{7,8})\/[^>]*>([^<]+)<\/a>[\s\S]{0,120}?\((\d{4})\)/g;
+    let m, rank = 0;
+    while ((m = re.exec(html)) && out.length < limit) {
+      const imdbId = m[1];
+      const title = m[2].trim();
+      const year = m[3];
+      if (seen.has(imdbId)) continue;
+      seen.add(imdbId);
+      rank += 1;
+      out.push({ imdbId, rank, title, year });
+    }
+    return out;
+  }
+
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -81,7 +110,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     await proxyJSON(url, res);
   });
 
-  // Find movie by IMDb ID
+  /**
+   * GET /api/imdb/top100
+   * Scrapes IMDb Top 250 page and returns top 100 basic entries
+   * Source: https://www.imdb.com/chart/top/
+   */
+  app.get("/api/imdb/top100", async (req, res) => {
+    try {
+      const html = await fetchText("https://www.imdb.com/chart/top/");
+      const items = parseImdbTop(html, 100);
+      if (!items.length) {
+        // try the "simple" view as a fallback
+        const html2 = await fetchText("https://www.imdb.com/chart/top/?mode=simple");
+        const items2 = parseImdbTop(html2, 100);
+        return res.json({ items: items2 });
+      }
+      res.json({ items });
+    } catch (e) {
+      res.status(502).json({ error: "Failed to fetch IMDb Top 100", detail: String(e) });
+    }
+  });
+
+  /**
+   * GET /api/tmdb/find/:imdbId
+   * Map an IMDb ID to TMDb movie via /find
+   */
+  app.get("/api/tmdb/find/:imdbId", async (req, res) => {
+    const { imdbId } = req.params;
+    try {
+      const url = `${TMDB_API_BASE}/find/${encodeURIComponent(imdbId)}?api_key=${TMDB_KEY}&external_source=imdb_id`;
+      const r = await fetch(url, { redirect: "follow" });
+      if (!r.ok) return res.status(r.status).send(await r.text());
+      const data = await r.json() as any;
+      // Prefer movie_results; fall back if ever needed
+      const movie = (data.movie_results && data.movie_results[0]) || null;
+      res.json({ movie });
+    } catch (e) {
+      res.status(502).json({ error: "Failed to map IMDb → TMDb", detail: String(e) });
+    }
+  });
+
+  // Legacy find endpoint for backwards compatibility
   app.get("/api/find/:imdb_id", async (req, res) => {
     const { imdb_id } = req.params;
     const url = `${TMDB_API_BASE}/find/${encodeURIComponent(imdb_id)}?external_source=imdb_id&api_key=${TMDB_KEY}&language=en-US`;
@@ -91,7 +160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Image proxy for TMDb posters (bulletproof image loading)
   app.get("/img/*", async (req, res) => {
     try {
-      const imagePath = req.params['0'] || '';
+      const imagePath = (req.params as any)['0'] || '';
       const upstream = `${TMDB_IMG_BASE}/${imagePath}`; // e.g. t/p/w500/xxx.jpg
       console.log(`Proxying image: ${upstream}`);
       
