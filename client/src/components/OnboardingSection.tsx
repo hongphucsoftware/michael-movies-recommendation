@@ -86,18 +86,19 @@ export default function OnboardingSection({
         <div className="grid md:grid-cols-2 gap-8 mb-8">
           {/* Left Poster */}
           <div 
-            className="poster-card group cursor-pointer" 
+            className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl" 
             onClick={() => onSelectPoster(movieA, movieB)}
             data-testid="poster-left"
           >
-            <div className="gradient-border">
-              <div className="p-6">
+            <div className="gradient-border relative overflow-hidden">
+              {/* Hover overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-netflix-red/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
+              <div className="p-6 relative">
                 <RobustImage 
                   src={movieA.poster} 
                   alt={`${movieA.name} poster`} 
-                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-shadow duration-300"
-                  onLoad={() => console.log(`✓ Poster loaded: ${movieA.name} - ${movieA.poster}`)}
-                  onError={() => console.error(`✗ Poster failed: ${movieA.name} - ${movieA.poster}`)}
+                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-110"
+
                 />
                 
                 <div className="space-y-3">
@@ -117,6 +118,13 @@ export default function OnboardingSection({
                     <MousePointer className="text-netflix-red mr-2" size={16} />
                     <span className="text-sm text-gray-300">Click to choose</span>
                   </div>
+                  
+                  {/* Selection overlay */}
+                  <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:scale-100 scale-75 z-20">
+                    <div className="bg-netflix-red text-white px-3 py-1 rounded-full text-sm font-bold shadow-lg">
+                      CHOOSE THIS
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -124,18 +132,19 @@ export default function OnboardingSection({
 
           {/* Right Poster */}
           <div 
-            className="poster-card group cursor-pointer" 
+            className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl" 
             onClick={() => onSelectPoster(movieB, movieA)}
             data-testid="poster-right"
           >
-            <div className="gradient-border">
-              <div className="p-6">
+            <div className="gradient-border relative overflow-hidden">
+              {/* Hover overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-electric-blue/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 rounded-xl"></div>
+              <div className="p-6 relative">
                 <RobustImage 
                   src={movieB.poster} 
                   alt={`${movieB.name} poster`} 
-                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-shadow duration-300"
-                  onLoad={() => console.log(`✓ Poster loaded: ${movieB.name} - ${movieB.poster}`)}
-                  onError={() => console.error(`✗ Poster failed: ${movieB.name} - ${movieB.poster}`)}
+                  className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-110"
+
                 />
                 
                 <div className="space-y-3">
@@ -154,6 +163,13 @@ export default function OnboardingSection({
                   <div className="flex items-center mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
                     <MousePointer className="text-netflix-red mr-2" size={16} />
                     <span className="text-sm text-gray-300">Click to choose</span>
+                  </div>
+                  
+                  {/* Selection overlay */}
+                  <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:scale-100 scale-75 z-20">
+                    <div className="bg-electric-blue text-white px-3 py-1 rounded-full text-sm font-bold shadow-lg">
+                      CHOOSE THIS
+                    </div>
                   </div>
                 </div>
               </div>
