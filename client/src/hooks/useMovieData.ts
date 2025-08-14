@@ -24,15 +24,10 @@ export function useMovieData() {
         const cacheTime = localStorage.getItem('tmdb_cache_time');
         const now = Date.now();
         
-        // Use cache if it's less than 1 hour old
-        if (cached && cacheTime && (now - parseInt(cacheTime) < 3600000)) {
-          const cachedMovies = JSON.parse(cached);
-          if (isMounted && cachedMovies.length > 0) {
-            setMovies(cachedMovies);
-            setIsLoading(false);
-            return;
-          }
-        }
+        // Temporarily disable cache for debugging
+        console.log("Forcing fresh data fetch for debugging...");
+        localStorage.removeItem('tmdb_movies');
+        localStorage.removeItem('tmdb_cache_time');
 
         // Fetch fresh data from TMDb
         const fetchedMovies = await buildCatalogue((message, stats) => {

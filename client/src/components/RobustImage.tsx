@@ -76,8 +76,6 @@ export default function RobustImage({
         className={`${className} ${isLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}
         onLoad={handleLoad}
         onError={handleError}
-        crossOrigin="anonymous"
-        referrerPolicy="no-referrer"
         loading="lazy"
         decoding="async"
       />

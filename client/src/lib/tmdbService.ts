@@ -68,12 +68,20 @@ async function resolvePosterPath(poster_path: string | null, backdrop_path: stri
   const basePath = poster_path || backdrop_path;
   if (!basePath) return PLACEHOLDER;
   
+  // Try the primary poster URL first without checking (checking might be causing CORS issues)
+  const primaryUrl = `${TMDB_IMG}/w500${basePath}`;
+  console.log(`Trying poster URL: ${primaryUrl}`);
+  return primaryUrl;
+  
+  // Commenting out the checking for now to see if CORS is the issue
+  /*
   for (const size of POSTER_SIZES) {
     const url = `${TMDB_IMG}/${size}${basePath}`;
     const isValid = await quickImgCheck(url);
     if (isValid) return url;
   }
   return PLACEHOLDER;
+  */
 }
 
 function quickImgCheck(url: string): Promise<boolean> {
@@ -84,8 +92,14 @@ function quickImgCheck(url: string): Promise<boolean> {
     img.loading = "eager";
     img.decoding = "async";
     img.crossOrigin = "anonymous";
-    img.onload = () => resolve(true);
-    img.onerror = () => resolve(false);
+    img.onload = () => {
+      console.log(`✓ Image loaded successfully: ${url}`);
+      resolve(true);
+    };
+    img.onerror = () => {
+      console.log(`✗ Image failed to load: ${url}`);
+      resolve(false);
+    };
     img.src = url;
   });
 }
@@ -141,11 +155,14 @@ export async function buildCatalogue(onProgress?: (message: string, stats?: { ok
     let imgOk = 0;
     let imgFail = 0;
 
+    console.log("Starting catalogue build...");
     onProgress?.("Fetching trending movies...");
     const moviesData = await fetchTrending("movie");
+    console.log("Movies data:", moviesData?.results?.length || 0, "items");
     
     onProgress?.("Fetching trending TV shows...");
     const tvData = await fetchTrending("tv");
+    console.log("TV data:", tvData?.results?.length || 0, "items");
 
     // Combine and sort by popularity
     const combined = [...(moviesData.results || []), ...(tvData.results || [])]
@@ -161,12 +178,8 @@ export async function buildCatalogue(onProgress?: (message: string, stats?: { ok
       
       // Robust poster resolution with fallback checks
       const posterUrl = await resolvePosterPath(r.poster_path, r.backdrop_path);
-      if (posterUrl === PLACEHOLDER) {
-        imgFail++;
-      } else {
-        imgOk++;
-      }
-      onProgress?.(`Resolving posters & trailers...`, { ok: imgOk, failed: imgFail });
+      imgOk++; // Count as success since we're not pre-checking
+      onProgress?.(`Processing trailers...`, { ok: imgOk, failed: imgFail });
 
       try {
         const vidsData = await fetchVideos(mediaType as 'movie' | 'tv', r.id);
