@@ -96,6 +96,8 @@ export default function OnboardingSection({
                   src={movieA.poster} 
                   alt={`${movieA.name} poster`} 
                   className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-shadow duration-300"
+                  onLoad={() => console.log(`✓ Poster loaded: ${movieA.name} - ${movieA.poster}`)}
+                  onError={() => console.error(`✗ Poster failed: ${movieA.name} - ${movieA.poster}`)}
                 />
                 
                 <div className="space-y-3">
@@ -132,6 +134,8 @@ export default function OnboardingSection({
                   src={movieB.poster} 
                   alt={`${movieB.name} poster`} 
                   className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-shadow duration-300"
+                  onLoad={() => console.log(`✓ Poster loaded: ${movieB.name} - ${movieB.poster}`)}
+                  onError={() => console.error(`✗ Poster failed: ${movieB.name} - ${movieB.poster}`)}
                 />
                 
                 <div className="space-y-3">
