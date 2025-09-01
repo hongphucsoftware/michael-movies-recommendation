@@ -61,58 +61,79 @@ export default function TrailerPlayer({
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
-  // Generate personalized explanation based on learned preferences - MUST be at top level
+  // Generate explanation based on actual selected movies - MUST be at top level
   const explanation = useMemo(() => {
-    if (!learnedVec || learnedVec.length < 12 || l2(learnedVec) < 0.1) {
-      return "Curated recommendations just for you";
-    }
-
-    const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
-    const preferences = [];
-    
-    // Genre preferences (stronger threshold for clear signals)
-    if (comedy > 0.7) preferences.push("comedy");
-    if (drama > 0.6) preferences.push("drama");
-    if (action > 0.7) preferences.push("action");
-    if (thriller > 0.6) preferences.push("thrillers");
-    if (scifi > 0.6) preferences.push("sci-fi");
-    if (fantasy > 0.6) preferences.push("fantasy");
-    if (doc > 0.5) preferences.push("documentaries");
-    
-    // Tone preferences
-    if (light > 0.6) preferences.push("feel-good stories");
-    if (dark > 0.6) preferences.push("intense dramas");
-    
-    // Pace preferences  
-    if (fast > 0.7) preferences.push("fast-paced films");
-    if (slow > 0.6) preferences.push("slower-paced narratives");
-    
-    // Era preference
-    if (recent > 0.6) preferences.push("recent releases");
-    else if (recent < 0.3) preferences.push("classic films");
-
-    if (preferences.length === 0) {
-      return "Based on your A/B choices, here are some diverse recommendations";
-    }
-    
-    if (preferences.length === 1) {
-      return `You seem to enjoy ${preferences[0]} — here are some great picks`;
-    }
-    
-    if (preferences.length === 2) {
-      return `Based on your taste for ${preferences[0]} and ${preferences[1]}`;
-    }
-    
-    // For 3+ preferences, pick the strongest ones
-    const top2 = preferences.slice(0, 2);
-    return `You enjoy ${top2[0]}, ${top2[1]}, and more — tailored just for you`;
-  }, [learnedVec]);
+    return "Based on your A/B choices, here are your personalized picks";
+  }, []);
 
   console.log('[TrailerPlayer] Received items:', items.length);
   console.log('[TrailerPlayer] Learned vector length:', learnedVec.length);
   console.log('[TrailerPlayer] Recent chosen IDs:', recentChosenIds.length);
   console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5)); // Show first 5 values
   console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
+
+  // Generate explanation based on actual movies in queue
+  const dynamicExplanation = useMemo(() => {
+    if (!queue.length) return explanation;
+    
+    // Analyze the actual movies selected
+    const genres = new Set<string>();
+    const decades = new Set<string>();
+    const isRecent = queue.filter(m => parseInt(m.year) >= 2015).length;
+    const isClassic = queue.filter(m => parseInt(m.year) <= 1990).length;
+    
+    // Extract genre info from titles (simple heuristics)
+    queue.forEach(movie => {
+      const title = movie.title.toLowerCase();
+      if (title.includes('batman') || title.includes('action') || movie.title.match(/bad boys|fast|furious/i)) genres.add('action');
+      if (title.includes('godfather') || title.includes('pulp fiction') || title.includes('goodfellas') || movie.title.match(/crime|gang|mafia/i)) genres.add('crime');
+      if (title.includes('comedy') || movie.title.match(/funny|laugh|comedy/i)) genres.add('comedy');
+      if (title.includes('drama') || movie.title.match(/oscar|academy/i)) genres.add('drama');
+      if (movie.title.match(/sci-fi|space|future|alien/i)) genres.add('sci-fi');
+      if (movie.title.match(/fantasy|magic|dragon|lord of the rings/i)) genres.add('fantasy');
+      if (movie.title.match(/horror|scary|ghost|zombie/i)) genres.add('horror');
+      if (movie.title.match(/romance|love|heart/i)) genres.add('romance');
+      if (movie.title.match(/animation|animated|pixar|disney/i)) genres.add('animation');
+      
+      const year = parseInt(movie.year);
+      if (year >= 2015) decades.add('recent');
+      else if (year >= 2000) decades.add('2000s');
+      else if (year >= 1990) decades.add('90s');
+      else if (year >= 1980) decades.add('80s');
+      else decades.add('classics');
+    });
+    
+    const genreList = Array.from(genres);
+    const eraList = Array.from(decades);
+    
+    // Build specific explanation
+    if (genreList.length === 0 && eraList.length === 0) {
+      return `Showing: ${queue.map(m => m.title).slice(0, 2).join(', ')}${queue.length > 2 ? ` and ${queue.length - 2} more` : ''}`;
+    }
+    
+    const parts = [];
+    if (genreList.length === 1) {
+      parts.push(genreList[0]);
+    } else if (genreList.length === 2) {
+      parts.push(`${genreList[0]} and ${genreList[1]}`);
+    } else if (genreList.length >= 3) {
+      parts.push(`${genreList[0]}, ${genreList[1]}, and more`);
+    }
+    
+    if (isRecent >= 3) {
+      parts.push('recent hits');
+    } else if (isClassic >= 3) {
+      parts.push('classic films');
+    } else if (eraList.size >= 2) {
+      parts.push('films across different eras');
+    }
+    
+    if (parts.length === 0) {
+      return `Your curated selection: ${queue[0]?.title}${queue.length > 1 ? ` and ${queue.length - 1} more` : ''}`;
+    }
+    
+    return `Your taste for ${parts.join(' and ')} — personalized for you`;
+  }, [queue, explanation]);
 
   // Build picks using the learned preferences
   const picks = useMemo(() => {
@@ -267,7 +288,7 @@ export default function TrailerPlayer({
           <div className="text-xs sm:text-sm opacity-60">{idx + 1} / {queue.length}</div>
         </div>
         <div className="text-xs sm:text-sm opacity-70 italic">
-          {explanation}
+          {dynamicExplanation}
         </div>
       </div>
 
