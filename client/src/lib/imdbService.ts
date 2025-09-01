@@ -98,9 +98,9 @@ export class IMDbService {
   // Build Top 100 IMDb movies catalogue using server endpoints
   async buildCatalogue(): Promise<Movie[]> {
     try {
-      // Check for cached catalogue first (30 minute cache) - cleared to force fresh processing
-      const cacheKey = 'ts_enhanced_catalogue_v3';
-      const timestampKey = 'ts_enhanced_timestamp_v3';
+      // Check for cached catalogue first (30 minute cache) - new version with poster fix
+      const cacheKey = 'ts_enhanced_catalogue_v4_poster_fix';
+      const timestampKey = 'ts_enhanced_timestamp_v4_poster_fix';
       const cachedData = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(timestampKey);
       const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
@@ -162,8 +162,12 @@ export class IMDbService {
         const youtubeKey = await this.getQualityYouTubeTrailer(tmdbId);
         if (!youtubeKey) continue;
 
-        // Poster: use YouTube thumb (rock-solid reliability)
-        const poster = this.posterFromYouTube(youtubeKey);
+        // Poster: use hybrid approach - TMDb poster as primary, YouTube thumb as fallback
+        const tmdbPoster = tmdbMovie.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbMovie.poster_path}` : null;
+        const youtubePoster = this.posterFromYouTube(youtubeKey);
+        
+        // Prefer TMDb poster for consistency, fallback to YouTube if needed
+        const poster = tmdbPoster || youtubePoster;
 
         // Use TMDb title as primary source
         const name = tmdbMovie.title || tmdbMovie.original_title || fallbackName || "Classic Movie";
@@ -227,6 +231,7 @@ export class IMDbService {
       }
       
       console.log(`✓ Background processing complete: ${existingMovies.length} total movies`);
+      console.log(`Movies by source: Classic=${existingMovies.filter(m => m.category === 'classic').length}, Recent=${existingMovies.filter(m => m.category === 'recent').length}`);
       
     } catch (error) {
       console.error('Background processing failed:', error);
