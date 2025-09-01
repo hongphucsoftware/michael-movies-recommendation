@@ -16,8 +16,9 @@ const DIMENSION = 12;
 
 export function useMLLearning(movies: Movie[]) {
   const [state, setState] = useState<MLState>(() => {
-    // Load from localStorage on initialization
-    const storedPrefs = localStorage.getItem('ts_preferences');
+    // Load from localStorage on initialization - namespace for enhanced catalogue
+    const STORAGE_KEY = 'ts_preferences_enhanced_v1'; // classics + 2020s
+    const storedPrefs = localStorage.getItem(STORAGE_KEY);
     const defaultPrefs: UserPreferences = {
       w: zeros(DIMENSION),
       explored: new Set<string>(),
@@ -52,8 +53,9 @@ export function useMLLearning(movies: Movie[]) {
     };
   });
 
-  // Persist to localStorage whenever preferences change
+  // Persist to localStorage whenever preferences change - use enhanced catalogue namespace
   useEffect(() => {
+    const STORAGE_KEY = 'ts_preferences_enhanced_v1'; // classics + 2020s
     const toStore = {
       w: state.preferences.w,
       explored: Array.from(state.preferences.explored),
@@ -62,7 +64,7 @@ export function useMLLearning(movies: Movie[]) {
       choices: state.preferences.choices,
       eps: state.preferences.eps
     };
-    localStorage.setItem('ts_preferences', JSON.stringify(toStore));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
   }, [state.preferences]);
 
   const nextPair = useCallback((): [Movie, Movie] => {

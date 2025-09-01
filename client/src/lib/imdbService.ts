@@ -37,25 +37,27 @@ export class IMDbService {
   };
 
   // Generate 12-dimensional feature vector from TMDb genre IDs
-  private generateFeatureVector(genreIds: number[]): number[] {
-    const hasGenre = (genreList: number[]) => 
-      genreList.some(g => genreIds.includes(g)) ? 1 : 0;
-    
-    const comedy = hasGenre(this.GENRES.Comedy);
-    const drama = hasGenre(this.GENRES.Drama);
-    const action = hasGenre(this.GENRES.Action);
-    const thriller = hasGenre(this.GENRES.Thriller);
-    const scifi = hasGenre(this.GENRES.SciFi);
-    const fantasy = hasGenre(this.GENRES.Fantasy);
-    const documentary = hasGenre(this.GENRES.Documentary);
-    
-    const lightTone = Math.min(1, comedy * 0.8 + fantasy * 0.4 + hasGenre(this.GENRES.Family) * 0.6 + hasGenre(this.GENRES.Romance) * 0.4);
-    const darkTone = Math.min(1, thriller * 0.6 + drama * 0.4 + hasGenre(this.GENRES.Horror) * 0.8 + hasGenre(this.GENRES.War) * 0.5);
-    const fastPace = Math.min(1, action * 0.8 + thriller * 0.6 + scifi * 0.4 + fantasy * 0.3);
-    const slowPace = Math.min(1, drama * 0.6 + documentary * 0.4 + hasGenre(this.GENRES.History) * 0.4);
-    const episodeLengthShort = 0; // Movies are not episodic
-    
-    return [comedy, drama, action, thriller, scifi, fantasy, documentary, lightTone, darkTone, fastPace, slowPace, episodeLengthShort];
+  // Generate 12-dim vector from TMDb genre IDs + era (keeps DIMENSION=12)
+  private generateFeatureVector(genreIds: number[], releaseYear?: number): number[] {
+    const has = (ids: number[]) => ids.some(g => genreIds.includes(g)) ? 1 : 0;
+
+    const comedy = has(this.GENRES.Comedy);
+    const drama  = has(this.GENRES.Drama);
+    const action = has(this.GENRES.Action);
+    const thrill = has([...this.GENRES.Thriller]);
+    const scifi  = has(this.GENRES.SciFi);
+    const fanim  = has([...this.GENRES.Fantasy, ...this.GENRES.Animation]);
+    const docu   = has(this.GENRES.Documentary);
+
+    const light  = Math.min(1, comedy*0.8 + fanim*0.4 + has(this.GENRES.Family)*0.6 + has(this.GENRES.Romance)*0.4);
+    const dark   = Math.min(1, thrill*0.6 + drama*0.4 + has(this.GENRES.Horror)*0.8 + has([80])*0.5);
+    const fast   = Math.min(1, action*0.8 + thrill*0.6 + scifi*0.4 + fanim*0.3);
+    const slow   = Math.min(1, drama*0.6 + docu*0.4);
+
+    // Slot 12 = "recentness" (movies only) - key fix for era distinction
+    const recent = (releaseYear && releaseYear >= 2020) ? 1 : 0;
+
+    return [comedy, drama, action, thrill, scifi, fanim, docu, light, dark, fast, slow, recent];
   }
 
   // Helper to call our server endpoints
@@ -98,9 +100,9 @@ export class IMDbService {
   // Build Top 100 IMDb movies catalogue using server endpoints
   async buildCatalogue(): Promise<Movie[]> {
     try {
-      // Check for cached catalogue first (30 minute cache) - new version with poster fix
-      const cacheKey = 'ts_enhanced_catalogue_v4_poster_fix';
-      const timestampKey = 'ts_enhanced_timestamp_v4_poster_fix';
+      // Check for cached catalogue first (30 minute cache) - v5 with era fix and poster improvements
+      const cacheKey = 'ts_enhanced_catalogue_v5_era_fix';
+      const timestampKey = 'ts_enhanced_timestamp_v5_era_fix';
       const cachedData = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(timestampKey);
       const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
@@ -172,6 +174,7 @@ export class IMDbService {
         // Use TMDb title as primary source
         const name = tmdbMovie.title || tmdbMovie.original_title || fallbackName || "Classic Movie";
         const year = (tmdbMovie.release_date || fallbackYear || "0000").slice(0, 4);
+        const yearNum = parseInt(year, 10) || undefined;
         const genreIds = Array.isArray(tmdbMovie.genre_ids) ? tmdbMovie.genre_ids : [];
 
         const tags: string[] = [];
@@ -185,7 +188,7 @@ export class IMDbService {
           youtube: youtubeKey,
           isSeries: false,
           tags,
-          features: this.generateFeatureVector(genreIds),
+          features: this.generateFeatureVector(genreIds, yearNum),
           imdbRank: rank,
           category: row.category || 'classic',
           source: row.source || 'imdb_top_250'

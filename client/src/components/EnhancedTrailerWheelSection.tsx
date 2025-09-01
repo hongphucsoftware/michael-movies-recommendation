@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Heart, Eye, EyeOff, SkipForward, Shuffle } from "lucide-react";
 
+// Diversity helper functions
+function dot(a: number[], b: number[]){ return a.reduce((s,v,i)=> s + (v||0)*(b[i]||0), 0); }
+function norm(a: number[]){ return Math.sqrt(dot(a,a)) || 1; }
+function cosine(a: number[], b: number[]){ return dot(a,b) / (norm(a)*norm(b)); }
+
 interface EnhancedTrailerWheelProps {
   movies: Movie[];
   preferences: {
@@ -31,6 +36,7 @@ export function EnhancedTrailerWheelSection({
   const [currentMovie, setCurrentMovie] = useState<Movie | null>(null);
   const [queue, setQueue] = useState<Movie[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [recentHistory, setRecentHistory] = useState<Movie[]>([]); // Track recent for diversity
 
   // ML scoring functions
   const dotProduct = (a: number[], b: number[]) => a.reduce((sum, val, i) => sum + val * b[i], 0);
@@ -43,28 +49,40 @@ export function EnhancedTrailerWheelSection({
     return notSeen + shortBonus;
   }, [preferences.explored]);
 
-  // Score and rank movies
+  // Score and rank movies with MMR-style diversity
   const rankMovies = useCallback(() => {
     const available = getAvailableMovies();
     if (available.length === 0) return [];
 
+    // Precompute an "average recent vector" for diversity
+    let recentVec: number[] | null = null;
+    if (recentHistory.length > 0) {
+      const d = recentHistory[0].features.length;
+      const sum = new Array(d).fill(0);
+      recentHistory.forEach(m => {
+        m.features.forEach((v, i) => sum[i] += (v || 0));
+      });
+      recentVec = sum.map(v => v / recentHistory.length);
+    }
+
+    const LAMBDA = 0.25; // diversity strength (tweak 0.2–0.35)
+
     const scored = available.map(movie => {
-      const baseScore = sigmoid(dotProduct(preferences.w, movie.features));
-      const novelty = calculateNovelty(movie);
-      return { movie, score: baseScore + novelty };
+      const base = sigmoid(dotProduct(preferences.w, movie.features));
+      const nov  = calculateNovelty(movie);
+      const div  = recentVec ? -LAMBDA * Math.max(0, cosine(movie.features, recentVec)) : 0;
+      return { movie, score: base + nov + div };
     });
 
-    // Sort by score
     scored.sort((a, b) => b.score - a.score);
 
-    // Apply exploration (epsilon-greedy)
+    // epsilon-greedy exploration unchanged
     if (Math.random() < explorationRate && scored.length > 6) {
       const k = 3 + Math.floor(Math.random() * Math.min(12, scored.length - 1));
       [scored[0], scored[k]] = [scored[k], scored[0]];
     }
-
-    return scored.map(item => item.movie);
-  }, [getAvailableMovies, preferences.w, calculateNovelty, explorationRate]);
+    return scored.map(s => s.movie);
+  }, [getAvailableMovies, preferences.w, calculateNovelty, explorationRate, recentHistory]);
 
   // Initialize and update queue
   useEffect(() => {
@@ -89,6 +107,9 @@ export function EnhancedTrailerWheelSection({
     
     // Mark as recent (for skip and normal next)
     onMarkRecent(currentMovie.id);
+    
+    // Track for diversity - key fix to prevent repetitive trailers
+    setRecentHistory(prev => [currentMovie, ...prev].slice(0, 6)); // keep last 6
 
     // Get next movie
     let nextQueue = [...queue];
