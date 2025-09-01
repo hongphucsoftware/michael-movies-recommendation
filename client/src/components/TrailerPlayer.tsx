@@ -57,22 +57,32 @@ function DebugPanel({ rows }: { rows: DebugRow[] }) {
     : "❌ Weak alignment";
 
   return (
-    <div className="fixed bottom-4 left-4 z-50 max-w-md p-3 rounded-xl bg-black/70 text-xs text-white border border-white/10">
-      <div className="font-semibold mb-1">Reco Debug</div>
-      <div>Verdict: <span className="font-medium">{verdict}</span></div>
-      <div>Avg cosine: <b>{avgCos}</b> · Avg genre match: <b>{avgGB}</b> · {brandDiversity}</div>
-      <div className="mt-1 opacity-80">
-        Coverage: {Object.entries(coverage).map(([k,v])=>`${k}:${v}`).join(" · ") || "n/a"}
+    <div className="fixed bottom-4 left-4 right-4 sm:right-auto sm:max-w-md z-50 p-3 rounded-xl bg-black/80 backdrop-blur-sm text-xs text-white border border-white/20 shadow-2xl">
+      <div className="font-semibold mb-2 text-sm">Recommendation Debug</div>
+      <div className="mb-1">
+        <span className="text-gray-300">Verdict:</span> <span className="font-medium">{verdict}</span>
       </div>
-      <div className="mt-2 max-h-40 overflow-auto space-y-1">
+      <div className="mb-2 text-xs">
+        <span className="text-gray-300">Avg cosine:</span> <b>{avgCos}</b> · 
+        <span className="text-gray-300"> Genre match:</span> <b>{avgGB}</b> · 
+        <span className="text-gray-300"> Diversity:</span> {brandDiversity}
+      </div>
+      <div className="mb-2 opacity-80 text-xs">
+        <span className="text-gray-300">Sources:</span> {Object.entries(coverage).map(([k,v])=>`${k}:${v}`).join(" · ") || "n/a"}
+      </div>
+      <div className="max-h-32 sm:max-h-40 overflow-auto space-y-1 text-xs">
         {rows.map(r => (
           <div key={r.id} className="border-t border-white/10 pt-1">
-            <div className="font-medium">{r.title}</div>
-            <div>cos={round(r.rel)} · genre={round(r.genreBias)} · antiPop={round(r.antiPop)} · final={round(r.final)}</div>
+            <div className="font-medium text-xs truncate">{r.title}</div>
+            <div className="text-xs opacity-80">
+              cos={round(r.rel)} · genre={round(r.genreBias)} · final={round(r.final)}
+            </div>
           </div>
         ))}
       </div>
-      <div className="mt-1 opacity-70">Press <b>D</b> to toggle</div>
+      <div className="mt-2 opacity-70 text-xs">
+        Press <b>D</b> to toggle · <span className="hidden sm:inline">Use arrow keys for navigation</span>
+      </div>
     </div>
   );
 }
@@ -311,16 +321,18 @@ export default function TrailerPlayer({
   const embed = current ? embeds[current.id] : null;
 
   return (
-    <div className="w-full max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-xl font-semibold">Your Trailer Reel</h2>
-        <div className="text-xs opacity-60">{idx + 1} / {queue.length}</div>
+    <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="flex items-center justify-between mb-4 sm:mb-6">
+        <h2 className="text-lg sm:text-xl font-semibold">Your Trailer Reel</h2>
+        <div className="text-xs sm:text-sm opacity-60">{idx + 1} / {queue.length}</div>
       </div>
 
       {current && (
-        <div className="mb-3">
-          <div className="text-lg font-medium mb-2">{current.title}</div>
-          <div className="aspect-video w-full rounded-xl overflow-hidden bg-black">
+        <div className="mb-4 sm:mb-6">
+          <div className="text-base sm:text-lg font-medium mb-3 sm:mb-4 text-center sm:text-left">
+            {current.title}
+          </div>
+          <div className="aspect-video w-full rounded-lg sm:rounded-xl overflow-hidden bg-black shadow-lg">
             {embed ? (
               <iframe
                 className="w-full h-full"
@@ -330,26 +342,43 @@ export default function TrailerPlayer({
                 allowFullScreen
               />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-sm opacity-80">
-                No trailer found for this title
+              <div className="w-full h-full flex items-center justify-center text-sm sm:text-base opacity-80 p-4">
+                <div className="text-center">
+                  <div className="mb-2">No trailer found for this title</div>
+                  <div className="text-xs opacity-60">Try the next recommendation</div>
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
         <button
           onClick={prev}
           disabled={!canPrev}
-          className={`px-3 py-2 rounded-lg ${canPrev ? "bg-neutral-800 hover:bg-neutral-700" : "bg-neutral-900 opacity-50 cursor-not-allowed"}`}>
-          ← Back
+          className={`flex-1 sm:flex-none px-4 py-3 sm:px-6 sm:py-3 rounded-lg text-sm sm:text-base font-medium transition-colors ${
+            canPrev 
+              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600" 
+              : "bg-neutral-900 opacity-50 cursor-not-allowed"
+          }`}>
+          <span className="flex items-center justify-center gap-2">
+            <span>←</span>
+            <span>Back</span>
+          </span>
         </button>
         <button
           onClick={next}
           disabled={!canNext}
-          className={`px-3 py-2 rounded-lg ${canNext ? "bg-neutral-800 hover:bg-neutral-700" : "bg-neutral-900 opacity-50 cursor-not-allowed"}`}>
-          Next →
+          className={`flex-1 sm:flex-none px-4 py-3 sm:px-6 sm:py-3 rounded-lg text-sm sm:text-base font-medium transition-colors ${
+            canNext 
+              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600" 
+              : "bg-neutral-900 opacity-50 cursor-not-allowed"
+          }`}>
+          <span className="flex items-center justify-center gap-2">
+            <span>Next</span>
+            <span>→</span>
+          </span>
         </button>
       </div>
 

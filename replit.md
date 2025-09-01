@@ -9,11 +9,12 @@ Preferred communication style: Simple, everyday language.
 # Recent Changes (September 2025)
 
 - **Enhanced A/B-Based Personalization (Sept 1)**: Fixed recommendation algorithm to properly reflect A/B test choices:
-  - **Genre Weight Learning**: Derives genre preferences from actual A/B picks with Laplace smoothing
-  - **Hybrid Scoring**: 55% cosine similarity + 40% genre bias + 5% jitter for balanced recommendations
-  - **Softmax Sampling**: Takes top 250 by score, then samples 5 with controlled randomness for variety
+  - **Tightened Alignment**: Upgraded to 65% cosine + 35% genre scoring with minimum taste filters (MIN_REL=0.35)
+  - **Quality Filtering**: Only considers top 120 scored titles with combo threshold (MIN_COMBO=0.28) for better correlation
+  - **Reduced Temperature**: Lowered softmax from 0.65 to 0.45 for tighter taste adherence while maintaining variety
   - **Brand Deduplication**: Caps to 1 per brand (no more 3x Batman variants in same queue)
-  - **Single Trailer Player**: Shows ONE trailer at a time with Skip/Next, exactly matching original build
+  - **Mobile-Responsive Design**: Fully responsive layout optimized for both mobile and desktop experiences
+  - **Debug Panel**: Shows alignment metrics with "Strong/Mild/Weak" verdict based on cosine similarity and genre correlation
 
 - **Complete Trailer System**: Implemented full personalized recommendation engine:
   - **Full Catalogue Access**: All 432 movies from 3 authentic sources (RT 2020, IMDb Top 250, IMDb List) 
