@@ -24,7 +24,7 @@ const IMG_BASE = "https://image.tmdb.org/t/p";
 const POSTER_SIZE = "w500";
 const BACKDROP_SIZE = "w780";
 const TTL = 1000 * 60 * 60 * 6; // 6h
-const CONCURRENCY = 4;
+const CONCURRENCY = 8;
 
 type RawTitle = { title: string; year?: number; src: string };
 type TMDbMovie = {
@@ -662,7 +662,7 @@ api.get("/trailers", async (req: Request, res: Response) => {
   try {
     let raw = String(req.query.ids ?? "");
     try { raw = decodeURIComponent(raw); } catch {}
-    const ids = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+    const ids = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n)).slice(0, 200); // allow up to 200 for candidate checks
     if (!ids.length) return res.json({ ok: true, trailers: {} });
 
     const tasks = ids.map((id) => async () => ({ id, embed: await bestYouTubeEmbedFor(id) }));
