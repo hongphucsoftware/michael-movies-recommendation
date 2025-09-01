@@ -11,7 +11,7 @@ Preferred communication style: Simple, everyday language.
 - **Performance Optimization**: Implemented smart caching and progressive loading - app now loads in seconds instead of minutes with 30-minute cache and background processing
 - **Latest Branding Update**: Updated to new tagline "Find Your Next Favourite in Minutes" with description "Tired of scrolling endlessly? We've flipped the script." Added detailed feature explanations for Quick Picks, Smart Match, and Trailer Feed
 - **UI Enhancement**: Removed all play button logos from trailer interface as requested, using Skip/Save buttons with appropriate icons instead
-- **Authentic Data Integration**: Switched from TMDb "top rated" to real IMDb Top 250 data via movie-monk-b0t repository for authentic classic movies
+- **Enhanced Catalogue System**: Combined authentic IMDb Top 50 classics with 50 best movies from 2020-2024, eliminating duplicates and providing both timeless and recent hits
 - **Duplicate Prevention**: Enhanced ML choice system to prevent repeated poster pairs during onboarding
 - **Button Enhancement**: Improved trailer page button visibility with bright Netflix-themed colors and better contrast
 - **Title & SEO**: Updated document title and meta description to match new branding

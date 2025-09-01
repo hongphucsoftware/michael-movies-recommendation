@@ -63,7 +63,7 @@ export function useEnhancedCatalogue() {
           ...prev, 
           isLoading: true, 
           error: null, 
-          loadingMessage: "Loading authentic IMDb Top 100..." 
+          loadingMessage: "Loading enhanced catalogue (classics + recent hits)..." 
         }));
 
         const savedState = loadSavedState();

@@ -77,6 +77,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return out;
   }
 
+  /**
+   * Parse IMDb custom list page to extract recent movies (2020-2024)
+   */
+  function parseImdbCustomList(html: string): Array<{imdbId: string, rank: number, title: string, year: string}> {
+    const out: Array<{imdbId: string, rank: number, title: string, year: string}> = [];
+    const seen = new Set<string>();
+    
+    // Extract IMDb IDs from the custom list page
+    const imdbIdMatches = html.match(/\/title\/(tt\d{7,8})\//g);
+    if (!imdbIdMatches) {
+      console.log("No IMDb IDs found in custom list HTML");
+      return out;
+    }
+    
+    const imdbIds = imdbIdMatches.map(match => match.match(/tt\d{7,8}/)?.[0]).filter(Boolean) as string[];
+    console.log(`Found ${imdbIds.length} IMDb IDs in custom list`);
+    
+    let rank = 0;
+    for (const imdbId of imdbIds) {
+      if (seen.has(imdbId) || rank >= 50) continue; // Limit to 50 recent movies
+      seen.add(imdbId);
+      rank += 1;
+      
+      // Use generic title for recent movies - TMDb will provide accurate data
+      out.push({
+        imdbId,
+        rank,
+        title: "Recent Hit",
+        year: "2024"
+      });
+    }
+    
+    return out;
+  }
+
+  // Enhanced movie catalogue endpoint - combines classics + recent hits
+  app.get("/api/movies/enhanced-catalogue", async (req, res) => {
+    try {
+      const allMovies: any[] = [];
+      
+      // 1. Get IMDb Top 50 classics (reduced to make room for recent movies)
+      console.log("Fetching IMDb Top 50 classics...");
+      const html = await fetchText("https://www.imdb.com/chart/top");
+      const classics = parseImdbTop(html, 50);
+      allMovies.push(...classics.map(movie => ({
+        ...movie,
+        category: 'classic',
+        source: 'imdb_top_250'
+      })));
+      
+      // 2. Get recent hits from custom IMDb list (2020-2024)
+      console.log("Fetching recent hits from custom list...");
+      try {
+        const recentHtml = await fetchText("https://www.imdb.com/list/ls545836395/");
+        const recentMovies = parseImdbCustomList(recentHtml);
+        allMovies.push(...recentMovies.map(movie => ({
+          ...movie,
+          category: 'recent',
+          source: 'imdb_custom_list'
+        })));
+      } catch (recentError) {
+        console.warn("Failed to fetch recent movies, continuing with classics only:", recentError);
+      }
+      
+      // Remove duplicates by IMDb ID
+      const seen = new Set();
+      const uniqueMovies = allMovies.filter(movie => {
+        if (seen.has(movie.imdbId)) return false;
+        seen.add(movie.imdbId);
+        return true;
+      });
+      
+      console.log(`Enhanced catalogue: ${uniqueMovies.length} unique movies (${classics.length} classics + ${allMovies.length - classics.length} recent)`);
+      res.json({ items: uniqueMovies });
+    } catch (error) {
+      console.error("Enhanced catalogue error:", error);
+      res.status(500).json({ error: "Failed to build enhanced catalogue", detail: String(error) });
+    }
+  });
+
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });

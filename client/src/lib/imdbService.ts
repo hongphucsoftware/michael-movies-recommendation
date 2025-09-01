@@ -99,22 +99,22 @@ export class IMDbService {
   async buildCatalogue(): Promise<Movie[]> {
     try {
       // Check for cached catalogue first (30 minute cache)
-      const cacheKey = 'ts_imdb_catalogue_v2';
-      const timestampKey = 'ts_imdb_timestamp_v2';
+      const cacheKey = 'ts_enhanced_catalogue_v1';
+      const timestampKey = 'ts_enhanced_timestamp_v1';
       const cachedData = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(timestampKey);
       const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
       
       // Use cache if less than 30 minutes old
       if (cachedData && cacheAge < 30 * 60 * 1000) {
-        console.log("✓ Using cached IMDb catalogue");
+        console.log("✓ Using cached enhanced catalogue (classics + recent hits)");
         return JSON.parse(cachedData);
       }
       
-      console.log("Building fresh IMDb catalogue...");
+      console.log("Building fresh enhanced catalogue (classics + recent hits)...");
       
-      // Get the Top 100 IMDb items from our server
-      const { items } = await this.fetchJSON("/api/imdb/top100");
+      // Get the enhanced catalogue (Top 50 classics + 50 recent hits)
+      const { items } = await this.fetchJSON("/api/movies/enhanced-catalogue");
       
       const out: Movie[] = [];
       const seen = new Set<string>();
