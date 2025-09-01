@@ -571,10 +571,13 @@ async function bestYouTubeEmbedFor(movieId: number): Promise<string | null> {
 // Batch: /api/trailers?ids=1,2,3 → { trailers: { [id]: embed|null } }
 api.get("/trailers", async (req: Request, res: Response) => {
   try {
-    const ids = String(req.query.ids || "")
+    let raw = String(req.query.ids ?? "");
+    // Accept both "1,2,3" and "1%2C2%2C3" (URL encoded commas)
+    try { raw = decodeURIComponent(raw); } catch {}
+    const ids = raw
       .split(",")
       .map((x) => Number(x.trim()))
-      .filter(Boolean)
+      .filter((n) => Number.isFinite(n))
       .slice(0, 50);
 
     if (!ids.length) return res.json({ ok: true, trailers: {} });

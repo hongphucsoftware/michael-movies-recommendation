@@ -182,13 +182,14 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
 }
 
 async function batchTrailerUrls(ids: number[]): Promise<Record<number, string|null>> {
-  const qs = encodeURIComponent(ids.join(","));
+  if (!ids.length) return {};
+  // IMPORTANT: do NOT encode the commas - server now handles both formats
+  const qs = ids.join(",");
   const res = await fetch(`/api/trailers?ids=${qs}`);
   if (!res.ok) return {};
   const json = await res.json();
-  const map = (json?.trailers || {}) as Record<string, string|null>;
   const out: Record<number, string|null> = {};
-  Object.keys(map).forEach(k => out[Number(k)] = map[k]);
+  Object.keys(json?.trailers || {}).forEach(k => (out[Number(k)] = json.trailers[k]));
   return out;
 }
 
