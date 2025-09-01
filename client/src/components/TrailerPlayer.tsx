@@ -6,16 +6,30 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import type { Title } from "../hooks/useEnhancedCatalogue";
 import { toFeatureVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 
-// --- Alignment tuning constants (higher correlation, less generic) ---
-const SCORE_WEIGHTS = { cosine: 0.65, genre: 0.35, jitter: 0.0 };
-const MIN_REL = 0.35;                 // must be at least this similar OR pass combo rule
-const MIN_COMBO = 0.28;               // 0.5*cos + 0.5*genre >= this
-const TOP_CANDIDATES = 180;           // how many to pre-check for trailers
-const BRAND_CAP_IN_CANDIDATES = 2;    // max per brand in candidate pool
-const BRAND_CAP_IN_QUEUE = 1;         // max per brand in final 5
-const PICK_TEMPERATURE = 0.45;        // lower = tighter to taste
-const RECENT_COOLDOWN_ROUNDS = 3;     // keep picks fresh across rounds
-const RECENT_PENALTY = 0.35;          // push down items seen recently
+// --- alignment & variety tuning (tighter than before) ---
+const SCORE_WEIGHTS = { cosine: 0.60, genre: 0.40, jitter: 0.0 };
+
+// A title must be clearly on-taste OR decent on both axes
+const MIN_REL = 0.42;            // min cosine similarity
+const MIN_COMBO = 0.36;          // min 0.5*cos + 0.5*genre
+
+// Candidate pool (we'll pre-check embeds for these)
+const TOP_CANDIDATES = 220;      // larger pool -> more options with trailers
+
+// Diversity limits
+const BRAND_CAP_IN_CANDIDATES = 2;
+const BRAND_CAP_IN_QUEUE = 1;
+const SOURCE_CAP_IN_QUEUE = 2;   // max 2 from the same source in final 5
+
+// Variety control
+const PICK_TEMPERATURE = 0.40;   // lower = tighter to taste
+
+// Repeat avoidance across rounds
+const RECENT_COOLDOWN_ROUNDS = 4; // remember last 4 rounds
+const RECENT_PENALTY = 0.50;      // push down recently shown titles more
+
+// Popularity dampener when off-taste
+const OFF_TASTE_ANTIPOP = 0.18;   // stronger than before
 
 /* =========================
    Debug helpers & panel
@@ -246,12 +260,12 @@ export default function TrailerPlayer({
     const brandKey = (t: Title) =>
       (t.title || "")
         .toLowerCase()
-        .replace(/^the\s+|^a\s+|^an\s+/,'')        // drop articles
+        .replace(/^the\s+|^a\s+|^an\s+/,'')
         .replace(/[^a-z0-9]+/g, " ")
         .trim()
-        .split(" ")
-        .slice(0, 2)
-        .join(" ");
+        .split(" ").slice(0, 2).join(" ");
+
+    const sourceKey = (t: Title) => (t.sources && t.sources[0]) || "unknown";
 
     const scored = pool0.map(t => {
       const f = t.feature || toFeatureVector(t);
@@ -308,25 +322,26 @@ export default function TrailerPlayer({
     });
   }, [JSON.stringify(queue.map(q => q.id)), JSON.stringify(learnedVec), JSON.stringify(debugProfile.genreWeight)]);
 
-  // ------- Prefetch embeds for CANDIDATES, then select EXACTLY 5 with trailers -------
+  // ------- Prefetch embeds for CANDIDATES, then select EXACTLY 5 with genre quota, brand/source caps -------
   useEffect(() => {
     let mounted = true;
     (async () => {
-      // 1) Ask server for embeds for the candidate pool (batch)
-      const candIds = picks.map(p => p.id);
-      const map = await fetchTrailerEmbeds(candIds); // /api/trailers returns { [id]: embed|null }
-      if (!mounted) return;
+      // Build candidates exactly like in your useMemo "picks"
+      const byId = new Map<number, Title>();
+      for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
+      const pool = Array.from(byId.values());
 
-      // 2) Keep only items with a trailer
-      const withTrailer = picks
-        .map(t => ({ t, embed: map[t.id] || null }))
-        .filter(x => !!x.embed);
-
-      // 3) Recompute scores (same as above) for the w/Trailer list and sample 5 with brand cap
-      const profile = buildUserProfile(items, recentChosenIds);
+      // Preference profile
+      const profile = buildUserProfile(pool, recentChosenIds);
       let u = (learnedVec && l2(learnedVec) > 0.05) ? learnedVec.slice() : profile.vec.slice();
       const useCosine = l2(u) > 0.05;
       if (!useCosine) u = [];
+
+      // Top genres (we'll enforce coverage)
+      const topGenres = Object.entries(profile.genreWeight)
+        .sort((a,b)=> (b[1] as number) - (a[1] as number))
+        .slice(0, 2)
+        .map(([gid]) => Number(gid));
 
       const genreBias = (t: Title) => {
         const ids = t.genres || []; if (!ids.length) return 0;
@@ -334,54 +349,130 @@ export default function TrailerPlayer({
         return s / ids.length;
       };
 
-      const brandKey = (t: Title) =>
-        (t.title || "")
-          .toLowerCase()
-          .replace(/^the\s+|^a\s+|^an\s+/,'')        
-          .replace(/[^a-z0-9]+/g, " ")
-          .trim()
-          .split(" ")
-          .slice(0, 2)
-          .join(" ");
-
-      const scoredWT = withTrailer.map(({ t, embed }) => {
-        const f = t.feature || toFeatureVector(t);
+      // Score full pool and take top candidates
+      const scored = pool.map(t => {
+        const f   = t.feature || toFeatureVector(t);
         const rel = useCosine ? cosine(f, u) : 0;
         const gb  = genreBias(t);
-        const base = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb;
+        const pop = Math.min(1, (t.popularity || 0) / 100);
+        const offTaste = (rel < 0.40 && gb < 0.35);
+        const antiPop = offTaste && pop > 0.50 ? -(OFF_TASTE_ANTIPOP * pop) : 0;
         const recent = inRecent(t.id) ? -RECENT_PENALTY : 0;
-        return { t, embed: embed as string, s: base + recent, rel, gb, brand: brandKey(t) };
+        const s = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb + antiPop + recent;
+
+        return { t, s, rel, gb, brand: brandKey(t), source: sourceKey(t) };
       });
 
-      // Brand cap in final queue
+      const eligible = scored.filter(x => (x.rel >= MIN_REL) || ((0.5*x.rel + 0.5*x.gb) >= MIN_COMBO))
+                             .sort((a,b)=> b.s - a.s);
+
+      // Cap brand inside candidates and keep a big pool
+      const brandCountCand = new Map<string, number>();
+      const candidates: typeof scored = [];
+      for (const it of eligible) {
+        const c = brandCountCand.get(it.brand) || 0;
+        if (c >= BRAND_CAP_IN_CANDIDATES) continue;
+        brandCountCand.set(it.brand, c+1);
+        candidates.push(it);
+        if (candidates.length >= TOP_CANDIDATES) break;
+      }
+
+      // 1) Resolve embeds for candidates
+      const ids = candidates.map(c => c.t.id);
+      const embedsMap = await fetchTrailerEmbeds(ids);
+      if (!mounted) return;
+
+      const withTrailer = candidates
+        .map(c => ({ ...c, embed: embedsMap[c.t.id] || null }))
+        .filter(x => !!x.embed);
+
+      // If we somehow have too few withTrailer, fall back to eligible (will still likely have embeds)
+      const poolWT = withTrailer.length ? withTrailer : candidates;
+
+      // 2) Enforce that at least 3 of 5 come from the user's top genres (if topGenres exist)
+      const isTopGenre = (t: Title) => (t.genres || []).some(g => topGenres.includes(g));
+      const preferWT   = poolWT.filter(x => isTopGenre(x.t));
+      const otherWT    = poolWT.filter(x => !isTopGenre(x.t));
+
+      // 3) Build the final 5 respecting brand & source caps
+      const final: typeof withTrailer = [];
       const brandCount = new Map<string, number>();
-      const filtered = scoredWT.filter(x => {
-        const c = brandCount.get(x.brand) || 0;
-        if (c >= BRAND_CAP_IN_QUEUE) return false;
-        brandCount.set(x.brand, c+1);
-        return true;
-      });
+      const sourceCount = new Map<string, number>();
 
-      // Softmax-sample EXACTLY 5
-      const sampled = softmaxSample(filtered, x => x.s, 5, PICK_TEMPERATURE);
+      const canTake = (x: typeof withTrailer[number]) => {
+        const b = brandCount.get(x.brand) || 0;
+        const s = sourceCount.get(x.source) || 0;
+        return (b < BRAND_CAP_IN_QUEUE) && (s < SOURCE_CAP_IN_QUEUE);
+      };
+
+      // Helper to pick with softmax
+      function softmaxSample<T>(arr: T[], score: (t:T)=>number, temperature = PICK_TEMPERATURE): T | null {
+        if (!arr.length) return null;
+        const scores = arr.map(score);
+        const max = Math.max(...scores);
+        const exps = scores.map(v => Math.exp((v - max) / Math.max(temperature, 1e-6)));
+        const sum = exps.reduce((a,b)=>a+b, 0) || 1;
+        let r = Math.random() * sum;
+        for (let i = 0; i < arr.length; i++) { r -= exps[i]; if (r <= 0) return arr[i]; }
+        return arr[arr.length-1];
+      }
+
+      // First, take up to 3 from top-genre pool
+      let preferPool = preferWT.slice(0, 120);
+      while (final.length < 3 && preferPool.length) {
+        const pick = softmaxSample(preferPool, x => x.s);
+        if (!pick) break;
+        const idx = preferPool.indexOf(pick); preferPool.splice(idx,1);
+        if (!canTake(pick)) continue;
+        final.push(pick);
+        brandCount.set(pick.brand, (brandCount.get(pick.brand)||0)+1);
+        sourceCount.set(pick.source, (sourceCount.get(pick.source)||0)+1);
+      }
+
+      // Then, fill up to 5 from the rest (still respecting caps)
+      let fillPool = otherWT.concat(preferPool).slice(0, 200);
+      while (final.length < 5 && fillPool.length) {
+        const pick = softmaxSample(fillPool, x => x.s);
+        if (!pick) break;
+        const idx = fillPool.indexOf(pick); fillPool.splice(idx,1);
+        if (!canTake(pick)) continue;
+        final.push(pick);
+        brandCount.set(pick.brand, (brandCount.get(pick.brand)||0)+1);
+        sourceCount.set(pick.source, (sourceCount.get(pick.source)||0)+1);
+      }
+
+      // If we still don't have 5 (rare), greedily top-up ignoring source cap but keeping brand cap
+      if (final.length < 5) {
+        for (const x of poolWT) {
+          if (final.length >= 5) break;
+          if ((brandCount.get(x.brand)||0) >= BRAND_CAP_IN_QUEUE) continue;
+          final.push(x);
+          brandCount.set(x.brand, (brandCount.get(x.brand)||0)+1);
+        }
+      }
 
       // 4) Commit queue + embeds; start at first playable
-      setQueue(sampled.map(x => x.t));
+      const finalTitles = final.map(x => x.t);
       const embedMap: Record<number, string|null> = {};
-      sampled.forEach(x => { embedMap[x.t.id] = x.embed; });
+      final.forEach(x => { embedMap[x.t.id] = x.embed as string; });
+
+      if (!mounted) return;
+      setQueue(finalTitles);
       setEmbeds(embedMap);
       setIdx(0);
 
-      // 5) Save recent to reduce repeats across rounds
-      saveRecent(sampled.map(x => x.t.id));
+      // Save recent to avoid repeats across rounds
+      saveRecent(finalTitles.map(t => t.id));
 
-      // Console for audit
-      console.info('[PAF] Final 5 picks', sampled.map(x => ({
-        id: x.t.id, title: x.t.title, score: round(x.s), cos: round(x.rel), genre: round(x.gb)
+      // Debug log
+      console.info('[PAF] Final 5 picks (tight)', final.map(x => ({
+        id: x.t.id, title: x.t.title, score: Number(x.s.toFixed(3)),
+        cos: Number(x.rel.toFixed(3)), genre: Number(x.gb.toFixed(3)),
+        brand: x.brand, source: x.source
       })));
     })();
     return () => { mounted = false; };
-  }, [JSON.stringify(picks.map(p => p.id)), JSON.stringify(recentChosenIds), JSON.stringify(learnedVec)]);
+  }, [JSON.stringify(items.map(i=>i.id)), JSON.stringify(recentChosenIds), JSON.stringify(learnedVec)]);
 
   // ------- Controls -------
   const canPrev = idx > 0;

@@ -16,12 +16,13 @@ Preferred communication style: Simple, everyday language.
   - **Authentic Data Only**: Uses complete RT 2020 + IMDb Top 250 + IMDb List without artificial limits
 
 - **Enhanced A/B-Based Personalization (Sept 1)**: Fixed recommendation algorithm to properly reflect A/B test choices:
-  - **Tightened Alignment**: Upgraded to 65% cosine + 35% genre scoring with minimum taste filters (MIN_REL=0.35)
-  - **Quality Filtering**: Only considers top 120 scored titles with combo threshold (MIN_COMBO=0.28) for better correlation
-  - **Reduced Temperature**: Lowered softmax from 0.65 to 0.45 for tighter taste adherence while maintaining variety
-  - **Brand Deduplication**: Caps to 1 per brand (no more 3x Batman variants in same queue)
+  - **Tightened Alignment**: Upgraded to 60% cosine + 40% genre scoring with stricter taste filters (MIN_REL=0.42, MIN_COMBO=0.36)
+  - **Genre Quota System**: Enforces at least 3 of 5 picks from user's top genres based on A/B choices
+  - **Stronger Anti-Popularity**: Heavy penalty for off-taste blockbusters (18% popularity penalty when rel<0.40 && genre<0.35)
+  - **Enhanced Diversity**: Source cap (max 2 per source), brand cap, and 4-round repeat cooldown with 50% penalty
+  - **Embed-Aware Selection**: Only picks from 220 top candidates that have verified YouTube trailers
   - **Mobile-Responsive Design**: Fully responsive layout optimized for both mobile and desktop experiences
-  - **Debug Panel**: Shows alignment metrics with "Strong/Mild/Weak" verdict based on cosine similarity and genre correlation
+  - **Debug Panel**: Shows alignment metrics with brand/source diversity in console logs
 
 - **Complete Trailer System**: Implemented full personalized recommendation engine:
   - **Full Catalogue Access**: All 432 movies from 3 authentic sources (RT 2020, IMDb Top 250, IMDb List) 
