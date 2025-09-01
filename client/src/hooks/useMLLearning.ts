@@ -73,19 +73,36 @@ export function useMLLearning(movies: Movie[]) {
       ];
     }
 
-    const pool = shuffle([...movies]);
+    // Get recently shown movies to avoid immediate repetition
+    const recentlyShown = new Set(
+      JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]').slice(-40)
+    );
+
+    // Build available pool with better variety controls
+    const available = movies.filter(movie => 
+      !state.preferences.explored.has(movie.id) && 
+      !state.preferences.hidden.has(movie.id) &&
+      !recentlyShown.has(movie.id)
+    );
+
+    console.log(`Movie variety check: ${available.length}/${movies.length} available (${movies.length - available.length} filtered out)`);
+
+    // Use fresh pool if too few available
+    const pool = available.length >= Math.min(20, movies.length * 0.3) 
+      ? shuffle([...available]) 
+      : shuffle([...movies.filter(movie => !state.preferences.hidden.has(movie.id))]);
+
     let best: [Movie, Movie] | null = null;
     let bestScore = -1;
 
-    for (let i = 0; i < 12 && i < pool.length - 1; i++) {
-      for (let j = i + 1; j < pool.length && j < i + 6; j++) {
+    // Expanded search for better variety
+    for (let i = 0; i < Math.min(20, pool.length - 1); i++) {
+      for (let j = i + 1; j < Math.min(pool.length, i + 10); j++) {
         const A = pool[i];
         const B = pool[j];
         
-        // Skip if hidden, already explored together, or same movie
-        if (state.preferences.hidden.has(A.id) || state.preferences.hidden.has(B.id) || 
-            state.preferences.explored.has(A.id) || state.preferences.explored.has(B.id) ||
-            A.id === B.id) {
+        // Skip if same movie or hidden
+        if (state.preferences.hidden.has(A.id) || state.preferences.hidden.has(B.id) || A.id === B.id) {
           continue;
         }
 
@@ -101,8 +118,15 @@ export function useMLLearning(movies: Movie[]) {
       }
     }
 
-    return best || [movies[0], movies[1]];
-  }, [movies, state.preferences.w, state.preferences.hidden]);
+    const result = best || [pool[0] || movies[0], pool[1] || movies[1]];
+    
+    // Track recently shown pairs
+    const recentPairs = JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]');
+    recentPairs.push(result[0].id, result[1].id);
+    localStorage.setItem('ts_recent_pairs', JSON.stringify(recentPairs.slice(-40)));
+
+    return result;
+  }, [movies, state.preferences.w, state.preferences.hidden, state.preferences.explored]);
 
   // Update currentPair when movies are loaded
   useEffect(() => {
@@ -146,12 +170,12 @@ export function useMLLearning(movies: Movie[]) {
   }, [nextPair]);
 
   const baseScore = useCallback((movie: Movie): number => {
-    return logistic(dot(state.preferences.w, movie.x));
+    return logistic(dot(state.preferences.w, movie.features));
   }, [state.preferences.w]);
 
   const noveltyBoost = useCallback((movie: Movie): number => {
     const notSeen = state.preferences.explored.has(movie.id) ? 0 : 0.08;
-    const short = movie.isSeries && movie.lenShort ? 0.05 : 0;
+    const short = movie.isSeries ? 0.05 : 0;
     return notSeen + short;
   }, [state.preferences.explored]);
 

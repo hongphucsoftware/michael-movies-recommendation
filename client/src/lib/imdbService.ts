@@ -98,9 +98,9 @@ export class IMDbService {
   // Build Top 100 IMDb movies catalogue using server endpoints
   async buildCatalogue(): Promise<Movie[]> {
     try {
-      // Check for cached catalogue first (30 minute cache)
-      const cacheKey = 'ts_enhanced_catalogue_v2';
-      const timestampKey = 'ts_enhanced_timestamp_v2';
+      // Check for cached catalogue first (30 minute cache) - cleared to force fresh processing
+      const cacheKey = 'ts_enhanced_catalogue_v3';
+      const timestampKey = 'ts_enhanced_timestamp_v3';
       const cachedData = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(timestampKey);
       const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
@@ -210,8 +210,8 @@ export class IMDbService {
     try {
       console.log(`Processing remaining ${remainingItems.length} movies in background...`);
       
-      // Process in chunks of 10 for better performance
-      const chunkSize = 10;
+      // Process in smaller chunks to prevent duplicates
+      const chunkSize = 5;
       for (let i = 0; i < remainingItems.length; i += chunkSize) {
         const chunk = remainingItems.slice(i, i + chunkSize);
         const chunkMovies = await this.processBatch(chunk, seen);
@@ -297,6 +297,8 @@ export class IMDbService {
     
     return hasOfficial && !hasAvoid && !hasNumberYears;
   }
+
+
 }
 
 export const imdbService = new IMDbService();
