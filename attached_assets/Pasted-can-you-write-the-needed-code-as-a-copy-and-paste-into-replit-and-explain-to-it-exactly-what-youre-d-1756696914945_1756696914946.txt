@@ -1,0 +1,522 @@
+can you write the needed code as a copy and paste into replit and explain to it exactly what youre doing so it knows pls
+ChatGPT said:
+Thought for 24s
+
+Totally. I’ll give you copy-paste files and spell out exactly what they do so Replit “gets it”.
+
+What I’m doing (in plain English)
+
+Keep your strict, curated catalogue (already in server/routes.ts from the last step). That’s the data source—no randoms, no NSFW.
+
+Make A/B (poster) picks robust:
+
+A title can appear only once per session (no repeats) → bigger sample, better learning.
+
+Each round randomizes left/right position to remove side bias.
+
+Clicks update the 12-dim learned vector (like on the chosen, skip on the other).
+
+Persist learning in localStorage so the Trailer Reel & future sessions reflect the user’s tastes (you can reset at any time).
+
+Trailer Reel uses the learned vector to select a diverse, relevant set via MMR and fetches the best trailer URL from /api/trailer.
+
+1) Update the learning + catalogue hook
+
+Replace client/src/hooks/useEnhancedCatalogue.ts with this:
+
+import { useEffect, useMemo, useState } from "react";
+
+export type Title = {
+  id: number;
+  title: string;
+  overview: string;
+  genres: number[];
+  releaseDate: string | null;
+  popularity: number;
+  voteAverage: number;
+  voteCount: number;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  image?: string | null;
+  feature?: number[];
+};
+
+type CatalogueResponse = {
+  ok: boolean;
+  total: number;
+  page: number;
+  pageSize: number;
+  items: Title[];
+  learnedDims: number;
+  cacheAgeMs: number;
+};
+
+// ---- Feature vector utils (10 genre buckets + era + popularity) ----
+const GENRE_BUCKETS = [28,12,16,35,80,18,14,27,9648,878];
+
+export function toFeatureVector(t: Title): number[] {
+  const g = GENRE_BUCKETS.map((gid) => (t.genres || []).includes(gid) ? 1 : 0);
+  const era = t.releaseDate && Number(t.releaseDate.slice(0,4)) >= 2020 ? 1 : 0;
+  const pop = Math.max(0, Math.min(1, (t.popularity || 0) / 100));
+  return [...g, era, pop];
+}
+
+export function bestImageUrl(t: Title): string | null {
+  return t.posterUrl || t.backdropUrl || t.image || null;
+}
+
+// ---- Fetch curated catalogue ----
+export function useEnhancedCatalogue(page = 1, pageSize = 60) {
+  const [items, setItems] = useState<Title[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setErr(null);
+        const res = await fetch(`/api/catalogue?page=${page}&pageSize=${pageSize}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: CatalogueResponse = await res.json();
+        if (cancelled) return;
+
+        const enriched = (json.items || []).map((t) => {
+          const image = bestImageUrl(t);
+          const feature = toFeatureVector(t);
+          return { ...t, image, feature };
+        });
+
+        setItems(enriched);
+        setTotal(json.total || enriched.length);
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message ?? String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [page, pageSize]);
+
+  return { items, total, loading, error: err };
+}
+
+// ---- Learned vector (with persistence) ----
+const LS_KEY = "pf_learned_v1";
+
+export function useLearnedVector(dim = 12) {
+  const [vec, setVec] = useState<number[]>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr) && arr.length === dim) return arr;
+      }
+    } catch {}
+    return new Array(dim).fill(0);
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(vec)); } catch {}
+  }, [vec]);
+
+  function like(t: Title) {
+    const f = t.feature || toFeatureVector(t);
+    setVec((old) => old.map((v, i) => clamp(v + 0.18 * f[i], -1, 1))); // slightly stronger
+  }
+
+  function skip(t: Title) {
+    const f = t.feature || toFeatureVector(t);
+    setVec((old) => old.map((v, i) => clamp(v - 0.10 * f[i], -1, 1)));
+  }
+
+  function resetLearning() {
+    setVec(new Array(dim).fill(0));
+  }
+
+  const learned = useMemo(() => vec.slice(), [vec]);
+  return { learned, like, skip, resetLearning };
+}
+
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
+
+
+What this file does
+
+Fetches curated items from /api/catalogue.
+
+Precomputes a 12-dim feature vector per title.
+
+Maintains a persistent learned vector affected by like() and skip() (saved in localStorage).
+
+2) No-repeat A/B deck with left/right debias
+
+Replace / add client/src/hooks/useQuickPicks.ts with this:
+
+import { useEffect, useMemo, useRef, useState } from "react";
+
+export type QuickPickItem = { id: number; [k: string]: any };
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/**
+ * Build a deck of unique IDs and yield them in randomized pairs.
+ * - Each title appears at most once per session (no repeats).
+ * - Each round randomizes which item is left/right to remove side bias.
+ */
+export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
+  const [round, setRound] = useState(0);
+  const [done, setDone] = useState(false);
+  const [pair, setPair] = useState<{ left: QuickPickItem; right: QuickPickItem } | null>(null);
+  const deckRef = useRef<number[]>([]); // unique ids in random order
+
+  // Rebuild deck when items change
+  useEffect(() => {
+    const uniqueIds = Array.from(new Set(items.map((t) => t.id)));
+    const need = Math.min(uniqueIds.length, rounds * 2);
+    deckRef.current = shuffle(uniqueIds).slice(0, need);
+    setRound(0);
+    setDone(false);
+  }, [items, rounds]);
+
+  // Compute current pair with side randomization
+  useEffect(() => {
+    const ids = deckRef.current;
+    const idx = round * 2;
+    if (idx + 1 >= ids.length) {
+      setPair(null);
+      setDone(true);
+      return;
+    }
+    const a = items.find((x) => x.id === ids[idx]);
+    const b = items.find((x) => x.id === ids[idx + 1]);
+    if (!a || !b) {
+      setPair(null);
+      setDone(true);
+      return;
+    }
+    // coin flip: which goes left/right this round
+    if (Math.random() < 0.5) setPair({ left: a, right: b });
+    else setPair({ left: b, right: a });
+  }, [round, items]);
+
+  function choose(side: "left" | "right") {
+    if (!pair || done) return null;
+    const chosen = side === "left" ? pair.left : pair.right;
+    const other = side === "left" ? pair.right : pair.left;
+    setRound((r) => r + 1);
+    return { chosen, other };
+  }
+
+  function reset() {
+    setRound(0);
+    setDone(false);
+  }
+
+  const progress = { current: Math.min(round, Math.floor(deckRef.current.length / 2)), total: Math.floor(deckRef.current.length / 2) };
+  return { pair, round, done, choose, reset, progress };
+}
+
+
+What this file does
+
+Guarantees no duplicates during the session.
+
+Randomizes left/right each round (reduces side bias).
+
+Returns choose('left' | 'right') which gives you { chosen, other } so you can call like(chosen) and skip(other) cleanly.
+
+3) Poster-pair UI that wires learning correctly
+
+Add or replace client/src/components/PosterPair.tsx (if you already have one, replace it):
+
+import React from "react";
+import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
+import { useQuickPicks } from "../hooks/useQuickPicks";
+import TrailerReel from "./TrailerReel";
+
+export default function PosterPair() {
+  const { items, loading, error } = useEnhancedCatalogue();
+  const { learned, like, skip, resetLearning } = useLearnedVector(12);
+  const { pair, choose, done, progress, reset } = useQuickPicks(items, 12);
+
+  if (loading) return <div className="opacity-80">Loading catalogue…</div>;
+  if (error) return <div className="text-red-400">Error: {error}</div>;
+  if (!items.length) return <div>No titles found.</div>;
+
+  function pick(side: "left" | "right") {
+    const result = choose(side);
+    if (!result) return;
+    const { chosen, other } = result;
+    like(chosen as any);
+    skip(other as any);
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Progress + controls */}
+      <div className="flex items-center justify-between">
+        <div className="text-sm">Learning Progress</div>
+        <div className="text-xs opacity-80">{progress.current} / {progress.total}</div>
+      </div>
+      <div className="w-full h-2 rounded bg-gray-800 overflow-hidden">
+        <div
+          className="h-2 bg-cyan-400 transition-all"
+          style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }}
+        />
+      </div>
+
+      {/* The A/B cards */}
+      {!done && pair && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <button
+            className="rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition"
+            onClick={() => pick("left")}
+          >
+            <img
+              src={bestImageUrl(pair.left as any) || ""}
+              alt={(pair.left as any).title}
+              className="w-full h-[520px] object-cover"
+              loading="lazy"
+            />
+            <div className="p-3 text-center">
+              <div className="font-medium">{(pair.left as any).title}</div>
+              <div className="text-xs opacity-70">{(pair.left as any).releaseDate?.slice(0,4) || ""}</div>
+            </div>
+          </button>
+
+          <button
+            className="rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition"
+            onClick={() => pick("right")}
+          >
+            <img
+              src={bestImageUrl(pair.right as any) || ""}
+              alt={(pair.right as any).title}
+              className="w-full h-[520px] object-cover"
+              loading="lazy"
+            />
+            <div className="p-3 text-center">
+              <div className="font-medium">{(pair.right as any).title}</div>
+              <div className="text-xs opacity-70">{(pair.right as any).releaseDate?.slice(0,4) || ""}</div>
+            </div>
+          </button>
+        </div>
+      )}
+
+      {/* When the deck is done, reveal the Trailer Reel */}
+      {done && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">Thanks — reel ready!</h2>
+            <button
+              onClick={() => reset()}
+              className="text-xs rounded-full px-3 py-1 bg-white/10 hover:bg-white/20 transition"
+              title="New round with fresh pairs"
+            >
+              New Round
+            </button>
+            <button
+              onClick={() => resetLearning()}
+              className="text-xs rounded-full px-3 py-1 bg-red-500/20 hover:bg-red-500/30 transition"
+              title="Reset learned preferences"
+            >
+              Reset Learning
+            </button>
+          </div>
+
+          <TrailerReel items={items} learnedVec={learned} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+What this file does
+
+Shows two posters per round, no repeats, random side positions.
+
+On click, it calls like(chosen) and skip(other) to update the learned vector.
+
+When you finish the deck, it reveals the Trailer Reel (personalized, diverse).
+
+4) Trailer reel (unchanged from last message, repeated here for convenience)
+
+Add / Replace client/src/components/TrailerReel.tsx:
+
+import { useMemo, useState } from "react";
+import type { Title } from "../hooks/useEnhancedCatalogue";
+import { bestImageUrl, toFeatureVector } from "../hooks/useEnhancedCatalogue";
+
+// cosine + MMR reimplemented locally for independence
+function cosine(a: number[], b: number[]): number {
+  let dot = 0, na = 0, nb = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1;
+  return dot / denom;
+}
+
+function mmrPick(pool: Title[], userVec: number[], k = 12, lambda = 0.7): Title[] {
+  const chosen: Title[] = [];
+  const remaining = pool.map(t => ({...t, feature: t.feature || toFeatureVector(t)}));
+  while (chosen.length < k && remaining.length) {
+    let best: { item: Title; score: number } | null = null;
+    for (const item of remaining) {
+      const f = item.feature!;
+      const rel = cosine(f, userVec);
+      const div = chosen.length === 0 ? 0 : Math.max(...chosen.map(c => cosine(f, c.feature || toFeatureVector(c))));
+      const score = lambda * rel - (1 - lambda) * div;
+      if (!best || score > best.score) best = { item, score };
+    }
+    if (!best) break;
+    chosen.push(best.item);
+    const idx = remaining.findIndex(t => t.id === best!.item.id);
+    if (idx >= 0) remaining.splice(idx, 1);
+  }
+  return chosen;
+}
+
+async function getTrailerUrl(tmdbId: number): Promise<string | null> {
+  const res = await fetch(`/api/trailer?id=${tmdbId}`);
+  if (!res.ok) return null;
+  const json = await res.json();
+  const t = json?.trailer;
+  return t ? (t.url as string) : null;
+}
+
+type Props = { items: Title[]; learnedVec: number[]; count?: number };
+
+export default function TrailerReel({ items, learnedVec, count = 12 }: Props) {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const [activeUrl, setActiveUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const wheel = useMemo(() => {
+    // narrow to items with posters (better UX)
+    const pool = items.filter(t => bestImageUrl(t));
+    const picks = mmrPick(pool, learnedVec, count);
+    return {
+      picks,
+      async loadTrailer(i: number) {
+        const t = picks[i];
+        if (!t) return { url: null, id: -1 };
+        return { url: await getTrailerUrl(t.id), id: t.id };
+      }
+    };
+  }, [items, learnedVec, count]);
+
+  async function play(i: number) {
+    setLoading(true);
+    setActiveIdx(i);
+    const { url } = await wheel.loadTrailer(i);
+    setActiveUrl(url);
+    setLoading(false);
+  }
+
+  return (
+    <div className="w-full">
+      <h2 className="text-xl font-semibold mb-3">Your Trailer Reel</h2>
+
+      {/* Thumbnails */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+        {wheel.picks.map((t, i) => (
+          <button
+            key={t.id}
+            onClick={() => play(i)}
+            className={`rounded-xl overflow-hidden shadow hover:shadow-lg transition ${i === activeIdx ? "ring-2 ring-cyan-400" : ""}`}
+            title={`Play trailer: ${t.title}`}
+          >
+            <img src={bestImageUrl(t) || ""} alt={t.title} className="w-full h-64 object-cover" loading="lazy" />
+            <div className="p-2 text-sm font-medium text-left">{t.title}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Player */}
+      <div className="mt-6">
+        {loading && <div className="text-sm opacity-80">Loading trailer…</div>}
+        {!loading && activeUrl && isYouTube(activeUrl) && (
+          <div className="aspect-video w-full">
+            <iframe
+              className="w-full h-full rounded-xl"
+              src={toYouTubeEmbed(activeUrl)}
+              title="Trailer"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          </div>
+        )}
+        {!loading && activeUrl && !isYouTube(activeUrl) && (
+          <div className="text-sm">
+            Trailer URL:{" "}
+            <a className="underline" href={activeUrl} target="_blank" rel="noreferrer">
+              Open in new tab
+            </a>
+          </div>
+        )}
+        {!loading && activeIdx !== null && !activeUrl && (
+          <div className="text-sm opacity-80">No trailer available for this title.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function isYouTube(u: string) { return /youtube\.com|youtu\.be/.test(u); }
+function toYouTubeEmbed(u: string) {
+  const m = u.match(/v=([^&]+)/);
+  const id = m ? m[1] : u.split("/").pop();
+  return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
+}
+
+5) Use the poster flow on your page
+
+If your root page is client/src/App.tsx (or similar), render the pair UI:
+
+import React from "react";
+import PosterPair from "./components/PosterPair";
+
+export default function App() {
+  return (
+    <div className="max-w-6xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-4">PickaFlick</h1>
+      <PosterPair />
+    </div>
+  );
+}
+
+Replit: what you should “see” and why
+
+When the app loads, we fetch the curated catalogue (/api/catalogue).
+
+The A/B deck is built from unique titles; each appears once per session.
+
+Clicking left/right calls like() on the chosen and skip() on the other → learned vector updates and is saved to localStorage.
+
+After the deck completes, Trailer Reel appears and uses your learned vector to pick diverse, relevant titles and fetch playable URLs from /api/trailer.
+
+If you haven’t already: npm i cheerio (server) and ensure TMDB_API_KEY is set in Secrets.
+
+Quick tests
+
+Click mostly horror posters → Trailer Reel should lean horror/thriller (recent if you picked newer titles).
+
+Refresh the page → your preferences persist.
+
+Hit Reset Learning → preferences clear; Trailer Reel returns to neutral.
+
+Verify no duplicates in the A/B rounds. If you have fewer than 24 titles available, the hook automatically reduces total rounds to Math.floor(n/2).
+
+If anything’s off (e.g., a title sneaks in that isn’t on your lists, or a trailer returns null for a specific movie), tell me the title and I’ll tighten the resolver or add a fallback just for that edge case.

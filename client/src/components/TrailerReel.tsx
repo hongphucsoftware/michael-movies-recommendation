@@ -1,25 +1,59 @@
 import { useMemo, useState } from "react";
-import type { Title } from "../lib/videoPick";
-import { buildTrailerWheel, bestImageUrl } from "../lib/videoPick";
+import type { Title } from "../hooks/useEnhancedCatalogue";
+import { bestImageUrl, toFeatureVector } from "../hooks/useEnhancedCatalogue";
+
+// cosine + MMR reimplemented locally for independence
+function cosine(a: number[], b: number[]): number {
+  let dot = 0, na = 0, nb = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1;
+  return dot / denom;
+}
+
+function mmrPick(pool: Title[], userVec: number[], k = 12, lambda = 0.7): Title[] {
+  const chosen: Title[] = [];
+  const remaining = pool.map(t => ({...t, feature: t.feature || toFeatureVector(t)}));
+  while (chosen.length < k && remaining.length) {
+    let best: { item: Title; score: number } | null = null;
+    for (const item of remaining) {
+      const f = item.feature!;
+      const rel = cosine(f, userVec);
+      const div = chosen.length === 0 ? 0 : Math.max(...chosen.map(c => cosine(f, c.feature || toFeatureVector(c))));
+      const score = lambda * rel - (1 - lambda) * div;
+      if (!best || score > best.score) best = { item, score };
+    }
+    if (!best) break;
+    chosen.push(best.item);
+    const idx = remaining.findIndex(r => r.id === best!.item.id);
+    if (idx >= 0) remaining.splice(idx, 1);
+  }
+  return chosen;
+}
 
 type Props = {
   items: Title[];
-  learnedVec: number[]; // from useLearnedVector()
+  learnedVec: number[];
   count?: number;
 };
 
-export default function TrailerReel({ items, learnedVec, count = 12 }: Props) {
+export default function TrailerReel({ items, learnedVec, count = 8 }: Props) {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const wheel = useMemo(() => buildTrailerWheel(items, learnedVec, count), [items, learnedVec, count]);
+  const picks = useMemo(() => mmrPick(items, learnedVec, count), [items, learnedVec, count]);
 
   async function play(i: number) {
     setLoading(true);
     setActiveIdx(i);
-    const { url } = await wheel.loadTrailer(i);
-    setActiveUrl(url);
+    try {
+      const res = await fetch(`/api/trailer?id=${picks[i].id}`);
+      const json = await res.json();
+      setActiveUrl(json.trailer?.url || null);
+    } catch {
+      setActiveUrl(null);
+    }
     setLoading(false);
   }
 
@@ -29,7 +63,7 @@ export default function TrailerReel({ items, learnedVec, count = 12 }: Props) {
 
       {/* Thumbnails */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-        {wheel.picks.map((t, i) => (
+        {picks.map((t, i) => (
           <button
             key={t.id}
             onClick={() => play(i)}

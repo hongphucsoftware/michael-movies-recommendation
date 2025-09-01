@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { Title } from "../lib/videoPick";
-
-export type QuickPickItem = Title;
+export type QuickPickItem = { id: number; [k: string]: any };
 
 function shuffle<T>(arr: T[]): T[] {
   const a = arr.slice();
@@ -14,49 +12,52 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 /**
- * Build a deck of unique items and yield them in pairs.
- * A title appears at most once per deck (no repeats).
+ * Build a deck of unique IDs and yield them in randomized pairs.
+ * - Each title appears at most once per session (no repeats).
+ * - Each round randomizes which item is left/right to remove side bias.
  */
 export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
   const [round, setRound] = useState(0);
   const [done, setDone] = useState(false);
-  const deckRef = useRef<number[]>([]);
-  const [pair, setPair] = useState<QuickPickItem[] | null>(null);
+  const [pair, setPair] = useState<{ left: QuickPickItem; right: QuickPickItem } | null>(null);
+  const deckRef = useRef<number[]>([]); // unique ids in random order
 
-  // rebuild deck whenever items change
+  // Rebuild deck when items change
   useEffect(() => {
-    const ids = Array.from(new Set(items.map((t) => t.id)));
-    const count = Math.min(ids.length, rounds * 2); // enough for the requested rounds
-    const pick = shuffle(ids).slice(0, count);
-    deckRef.current = pick;
+    const uniqueIds = Array.from(new Set(items.map((t) => t.id)));
+    const need = Math.min(uniqueIds.length, rounds * 2);
+    deckRef.current = shuffle(uniqueIds).slice(0, need);
     setRound(0);
     setDone(false);
   }, [items, rounds]);
 
+  // Compute current pair with side randomization
   useEffect(() => {
-    if (deckRef.current.length < 2) {
-      setPair(null);
-      setDone(true);
-      return;
-    }
+    const ids = deckRef.current;
     const idx = round * 2;
-    if (idx + 1 >= deckRef.current.length) {
-      setDone(true);
+    if (idx + 1 >= ids.length) {
       setPair(null);
+      setDone(true);
       return;
     }
-    const idA = deckRef.current[idx];
-    const idB = deckRef.current[idx + 1];
-    const a = items.find((t) => t.id === idA);
-    const b = items.find((t) => t.id === idB);
-    if (a && b) setPair([a, b]);
-    else setPair(null);
+    const a = items.find((x) => x.id === ids[idx]);
+    const b = items.find((x) => x.id === ids[idx + 1]);
+    if (!a || !b) {
+      setPair(null);
+      setDone(true);
+      return;
+    }
+    // coin flip: which goes left/right this round
+    if (Math.random() < 0.5) setPair({ left: a, right: b });
+    else setPair({ left: b, right: a });
   }, [round, items]);
 
   function choose(side: "left" | "right") {
-    if (done) return;
+    if (!pair || done) return null;
+    const chosen = side === "left" ? pair.left : pair.right;
+    const other = side === "left" ? pair.right : pair.left;
     setRound((r) => r + 1);
-    return side;
+    return { chosen, other };
   }
 
   function reset() {
@@ -64,5 +65,6 @@ export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
     setDone(false);
   }
 
-  return { pair, round, done, choose, reset };
+  const progress = { current: Math.min(round, Math.floor(deckRef.current.length / 2)), total: Math.floor(deckRef.current.length / 2) };
+  return { pair, round, done, choose, reset, progress };
 }
