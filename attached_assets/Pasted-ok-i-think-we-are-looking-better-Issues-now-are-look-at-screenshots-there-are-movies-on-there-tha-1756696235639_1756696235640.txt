@@ -1,3 +1,21 @@
+ok i think we are looking better. Issues now are (look at screenshots) there are movies on there that are not on those lists ie bollywood films. There is also duplicates ie Shayday showed up 3 times out of 12 rounds! in the poster selecton process (see attached) include in the code that a movie can only show up once for more variation and better learning - does this effect the algorithm? I'm assuming it will mean we learn more about the users preferences as we have a bigger sample instead of repeating? If this is not correct in the testing process let me know. Finally - there is no trailer section - ie the whole idea of this site!
+ChatGPT said:
+Thought for 49s
+
+Great—progress! I’ll do three things in one hit:
+
+Lock the catalogue strictly to your three lists (no strays).
+
+Ban repeats in the Quick Picks flow so a movie can only appear once per session before the deck refreshes.
+
+Ship a working Trailer Reel (pulls the best trailer per pick via /api/trailer).
+
+Below are drop-in files. Paste them into your Replit project (overwrite existing where paths match). After that, run npm i cheerio (server) and restart.
+
+A) Strict curated catalogue + better trailer fallback
+
+Replace server/routes.ts with this:
+
 import express, { Request, Response } from "express";
 import * as cheerio from "cheerio";
 
@@ -127,7 +145,7 @@ const norm = (s: string) =>
   s
     .toLowerCase()
     .replace(/[\u00A0]/g, " ")
-    .replace(/[:!?,."""']/g, "")
+    .replace(/[:!?,.“”"']/g, "")
     .replace(/^\d+\.\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -405,12 +423,10 @@ function scoreVideos(vids: any[]) {
       const type = (v.type || "").toLowerCase();
       if (type === "trailer") score += 4;
       else if (type === "teaser") score += 2;
-
       if (v.official) score += 3;
       if ((v.site || "").toLowerCase() === "youtube") score += 2;
       if ((v.name || "").toLowerCase().includes("official")) score += 1;
       if (v.size) score += Math.min(3, Math.floor((v.size ?? 0) / 360)); // 720/1080 bump
-
       return { ...v, __score: score };
     })
     .sort((a, b) => b.__score - a.__score);
@@ -426,3 +442,224 @@ api.get("/health", (_req, res) => {
 });
 
 export default api;
+
+
+Server step: run this once in the Shell
+npm i cheerio
+Then reload and hit the app (or POST /api/catalogue/build to force a rebuild).
+
+B) No-repeat Quick Picks (bigger sample, better learning)
+
+Add this new file:
+
+client/src/hooks/useQuickPicks.ts
+
+import { useEffect, useMemo, useRef, useState } from "react";
+
+export type QuickPickItem = {
+  id: number;
+  title: string;
+  image?: string | null;
+  [k: string]: any;
+};
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/**
+ * Build a deck of unique items and yield them in pairs.
+ * A title appears at most once per deck (no repeats).
+ */
+export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
+  const [round, setRound] = useState(0);
+  const [done, setDone] = useState(false);
+  const deckRef = useRef<number[]>([]);
+  const [pair, setPair] = useState<QuickPickItem[] | null>(null);
+
+  // rebuild deck whenever items change
+  useEffect(() => {
+    const ids = Array.from(new Set(items.map((t) => t.id)));
+    const count = Math.min(ids.length, rounds * 2); // enough for the requested rounds
+    const pick = shuffle(ids).slice(0, count);
+    deckRef.current = pick;
+    setRound(0);
+    setDone(false);
+  }, [items, rounds]);
+
+  useEffect(() => {
+    if (deckRef.current.length < 2) {
+      setPair(null);
+      setDone(true);
+      return;
+    }
+    const idx = round * 2;
+    if (idx + 1 >= deckRef.current.length) {
+      setDone(true);
+      setPair(null);
+      return;
+    }
+    const idA = deckRef.current[idx];
+    const idB = deckRef.current[idx + 1];
+    const a = items.find((t) => t.id === idA);
+    const b = items.find((t) => t.id === idB);
+    if (a && b) setPair([a, b]);
+    else setPair(null);
+  }, [round, items]);
+
+  function choose(side: "left" | "right") {
+    if (done) return;
+    setRound((r) => r + 1);
+    return side;
+  }
+
+  function reset() {
+    setRound(0);
+    setDone(false);
+  }
+
+  return { pair, round, done, choose, reset };
+}
+
+
+Use this hook in your “poster pair” component. It guarantees no duplicate posters during the session’s deck.
+Yes — this improves learning (more coverage per session with the same number of clicks).
+
+C) Working Trailer Reel
+
+Add this component:
+
+client/src/components/TrailerReel.tsx
+
+import { useMemo, useState } from "react";
+import type { Title } from "../lib/videoPick";
+import { buildTrailerWheel, bestImageUrl } from "../lib/videoPick";
+
+type Props = {
+  items: Title[];
+  learnedVec: number[]; // from useLearnedVector()
+  count?: number;
+};
+
+export default function TrailerReel({ items, learnedVec, count = 12 }: Props) {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const [activeUrl, setActiveUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const wheel = useMemo(() => buildTrailerWheel(items, learnedVec, count), [items, learnedVec, count]);
+
+  async function play(i: number) {
+    setLoading(true);
+    setActiveIdx(i);
+    const { url } = await wheel.loadTrailer(i);
+    setActiveUrl(url);
+    setLoading(false);
+  }
+
+  return (
+    <div className="w-full">
+      <h2 className="text-xl font-semibold mb-3">Your Trailer Reel</h2>
+
+      {/* Thumbnails */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+        {wheel.picks.map((t, i) => (
+          <button
+            key={t.id}
+            onClick={() => play(i)}
+            className={`rounded-xl overflow-hidden shadow hover:shadow-lg transition ${
+              i === activeIdx ? "ring-2 ring-cyan-400" : ""
+            }`}
+            title={`Play trailer: ${t.title}`}
+          >
+            <img
+              src={bestImageUrl(t) || ""}
+              alt={t.title}
+              className="w-full h-64 object-cover"
+              loading="lazy"
+            />
+            <div className="p-2 text-sm font-medium text-left">{t.title}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Player */}
+      <div className="mt-6">
+        {loading && <div className="text-sm opacity-80">Loading trailer…</div>}
+        {!loading && activeUrl && isYouTube(activeUrl) && (
+          <div className="aspect-video w-full">
+            <iframe
+              className="w-full h-full rounded-xl"
+              src={toYouTubeEmbed(activeUrl)}
+              title="Trailer"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          </div>
+        )}
+        {!loading && activeUrl && !isYouTube(activeUrl) && (
+          <div className="text-sm">
+            Trailer URL:{" "}
+            <a className="underline" href={activeUrl} target="_blank" rel="noreferrer">
+              Open in new tab
+            </a>
+          </div>
+        )}
+        {!loading && activeIdx !== null && !activeUrl && (
+          <div className="text-sm opacity-80">No trailer available for this title.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function isYouTube(u: string) {
+  return /youtube\.com|youtu\.be/.test(u);
+}
+function toYouTubeEmbed(u: string) {
+  const m = u.match(/v=([^&]+)/);
+  const id = m ? m[1] : u.split("/").pop();
+  return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
+}
+
+How to wire it (minimal changes)
+
+Server
+
+Paste the new server/routes.ts.
+
+Run: npm i cheerio
+
+Restart. On first visit, catalogue auto-builds; or call POST /api/catalogue/build.
+
+Client (no repeats)
+
+Use the new useQuickPicks hook in your poster-pair screen:
+
+import { useEnhancedCatalogue, useLearnedVector } from "../hooks/useEnhancedCatalogue";
+import { useQuickPicks } from "../hooks/useQuickPicks";
+
+const { items, loading } = useEnhancedCatalogue();
+const { learned, like, skip } = useLearnedVector(12);
+const { pair, round, done, choose, reset } = useQuickPicks(items, 12);
+
+// when user clicks left/right:
+// choose("left"); like(pair[0]);  OR choose("right"); like(pair[1]);
+// (and maybe skip() the other if you’re using skip)
+
+
+Client (trailers)
+
+Drop <TrailerReel items={items} learnedVec={learned} /> somewhere under your Quick Picks section (e.g., after the progress hits 12/12).
+
+Notes
+
+Duplicates fixed: the hook builds a unique “deck” per session, so a title can’t reappear until the deck resets. That does improve learning because you cover more of the feature space per session.
+
+Only from your lists: the server now builds an allow-list from the three exact pages and accepts TMDb results only if the normalized title matches (with year preference). Adult content is filtered.
+
+Trailers: the reel fetches the best trailer (Official → Trailer → Teaser; YouTube preferred; 1080p bumped). If none exists on TMDb, we show a polite “No trailer” message.

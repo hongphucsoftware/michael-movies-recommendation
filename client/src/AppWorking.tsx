@@ -2,43 +2,35 @@ import { useEffect, useState } from "react";
 import { Shuffle, AlertCircle, RefreshCw } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import Header from "./components/Header";
+import TrailerReel from "./components/TrailerReel";
 import { useEnhancedCatalogue, useLearnedVector } from "./hooks/useEnhancedCatalogue";
+import { useQuickPicks } from "./hooks/useQuickPicks";
 import { bestImageUrl, type Title } from "./lib/videoPick";
 
 function AppWorking() {
   const { items: movies, loading, error } = useEnhancedCatalogue();
   const { learned, like, skip } = useLearnedVector();
-  const [currentPair, setCurrentPair] = useState<{ left: Title; right: Title } | null>(null);
-  const [choices, setChoices] = useState(0);
+  const { pair, round, done, choose, reset } = useQuickPicks(movies, 12);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
 
-  // Generate new movie pairs for selection
+  // Update onboarding completion based on rounds
   useEffect(() => {
-    if (movies.length >= 2 && !onboardingComplete) {
-      const shuffled = [...movies].sort(() => Math.random() - 0.5);
-      setCurrentPair({ left: shuffled[0], right: shuffled[1] });
-    }
-  }, [movies, choices, onboardingComplete]);
-
-  // Handle poster selection
-  const handleChoice = (movie: Title) => {
-    like(movie);
-    setChoices(prev => prev + 1);
-    
-    if (choices >= 11) { // 12 choices total (0-11)
+    if (done && !onboardingComplete) {
       setOnboardingComplete(true);
     }
+  }, [done, onboardingComplete]);
+
+  // Handle poster selection
+  const handleChoice = (movie: Title, side: "left" | "right") => {
+    like(movie);
+    choose(side);
   };
 
   const handleSkip = () => {
-    if (currentPair) {
-      skip(currentPair.left);
-      skip(currentPair.right);
-    }
-    setChoices(prev => prev + 1);
-    
-    if (choices >= 11) {
-      setOnboardingComplete(true);
+    if (pair) {
+      skip(pair[0]);
+      skip(pair[1]);
+      choose("left"); // Just advance the round
     }
   };
 
@@ -100,7 +92,7 @@ function AppWorking() {
 
       {/* Header */}
       <Header 
-        choices={choices} 
+        choices={round} 
         onboardingComplete={onboardingComplete}
         catalogueSize={movies.length}
         watchlistSize={0}
@@ -108,7 +100,7 @@ function AppWorking() {
 
       <main className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
         {/* Onboarding Phase */}
-        {!onboardingComplete && currentPair && (
+        {!onboardingComplete && pair && (
           <section className="pt-8">
             <div className="glass-card p-8 rounded-2xl">
               <div className="text-center mb-8">
@@ -120,7 +112,7 @@ function AppWorking() {
                   <span className="text-gray-300">Learning Progress</span>
                   <div className="flex items-center space-x-2">
                     <span className="bg-netflix-red text-white px-3 py-1 rounded-full text-sm font-semibold">
-                      {Math.min(choices, 12)} / 12
+                      {Math.min(round, 12)} / 12
                     </span>
                   </div>
                 </div>
@@ -129,7 +121,7 @@ function AppWorking() {
                 <div className="w-full bg-gray-700 rounded-full h-3 mb-8 overflow-hidden">
                   <div 
                     className="h-full bg-gradient-to-r from-netflix-red to-electric-blue rounded-full transition-all duration-500 ease-out"
-                    style={{ width: `${Math.min(100, Math.round(100 * choices / 12))}%` }}
+                    style={{ width: `${Math.min(100, Math.round(100 * round / 12))}%` }}
                   ></div>
                 </div>
               </div>
@@ -139,41 +131,41 @@ function AppWorking() {
                 {/* Left Movie */}
                 <div className="text-center">
                   <button
-                    onClick={() => handleChoice(currentPair.left)}
+                    onClick={() => handleChoice(pair[0], "left")}
                     className="group relative block w-full mb-4 rounded-xl overflow-hidden hover:scale-105 transition-transform duration-300"
                   >
                     <div className="aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden">
                       <img
-                        src={bestImageUrl(currentPair.left) || ''}
-                        alt={currentPair.left.title}
+                        src={bestImageUrl(pair[0]) || ''}
+                        alt={pair[0].title}
                         className="w-full h-full object-cover"
                         loading="lazy"
                       />
                     </div>
                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-300 rounded-xl"></div>
                   </button>
-                  <h3 className="text-lg font-semibold text-gray-200">{currentPair.left.title}</h3>
-                  <p className="text-sm text-gray-400">({currentPair.left.releaseDate?.slice(0, 4) || 'Unknown'})</p>
+                  <h3 className="text-lg font-semibold text-gray-200">{pair[0].title}</h3>
+                  <p className="text-sm text-gray-400">({pair[0].releaseDate?.slice(0, 4) || 'Unknown'})</p>
                 </div>
 
                 {/* Right Movie */}
                 <div className="text-center">
                   <button
-                    onClick={() => handleChoice(currentPair.right)}
+                    onClick={() => handleChoice(pair[1], "right")}
                     className="group relative block w-full mb-4 rounded-xl overflow-hidden hover:scale-105 transition-transform duration-300"
                   >
                     <div className="aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden">
                       <img
-                        src={bestImageUrl(currentPair.right) || ''}
-                        alt={currentPair.right.title}
+                        src={bestImageUrl(pair[1]) || ''}
+                        alt={pair[1].title}
                         className="w-full h-full object-cover"
                         loading="lazy"
                       />
                     </div>
                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-300 rounded-xl"></div>
                   </button>
-                  <h3 className="text-lg font-semibold text-gray-200">{currentPair.right.title}</h3>
-                  <p className="text-sm text-gray-400">({currentPair.right.releaseDate?.slice(0, 4) || 'Unknown'})</p>
+                  <h3 className="text-lg font-semibold text-gray-200">{pair[1].title}</h3>
+                  <p className="text-sm text-gray-400">({pair[1].releaseDate?.slice(0, 4) || 'Unknown'})</p>
                 </div>
               </div>
 
@@ -196,10 +188,10 @@ function AppWorking() {
             <div className="glass-card p-8 rounded-2xl text-center">
               <h1 className="text-4xl font-bold mb-4">Perfect!</h1>
               <p className="text-xl text-gray-300 mb-6">
-                Your AI has learned your taste from {choices} choices. 
+                Your AI has learned your taste from {round} choices. 
                 Ready to discover your next favourite movie!
               </p>
-              <div className="flex justify-center gap-4">
+              <div className="flex justify-center gap-4 mb-8">
                 <Badge variant="secondary" className="text-lg px-4 py-2">
                   {movies.length} movies available
                 </Badge>
@@ -207,12 +199,16 @@ function AppWorking() {
                   ML learning active
                 </Badge>
               </div>
+
+              {/* Trailer Reel */}
+              <TrailerReel items={movies} learnedVec={learned} count={8} />
+
               <button
                 onClick={() => {
                   setOnboardingComplete(false);
-                  setChoices(0);
+                  reset();
                 }}
-                className="mt-6 px-6 py-3 bg-netflix-red hover:bg-red-700 text-white font-semibold rounded-lg transition-colors"
+                className="mt-8 px-6 py-3 bg-netflix-red hover:bg-red-700 text-white font-semibold rounded-lg transition-colors"
               >
                 Start Over
               </button>
