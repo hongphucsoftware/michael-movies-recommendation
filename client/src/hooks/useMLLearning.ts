@@ -77,39 +77,30 @@ export function useMLLearning(movies: Movie[]) {
       ];
     }
 
-    // Much simpler approach - prioritize variety over complex filtering
-    const hidden = new Set(state.preferences.hidden);
-    const explored = new Set(state.preferences.explored);
+    // TRULY RANDOM A/B TESTING - Use ALL movies from all three sources
+    // No filtering by hidden, recent, or explored during A/B testing phase
+    // The whole point is to get random variety to learn preferences
     
-    // Get recently shown pairs (last 20 only to allow more variety)
-    const recentPairs = new Set(
-      JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]').slice(-20)
-    );
-
-    // Build available pool - be much more lenient
-    let available = movies.filter(movie => !hidden.has(movie.id));
+    console.log(`[A/B RANDOM] Selecting from full catalogue of ${movies.length} movies`);
     
-    // Only filter out very recently shown if we have plenty of movies
-    if (available.length > 30) {
-      available = available.filter(movie => !recentPairs.has(movie.id));
+    // Get a completely random selection from the entire catalogue
+    const shuffledAll = shuffle([...movies]);
+    
+    // Pick first two different movies
+    let movieA = shuffledAll[0];
+    let movieB = shuffledAll[1];
+    
+    // Ensure they're different movies
+    let attempts = 0;
+    while (movieA.id === movieB.id && attempts < 10) {
+      movieB = shuffledAll[2 + attempts];
+      attempts++;
     }
     
-    console.log(`Movie variety check: ${available.length}/${movies.length} available, showing mix of classics (${available.filter(m => m.category === 'classic').length}) and recent (${available.filter(m => m.category === 'recent').length})`);
-
-    // Simple random selection from available pool
-    const shuffled = shuffle([...available]);
-    const result: [Movie, Movie] = [
-      shuffled[0] || movies[0], 
-      shuffled[1] || movies[1]
-    ];
+    console.log(`[A/B PAIR] Selected: "${movieA.name}" (${movieA.year}) vs "${movieB.name}" (${movieB.year})`);
     
-    // Track recently shown pairs (much shorter list)
-    const recentList = JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]');
-    recentList.push(result[0].id, result[1].id);
-    localStorage.setItem('ts_recent_pairs', JSON.stringify(recentList.slice(-20))); // Keep only last 20
-
-    return result;
-  }, [movies, state.preferences.w, state.preferences.hidden, state.preferences.explored]);
+    return [movieA, movieB];
+  }, [movies]);
 
   // Update currentPair when movies are loaded
   useEffect(() => {
@@ -243,18 +234,22 @@ export function useMLLearning(movies: Movie[]) {
   }, []);
 
   const hideMovie = useCallback((movieId: string) => {
-    setState(prev => {
-      const newHidden = new Set(prev.preferences.hidden);
-      newHidden.add(movieId);
-      return {
-        ...prev,
-        preferences: {
-          ...prev.preferences,
-          hidden: newHidden
-        }
-      };
-    });
-  }, []);
+    // Only allow hiding movies AFTER A/B testing is complete
+    // During A/B testing, we need to see ALL movies for variety
+    if (state.onboardingComplete) {
+      setState(prev => {
+        const newHidden = new Set(prev.preferences.hidden);
+        newHidden.add(movieId);
+        return {
+          ...prev,
+          preferences: {
+            ...prev.preferences,
+            hidden: newHidden
+          }
+        };
+      });
+    }
+  }, [state.onboardingComplete]);
 
   const surpriseMe = useCallback(() => {
     const prevEps = state.preferences.eps;
@@ -281,6 +276,13 @@ export function useMLLearning(movies: Movie[]) {
   }, [state.preferences.eps, updateQueue]);
 
   const reset = useCallback(() => {
+    // Clear ALL storage that could bias movie selection
+    ['ts_preferences_enhanced_v3_complete_fix', 'ts_recent_pairs', 'ts_likes', 'ts_hidden', 'ts_recent'].forEach(key => 
+      localStorage.removeItem(key)
+    );
+    
+    console.log('[RESET] Cleared all bias - next A/B testing will use full random selection');
+    
     setState({
       preferences: {
         w: zeros(DIMENSION),
