@@ -8,6 +8,13 @@ Preferred communication style: Simple, everyday language.
 
 # Recent Changes (September 2025)
 
+- **Fixed Dynamic Catalogue System (Sept 1)**: Removed all hardcoded caps and fixed server to return complete dataset:
+  - **Server Uncapped**: Removed all `.slice()` calls from `/api/catalogue` endpoint - now returns full live dataset
+  - **Dynamic UI Text**: Replaced "432 movies" with live count from server via DataBanner component
+  - **No Client Capping**: Verified no client-side limits on catalogue data
+  - **Health Endpoint**: Added `/api/health/full` to detect future capping issues
+  - **Authentic Data Only**: Uses complete RT 2020 + IMDb Top 250 + IMDb List without artificial limits
+
 - **Enhanced A/B-Based Personalization (Sept 1)**: Fixed recommendation algorithm to properly reflect A/B test choices:
   - **Tightened Alignment**: Upgraded to 65% cosine + 35% genre scoring with minimum taste filters (MIN_REL=0.35)
   - **Quality Filtering**: Only considers top 120 scored titles with combo threshold (MIN_COMBO=0.28) for better correlation

@@ -412,31 +412,35 @@ const fresh = () => Date.now() - cache.ts < TTL && cache.catalogue.length > 0;
 
 const api = express.Router();
 
+// ==== FULL CATALOGUE ENDPOINT (NO CAPS, NO CURATION) ====
+// Replit Agent: Do not add pageSize or slice() here. The client needs ALL titles.
 api.get("/catalogue", async (req: Request, res: Response) => {
   try {
     if (!fresh()) {
       cache.catalogue = await buildAll();
       cache.ts = Date.now();
     }
-    
-    const all = String(req.query.all || "") === "1";
-    const total = cache.catalogue.length;
-    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-    const pageSize = all ? total : Math.min(2000, Math.max(1, parseInt(String(req.query.pageSize ?? "500"), 10)));
-    const start = (page - 1) * pageSize;
-    const slice = cache.catalogue.slice(start, start + pageSize);
-
+    const items = cache.catalogue;
     res.json({
       ok: true,
-      total,
-      page, pageSize,
-      items: slice.map((m) => ({ ...m, image: m.posterUrl || m.backdropUrl || null })),
-      stats: cache.stats,
+      total: items.length,
+      items: items.map((m) => ({ ...m, image: m.posterUrl || m.backdropUrl || null })),
+      sources: ["rt2020", "imdbTop", "imdbList"],
       policy: "ALL_TITLES_FROM_THREE_URLS",
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message ?? String(e) });
   }
+});
+
+// Optional: strict health to catch accidental caps on the client
+api.get("/health/full", (_req, res) => {
+  res.json({
+    ok: true,
+    total: cache.catalogue.length,
+    cacheAgeMs: Date.now() - cache.ts,
+    note: "If your UI shows a smaller number than 'total', the client is capping. Remove any slice/limit.",
+  });
 });
 
 api.post("/catalogue/build", async (_req, res) => {
@@ -467,7 +471,7 @@ api.get("/catalogue/stats", (_req, res) => {
   res.json({ 
     ok: true, 
     stats: cache.stats, 
-    misses: cache.misses.slice(0, 50),
+    misses: cache.misses,
     enforcementWarning: cache.catalogue.length < 50 ? "Collection too small for proper A/B testing" : null,
   });
 });
@@ -593,7 +597,7 @@ async function youtubeSearchEmbed(title: string, year?: string): Promise<string 
     });
     if (!res.ok) return null;
     const html = await res.text();
-    const ids = Array.from(html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)).map(m => m[1]).slice(0, 40);
+    const ids = Array.from(html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)).map(m => m[1]);
     if (!ids.length) return null;
 
     let best = ids[0], bestScore = -1e9;
@@ -658,7 +662,7 @@ api.get("/trailers", async (req: Request, res: Response) => {
   try {
     let raw = String(req.query.ids ?? "");
     try { raw = decodeURIComponent(raw); } catch {}
-    const ids = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n)).slice(0, 50);
+    const ids = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
     if (!ids.length) return res.json({ ok: true, trailers: {} });
 
     const tasks = ids.map((id) => async () => ({ id, embed: await bestYouTubeEmbedFor(id) }));
