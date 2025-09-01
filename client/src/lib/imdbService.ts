@@ -100,9 +100,14 @@ export class IMDbService {
   // Build Top 100 IMDb movies catalogue using server endpoints
   async buildCatalogue(): Promise<Movie[]> {
     try {
-      // Check for cached catalogue first (30 minute cache) - v5 with era fix and poster improvements
-      const cacheKey = 'ts_enhanced_catalogue_v5_era_fix';
-      const timestampKey = 'ts_enhanced_timestamp_v5_era_fix';
+      // Force fresh rebuild - v6 with variety and poster fixes
+      const cacheKey = 'ts_enhanced_catalogue_v6_variety_fix';
+      const timestampKey = 'ts_enhanced_timestamp_v6_variety_fix';
+      
+      // Clear old cache versions to force fresh build
+      localStorage.removeItem('ts_enhanced_catalogue_v5_era_fix');
+      localStorage.removeItem('ts_enhanced_timestamp_v5_era_fix');
+      localStorage.removeItem('ts_recent_pairs'); // Clear recent tracking
       const cachedData = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(timestampKey);
       const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
@@ -164,8 +169,8 @@ export class IMDbService {
         const youtubeKey = await this.getQualityYouTubeTrailer(tmdbId);
         if (!youtubeKey) continue;
 
-        // Poster: use hybrid approach - TMDb poster as primary, YouTube thumb as fallback
-        const tmdbPoster = tmdbMovie.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbMovie.poster_path}` : null;
+        // Poster: use hybrid approach - larger TMDb posters for better quality
+        const tmdbPoster = tmdbMovie.poster_path ? `https://image.tmdb.org/t/p/w780${tmdbMovie.poster_path}` : null;
         const youtubePoster = this.posterFromYouTube(youtubeKey);
         
         // Prefer TMDb poster for consistency, fallback to YouTube if needed

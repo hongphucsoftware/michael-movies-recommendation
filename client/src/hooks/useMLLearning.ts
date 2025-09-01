@@ -16,8 +16,10 @@ const DIMENSION = 12;
 
 export function useMLLearning(movies: Movie[]) {
   const [state, setState] = useState<MLState>(() => {
-    // Load from localStorage on initialization - namespace for enhanced catalogue
-    const STORAGE_KEY = 'ts_preferences_enhanced_v1'; // classics + 2020s
+    // Fresh start - clear old preferences to fix variety issues
+    const STORAGE_KEY = 'ts_preferences_enhanced_v2_fresh'; // fresh variety fix
+    localStorage.removeItem('ts_preferences_enhanced_v1'); // Clear old restrictive prefs
+    localStorage.removeItem('ts_recent_pairs'); // Clear recent tracking
     const storedPrefs = localStorage.getItem(STORAGE_KEY);
     const defaultPrefs: UserPreferences = {
       w: zeros(DIMENSION),
@@ -53,9 +55,9 @@ export function useMLLearning(movies: Movie[]) {
     };
   });
 
-  // Persist to localStorage whenever preferences change - use enhanced catalogue namespace
+  // Persist to localStorage whenever preferences change - fresh namespace for variety
   useEffect(() => {
-    const STORAGE_KEY = 'ts_preferences_enhanced_v1'; // classics + 2020s
+    const STORAGE_KEY = 'ts_preferences_enhanced_v2_fresh'; // fresh variety fix
     const toStore = {
       w: state.preferences.w,
       explored: Array.from(state.preferences.explored),
@@ -75,57 +77,36 @@ export function useMLLearning(movies: Movie[]) {
       ];
     }
 
-    // Get recently shown movies to avoid immediate repetition
-    const recentlyShown = new Set(
-      JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]').slice(-40)
-    );
-
-    // Build available pool with better variety controls
-    const available = movies.filter(movie => 
-      !state.preferences.explored.has(movie.id) && 
-      !state.preferences.hidden.has(movie.id) &&
-      !recentlyShown.has(movie.id)
-    );
-
-    console.log(`Movie variety check: ${available.length}/${movies.length} available (${movies.length - available.length} filtered out)`);
-
-    // Use fresh pool if too few available
-    const pool = available.length >= Math.min(20, movies.length * 0.3) 
-      ? shuffle([...available]) 
-      : shuffle([...movies.filter(movie => !state.preferences.hidden.has(movie.id))]);
-
-    let best: [Movie, Movie] | null = null;
-    let bestScore = -1;
-
-    // Expanded search for better variety
-    for (let i = 0; i < Math.min(20, pool.length - 1); i++) {
-      for (let j = i + 1; j < Math.min(pool.length, i + 10); j++) {
-        const A = pool[i];
-        const B = pool[j];
-        
-        // Skip if same movie or hidden
-        if (state.preferences.hidden.has(A.id) || state.preferences.hidden.has(B.id) || A.id === B.id) {
-          continue;
-        }
-
-        const diff = subtract(A.features, B.features);
-        const margin = Math.abs(dot(state.preferences.w, diff));
-        const dist = Math.sqrt(diff.reduce((s, v) => s + v * v, 0));
-        const score = dist - Math.min(margin, 1.5);
-        
-        if (score > bestScore) {
-          bestScore = score;
-          best = [A, B];
-        }
-      }
-    }
-
-    const result = best || [pool[0] || movies[0], pool[1] || movies[1]];
+    // Much simpler approach - prioritize variety over complex filtering
+    const hidden = new Set(state.preferences.hidden);
+    const explored = new Set(state.preferences.explored);
     
-    // Track recently shown pairs
-    const recentPairs = JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]');
-    recentPairs.push(result[0].id, result[1].id);
-    localStorage.setItem('ts_recent_pairs', JSON.stringify(recentPairs.slice(-40)));
+    // Get recently shown pairs (last 20 only to allow more variety)
+    const recentPairs = new Set(
+      JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]').slice(-20)
+    );
+
+    // Build available pool - be much more lenient
+    let available = movies.filter(movie => !hidden.has(movie.id));
+    
+    // Only filter out very recently shown if we have plenty of movies
+    if (available.length > 30) {
+      available = available.filter(movie => !recentPairs.has(movie.id));
+    }
+    
+    console.log(`Movie variety check: ${available.length}/${movies.length} available, showing mix of classics (${available.filter(m => m.category === 'classic').length}) and recent (${available.filter(m => m.category === 'recent').length})`);
+
+    // Simple random selection from available pool
+    const shuffled = shuffle([...available]);
+    const result: [Movie, Movie] = [
+      shuffled[0] || movies[0], 
+      shuffled[1] || movies[1]
+    ];
+    
+    // Track recently shown pairs (much shorter list)
+    const recentList = JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]');
+    recentList.push(result[0].id, result[1].id);
+    localStorage.setItem('ts_recent_pairs', JSON.stringify(recentList.slice(-20))); // Keep only last 20
 
     return result;
   }, [movies, state.preferences.w, state.preferences.hidden, state.preferences.explored]);

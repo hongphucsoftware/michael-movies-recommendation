@@ -54,33 +54,31 @@ export function EnhancedTrailerWheelSection({
     const available = getAvailableMovies();
     if (available.length === 0) return [];
 
-    // Precompute an "average recent vector" for diversity
-    let recentVec: number[] | null = null;
-    if (recentHistory.length > 0) {
-      const d = recentHistory[0].features.length;
-      const sum = new Array(d).fill(0);
-      recentHistory.forEach(m => {
-        m.features.forEach((v, i) => sum[i] += (v || 0));
-      });
-      recentVec = sum.map(v => v / recentHistory.length);
-    }
-
-    const LAMBDA = 0.25; // diversity strength (tweak 0.2–0.35)
-
+    // Much simpler scoring - prioritize variety and exploration
     const scored = available.map(movie => {
-      const base = sigmoid(dotProduct(preferences.w, movie.features));
-      const nov  = calculateNovelty(movie);
-      const div  = recentVec ? -LAMBDA * Math.max(0, cosine(movie.features, recentVec)) : 0;
-      return { movie, score: base + nov + div };
+      const baseScore = sigmoid(dotProduct(preferences.w, movie.features));
+      const novelty = calculateNovelty(movie);
+      // Add era bonus to promote 2020+ movies
+      const eraBonus = (movie.features[11] > 0.5) ? 0.2 : 0; // slot 11 = recent era
+      return { movie, score: baseScore + novelty + eraBonus };
     });
 
+    // Sort by score but add much more randomness
     scored.sort((a, b) => b.score - a.score);
 
-    // epsilon-greedy exploration unchanged
-    if (Math.random() < explorationRate && scored.length > 6) {
-      const k = 3 + Math.floor(Math.random() * Math.min(12, scored.length - 1));
-      [scored[0], scored[k]] = [scored[k], scored[0]];
+    // Much higher exploration rate to ensure variety
+    const highExploration = Math.max(0.4, explorationRate);
+    if (Math.random() < highExploration && scored.length > 3) {
+      // Pick from top 50% randomly instead of just swapping
+      const topHalf = Math.floor(scored.length * 0.5);
+      const randomPick = Math.floor(Math.random() * topHalf);
+      const temp = scored[0];
+      scored[0] = scored[randomPick];
+      scored[randomPick] = temp;
     }
+    
+    console.log(`Trailer queue: ${scored.slice(0,5).map(s => `${s.movie.name} (${s.movie.year}) [${s.movie.category}]`).join(', ')}`);
+    console.log(`Queue breakdown: ${scored.filter(s => s.movie.category === 'classic').length} classics, ${scored.filter(s => s.movie.category === 'recent').length} recent (2020+)`);
     return scored.map(s => s.movie);
   }, [getAvailableMovies, preferences.w, calculateNovelty, explorationRate, recentHistory]);
 
@@ -108,8 +106,8 @@ export function EnhancedTrailerWheelSection({
     // Mark as recent (for skip and normal next)
     onMarkRecent(currentMovie.id);
     
-    // Track for diversity - key fix to prevent repetitive trailers
-    setRecentHistory(prev => [currentMovie, ...prev].slice(0, 6)); // keep last 6
+    // Track for diversity - keep minimal history for variety
+    setRecentHistory(prev => [currentMovie, ...prev].slice(0, 3)); // keep only last 3
 
     // Get next movie
     let nextQueue = [...queue];
