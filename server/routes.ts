@@ -401,22 +401,20 @@ api.get("/catalogue", async (req: Request, res: Response) => {
       cache.ts = Date.now();
     }
     
+    const all = String(req.query.all || "") === "1";
+    const total = cache.catalogue.length;
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-    const pageSize = Math.min(2000, Math.max(1, parseInt(String(req.query.pageSize ?? "500"), 10)));
+    const pageSize = all ? total : Math.min(2000, Math.max(1, parseInt(String(req.query.pageSize ?? "500"), 10)));
     const start = (page - 1) * pageSize;
     const slice = cache.catalogue.slice(start, start + pageSize);
 
     res.json({
       ok: true,
-      total: cache.catalogue.length,
+      total,
       page, pageSize,
       items: slice.map((m) => ({ ...m, image: m.posterUrl || m.backdropUrl || null })),
-      learnedDims: 12,
-      cacheAgeMs: Date.now() - cache.ts,
       stats: cache.stats,
       policy: "ALL_TITLES_FROM_THREE_URLS",
-      // Add enforcement flag if collection is too small
-      enforcementWarning: cache.catalogue.length < 50 ? "Collection too small for proper A/B testing" : null,
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message ?? String(e) });
@@ -486,6 +484,42 @@ api.get("/trailer", async (req: Request, res: Response) => {
     res.json({ ok: true, trailer });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  }
+});
+
+// Batch prefetch: /api/trailers?ids=1,2,3
+api.get("/trailers", async (req: Request, res: Response) => {
+  try {
+    const ids = String(req.query.ids || "").split(",").map((x) => Number(x.trim())).filter(Boolean).slice(0, 50);
+    if (!ids.length) return res.json({ ok: true, trailers: {} });
+    if (!TMDB_API_KEY) return res.status(400).json({ ok: false, error: "TMDB_API_KEY not set" });
+    
+    const tasks = ids.map((id) => async () => {
+      try {
+        let vids = await fetchVideos(id, { include_video_language: "en,null", language: "en-US" });
+        if (!vids.length) vids = await fetchVideos(id, {});
+        
+        const best = scoreVideos(vids)[0];
+        if (!best) return { id, url: null };
+        
+        const url = (best.site || "").toLowerCase() === "youtube"
+          ? `https://www.youtube.com/watch?v=${best.key}`
+          : (best.site || "").toLowerCase() === "vimeo"
+          ? `https://vimeo.com/${best.key}`
+          : best.key;
+          
+        return { id, url };
+      } catch {
+        return { id, url: null };
+      }
+    });
+    
+    const out = await pLimit(CONCURRENCY, tasks);
+    const map: Record<string, string|null> = {};
+    out.forEach(({ id, url }) => { map[id] = url || null; });
+    res.json({ ok: true, trailers: map });
+  } catch (e: any) { 
+    res.status(500).json({ ok: false, error: e?.message ?? String(e) }); 
   }
 });
 

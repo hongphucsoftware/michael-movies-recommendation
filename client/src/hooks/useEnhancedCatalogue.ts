@@ -40,19 +40,21 @@ export function bestImageUrl(t: Title): string | null {
 }
 
 // ---- Fetch curated catalogue ----
-export function useEnhancedCatalogue(page = 1, pageSize = 60) {
+export function useEnhancedCatalogue() {
   const [items, setItems] = useState<Title[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
-        setErr(null);
-        const res = await fetch(`/api/catalogue?page=${page}&pageSize=${pageSize}`);
+        setError(null);
+        // Pull ALL items in a single call (server guarantees no downsampling)
+        const res = await fetch(`/api/catalogue?all=1`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json: CatalogueResponse = await res.json();
         if (cancelled) return;
@@ -65,16 +67,17 @@ export function useEnhancedCatalogue(page = 1, pageSize = 60) {
 
         setItems(enriched);
         setTotal(json.total || enriched.length);
+        setStats((json as any).stats || null);
       } catch (e: any) {
-        if (!cancelled) setErr(e?.message ?? String(e));
+        if (!cancelled) setError(e?.message ?? String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [page, pageSize]);
+  }, []);
 
-  return { items, total, loading, error: err };
+  return { items, total, loading, error, stats };
 }
 
 // ---- Learned vector (with persistence) ----

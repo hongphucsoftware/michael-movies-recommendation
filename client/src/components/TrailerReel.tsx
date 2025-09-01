@@ -53,25 +53,19 @@ function mmrPick(pool: Title[], userVec: number[], k = 12, lambda = 0.75) {
   return chosen;
 }
 
-async function getTrailerUrl(tmdbId: number): Promise<string | null> {
-  const res = await fetch(`/api/trailer?id=${tmdbId}`);
-  if (!res.ok) return null;
-  const json = await res.json();
-  const t = json?.trailer;
-  return t ? (t.url as string) : null;
-}
+
 
 export default function TrailerReel({ items, learnedVec, count = 12, recentChosenIds = [], avoidIds = [] }: Props) {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [urls, setUrls] = useState<Record<number, string|null>>({});
 
   // Build the candidate pool from ALL items (with images), then:
   // 1) compute preference score (cosine with learnedVec)
   // 2) soft bias toward "more like" recent A/B choices
   // 3) remove items we just showed during A/B (avoidIds)
   // 4) take top-N and run MMR for diversity
-  const { picks } = useMemo(() => {
+  const { picks, poolSize } = useMemo(() => {
     const pool0 = items.filter(t => bestImageUrl(t));                 // image gate for UX
     const avoid = new Set<number>(avoidIds || []);
     const pool = pool0.filter(t => !avoid.has(t.id));                  // don't re-show A/B pair immediately
@@ -108,23 +102,37 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
       const shuffled = scored.sort((a, b) => b.score - a.score);
       const slice = shuffled.slice(0, Math.min(400, shuffled.length)).map(x => x.t);
       const mmr = mmrPick(slice, learnedVec, count, 0.65);
-      return { picks: mmr };
+      return { picks: mmr, poolSize: pool.length };
     }
 
     // Normal path: take top 400 most relevant, then MMR for diversity
     const top = scored.sort((a, b) => b.score - a.score).slice(0, Math.min(400, scored.length)).map(x => x.t);
     const mmr = mmrPick(top, learnedVec, count, 0.75);
-    return { picks: mmr };
+    return { picks: mmr, poolSize: pool.length };
   }, [items, learnedVec, count, recentChosenIds, avoidIds]);
 
-  useEffect(() => { setActiveIdx(null); setActiveUrl(null); }, [picks]);
+  // Prefetch trailer URLs and auto-select first available
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const ids = picks.map(p => p.id);
+      const map = await batchTrailerUrls(ids);
+      if (!mounted) return;
+      setUrls(map);
+      const firstIdx = picks.findIndex(p => map[p.id]);
+      if (firstIdx >= 0) {
+        setActiveIdx(firstIdx);
+        setActiveUrl(map[picks[firstIdx].id] || null);
+      } else {
+        setActiveIdx(null); setActiveUrl(null);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [JSON.stringify(picks.map(p => p.id))]);
 
-  async function play(i: number) {
-    setLoading(true);
+  function clickPlay(i: number) {
     setActiveIdx(i);
-    const url = await getTrailerUrl(picks[i].id);
-    setActiveUrl(url);
-    setLoading(false);
+    setActiveUrl(urls[picks[i].id] || null);
   }
 
   return (
@@ -132,7 +140,7 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold">Your Personalized Trailer Reel</h2>
         <div className="text-xs opacity-70">
-          Based on your A/B choices • {picks.length} curated from {items.length} movies
+          Based on your A/B choices • {picks.length} curated from {poolSize} movies
         </div>
       </div>
 
@@ -141,7 +149,7 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
         {picks.map((t, i) => (
           <button
             key={t.id}
-            onClick={() => play(i)}
+            onClick={() => clickPlay(i)}
             className={`rounded-xl overflow-hidden shadow hover:shadow-lg transition ${i === activeIdx ? "ring-2 ring-cyan-400" : ""}`}
             title={`Play trailer: ${t.title}`}
           >
@@ -153,8 +161,8 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
 
       {/* Player */}
       <div className="mt-6">
-        {loading && <div className="text-sm opacity-80">Loading trailer…</div>}
-        {!loading && activeUrl && isYouTube(activeUrl) && (
+        {activeIdx === null && <div className="text-sm opacity-80">No playable trailer found for these picks.</div>}
+        {activeIdx !== null && activeUrl && (
           <div className="aspect-video w-full">
             <iframe
               className="w-full h-full rounded-xl"
@@ -165,13 +173,7 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
             />
           </div>
         )}
-        {!loading && activeUrl && !isYouTube(activeUrl) && (
-          <div className="text-sm">
-            Trailer URL:{" "}
-            <a className="underline" href={activeUrl} target="_blank" rel="noreferrer">Open in new tab</a>
-          </div>
-        )}
-        {!loading && activeIdx !== null && !activeUrl && (
+        {activeIdx !== null && !activeUrl && (
           <div className="text-sm opacity-80">No trailer available for this title.</div>
         )}
       </div>
@@ -179,8 +181,19 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
   );
 }
 
-function isYouTube(u: string) { return /youtube\.com|youtu\.be/.test(u); }
+async function batchTrailerUrls(ids: number[]): Promise<Record<number, string|null>> {
+  const qs = encodeURIComponent(ids.join(","));
+  const res = await fetch(`/api/trailers?ids=${qs}`);
+  if (!res.ok) return {};
+  const json = await res.json();
+  const map = (json?.trailers || {}) as Record<string, string|null>;
+  const out: Record<number, string|null> = {};
+  Object.keys(map).forEach(k => out[Number(k)] = map[k]);
+  return out;
+}
+
 function toYouTubeEmbed(u: string) {
+  if (!/youtube\.com|youtu\.be/.test(u)) return u;
   const m = u.match(/v=([^&]+)/);
   const id = m ? m[1] : u.split("/").pop();
   return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
