@@ -190,16 +190,16 @@ function AppEnhanced() {
 
               <TrailerPlayer
                 items={finalMovies.map(m => ({
-                  id: m.id,
-                  title: m.name,
+                  id: typeof m.id === 'string' ? parseInt(m.id.replace(/\D/g, '')) : m.id,
+                  title: m.name || m.title,
                   year: m.year,
-                  genres: m.genreIds || [],
+                  genres: m.genreIds || m.genre_ids || [],
                   popularity: m.popularity || 0,
-                  feature: m.feature || [],
-                  sources: [m.category]
+                  feature: m.feature || m.features || [],
+                  sources: m.sources || [m.category] || ['unknown']
                 }))}
-                learnedVec={preferences.w}
-                recentChosenIds={Array.from(preferences.explored).map(id => parseInt(id))}
+                learnedVec={preferences?.w || []}
+                recentChosenIds={Array.from(preferences?.explored || new Set()).map(id => parseInt(String(id).replace(/\D/g, '')))}
                 count={5}
               />
             </div>

@@ -211,7 +211,7 @@ function AppFixed() {
 
               <TrailerPlayer
                 items={movies.map(m => ({
-                  id: parseInt(m.id.replace('movie_', '')),
+                  id: parseInt(String(m.id).replace(/\D/g, '')),
                   title: m.name,
                   year: m.year,
                   genres: m.genre_ids || [],
@@ -219,8 +219,8 @@ function AppFixed() {
                   feature: m.features || [],
                   sources: [m.category]
                 }))}
-                learnedVec={preferences.w}
-                recentChosenIds={Array.from(preferences.explored).map(id => parseInt(id))}
+                learnedVec={preferences?.w || []}
+                recentChosenIds={Array.from(preferences?.explored || new Set()).map(id => parseInt(String(id).replace(/\D/g, '')))}
                 count={5}
               />
             </div>
