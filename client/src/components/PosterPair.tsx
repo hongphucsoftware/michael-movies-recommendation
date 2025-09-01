@@ -2,15 +2,18 @@
 // Replit Agent: This component must render TWO posters per round,
 // randomise their left/right position, and call like()/skip() on click.
 
-import React from "react";
+import React, { useState } from "react";
 import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 import { useQuickPicks } from "../hooks/useQuickPicks";
+import { useABHistory } from "../hooks/useABHistory";
 import TrailerReel from "./TrailerReel";
 
 export default function PosterPair() {
-  const { items, loading, error } = useEnhancedCatalogue();
+  const { items, total, loading, error, stats } = useEnhancedCatalogue();
   const { learned, like, skip, resetLearning } = useLearnedVector(12);
   const { pair, choose, done, progress, reset } = useQuickPicks(items, 12);
+  const { chosen: chosenIds, seen: seenIds, record, reset: resetAB } = useABHistory();
+  const [rebuilding, setRebuilding] = useState(false);
 
   if (loading) return <div className="opacity-80">Loading catalogue…</div>;
   if (error) return <div className="text-red-400">Error: {error}</div>;
@@ -22,6 +25,23 @@ export default function PosterPair() {
     const { chosen, other } = result;
     like(chosen as any);
     skip(other as any);
+    record((chosen as any).id, (other as any).id);  // Track A/B history for personalized reel
+  }
+
+  async function doRebuild() {
+    try { 
+      setRebuilding(true); 
+      await fetch("/api/catalogue/build", { method: "POST" }); 
+      window.location.reload(); 
+    } finally { 
+      setRebuilding(false); 
+    }
+  }
+
+  function hardReset() { 
+    resetLearning(); 
+    resetAB(); 
+    reset(); 
   }
 
   return (
@@ -88,15 +108,15 @@ export default function PosterPair() {
               New Round
             </button>
             <button
-              onClick={() => resetLearning()}
+              onClick={hardReset}
               className="text-xs rounded-full px-3 py-1 bg-red-500/20 hover:bg-red-500/30 transition"
-              title="Reset learned preferences"
+              title="Reset all learned preferences and A/B history"
             >
-              Reset Learning
+              Reset All Learning
             </button>
           </div>
 
-          <TrailerReel items={items} learnedVec={learned} />
+          <TrailerReel items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} />
         </div>
       )}
     </div>
