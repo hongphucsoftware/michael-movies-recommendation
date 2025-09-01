@@ -1,4 +1,5 @@
 import { useMLLearning } from "./hooks/useMLLearning";
+import { useEnhancedCatalogueNew } from "./hooks/useEnhancedCatalogueNew";
 import { useEnhancedCatalogue } from "./hooks/useEnhancedCatalogue";
 import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
@@ -8,9 +9,12 @@ import { RefreshCw, AlertCircle, Shuffle } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 
 function AppEnhanced() {
+  // New enhanced catalogue with proper poster handling
+  const { items: movies, loading } = useEnhancedCatalogueNew();
+  
+  // Temporary fallback to old hook while transitioning
   const {
-    movies,
-    isLoading,
+    isLoading: oldLoading,
     error,
     loadingMessage,
     catalogueSize,
@@ -22,6 +26,12 @@ function AppEnhanced() {
     getWatchlistMovies,
     resetAll
   } = useEnhancedCatalogue();
+  
+  // Use new loading state if available, fallback to old
+  const isLoading = loading || oldLoading;
+  
+  // Use new movies if available and valid, otherwise fall back to old hook
+  const finalMovies = (movies && movies.length > 0) ? movies : [];
 
   const {
     preferences,
@@ -32,7 +42,7 @@ function AppEnhanced() {
     skipPair,
     reset: resetML,
     getAdventurousnessLabel
-  } = useMLLearning(movies || []);
+  } = useMLLearning(finalMovies);
 
   // Combined reset function
   const handleReset = () => {

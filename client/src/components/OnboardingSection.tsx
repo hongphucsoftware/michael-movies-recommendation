@@ -5,34 +5,35 @@ import { Lightbulb, Minus, Plus, SkipForward, MousePointer } from "lucide-react"
 import RobustImage from "./RobustImage";
 
 interface OnboardingSectionProps {
-  currentPair: [Movie, Movie] | null;
-  choices: number;
-  adventurousness: string;
-  onSelectPoster: (winner: Movie, loser: Movie) => void;
+  currentPair: { left: Movie | null; right: Movie | null } | null;
+  onChoice: (winner: Movie, loser: Movie) => void;
+  onSkip: () => void;
+  preferences: any;
   onAdjustAdventurousness: (delta: number) => void;
-  onSkipPair: () => void;
+  getAdventurousnessLabel: () => string;
 }
 
 export default function OnboardingSection({
   currentPair,
-  choices,
-  adventurousness,
-  onSelectPoster,
+  onChoice,
+  onSkip,
+  preferences,
   onAdjustAdventurousness,
-  onSkipPair
+  getAdventurousnessLabel
 }: OnboardingSectionProps) {
   const [progressWidth, setProgressWidth] = useState(0);
 
   useEffect(() => {
-    const percentage = Math.min(100, Math.round(100 * choices / TARGET_CHOICES));
+    const percentage = Math.min(100, Math.round(100 * preferences.choices / TARGET_CHOICES));
     setProgressWidth(percentage);
-  }, [choices]);
+  }, [preferences.choices]);
 
-  if (!currentPair) {
+  if (!currentPair || !currentPair.left || !currentPair.right) {
     return null;
   }
 
-  const [movieA, movieB] = currentPair;
+  const movieA = currentPair.left;
+  const movieB = currentPair.right;
 
   return (
     <main className="relative z-10 max-w-7xl mx-auto px-6 pb-12" id="onboarding">
@@ -54,13 +55,13 @@ export default function OnboardingSection({
               <span className="text-gray-300">Learning Progress</span>
               <div className="flex items-center space-x-2">
                 <span className="bg-netflix-red text-white px-3 py-1 rounded-full text-sm font-semibold">
-                  {Math.min(choices, TARGET_CHOICES)} / {TARGET_CHOICES}
+                  {Math.min(preferences.choices, TARGET_CHOICES)} / {TARGET_CHOICES}
                 </span>
                 <div className="bg-electric-blue/20 text-electric-blue px-3 py-1 rounded-full text-sm">
                   <svg className="inline mr-1 w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11.707 4.707a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
-                  {adventurousness}
+                  {getAdventurousnessLabel()}
                 </div>
               </div>
             </div>
@@ -87,7 +88,7 @@ export default function OnboardingSection({
           {/* Left Poster */}
           <div 
             className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-netflix-red/25" 
-            onClick={() => onSelectPoster(movieA, movieB)}
+            onClick={() => onChoice(movieA, movieB)}
             data-testid="poster-left"
           >
             <div className="gradient-border relative overflow-hidden">
@@ -101,16 +102,11 @@ export default function OnboardingSection({
                 
                 <div className="space-y-3">
                   <h3 className="text-xl font-bold text-white">{movieA.name}</h3>
-                  <p className="text-gray-400 text-sm">{movieA.year} • {movieA.isSeries ? 'Series' : 'Film'}</p>
+                  <p className="text-gray-400 text-sm">{movieA.year} • Film • {movieA.category}</p>
                   <div className="flex flex-wrap gap-2">
-                    {movieA.tags.map((tag, index) => (
-                      <span 
-                        key={index}
-                        className="bg-netflix-red/20 text-netflix-red px-2 py-1 rounded-full text-xs"
-                      >
-                        {tag}
-                      </span>
-                    ))}
+                    <span className="bg-netflix-red/20 text-netflix-red px-2 py-1 rounded-full text-xs">
+                      {movieA.category === 'recent' ? 'Recent Hit' : 'Classic'}
+                    </span>
                   </div>
                   <div className="flex items-center mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
                     <MousePointer className="text-netflix-red mr-2" size={16} />
@@ -131,7 +127,7 @@ export default function OnboardingSection({
           {/* Right Poster */}
           <div 
             className="poster-card group cursor-pointer transform transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-electric-blue/25" 
-            onClick={() => onSelectPoster(movieB, movieA)}
+            onClick={() => onChoice(movieB, movieA)}
             data-testid="poster-right"
           >
             <div className="gradient-border relative overflow-hidden">
@@ -145,16 +141,11 @@ export default function OnboardingSection({
                 
                 <div className="space-y-3">
                   <h3 className="text-xl font-bold text-white">{movieB.name}</h3>
-                  <p className="text-gray-400 text-sm">{movieB.year} • {movieB.isSeries ? 'Series' : 'Film'}</p>
+                  <p className="text-gray-400 text-sm">{movieB.year} • Film • {movieB.category}</p>
                   <div className="flex flex-wrap gap-2">
-                    {movieB.tags.map((tag, index) => (
-                      <span 
-                        key={index}
-                        className="bg-electric-blue/20 text-electric-blue px-2 py-1 rounded-full text-xs"
-                      >
-                        {tag}
-                      </span>
-                    ))}
+                    <span className="bg-electric-blue/20 text-electric-blue px-2 py-1 rounded-full text-xs">
+                      {movieB.category === 'recent' ? 'Recent Hit' : 'Classic'}
+                    </span>
                   </div>
                   <div className="flex items-center mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
                     <MousePointer className="text-netflix-red mr-2" size={16} />
@@ -193,7 +184,7 @@ export default function OnboardingSection({
           </button>
           <button 
             className="glass-card px-6 py-3 rounded-lg hover:bg-yellow-600 transition-colors flex items-center"
-            onClick={onSkipPair}
+            onClick={onSkip}
             data-testid="button-skip-pair"
           >
             <SkipForward className="mr-2" size={16} />

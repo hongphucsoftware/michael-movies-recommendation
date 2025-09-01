@@ -1,0 +1,575 @@
+Got it. Below is a drop-in, end-to-end fix that:
+
+always uses proper poster art (never cropped backdrops),
+
+makes the vetting actually steer the trailer wheel (adds an “era” feature and better learning),
+
+stops the “same 5 movies” loop with diversity/novelty in ranking,
+
+pulls a big catalogue from your two links + TMDb discover for 2020-2024 (1k+ titles),
+
+picks official/full YouTube trailers and keeps fallback keys,
+
+adds cache with TTL + a manual flush endpoint so Replit doesn’t show stale data.
+
+Do the steps exactly in order.
+
+STEP 1 — Replace your server routes with this (TypeScript)
+
+server/routes.ts (complete file; paste over)
+
+// server/routes.ts
+import express, { Request, Response } from "express";
+import cors from "cors";
+import fetch, { Response as FetchResponse } from "node-fetch";
+import { Readable } from "stream";
+
+export const router = express.Router();
+router.use(cors());
+
+/* =========================
+   CONFIG
+========================= */
+const TMDB_KEY = process.env.TMDB_KEY || "5806f2f63f3875fd9e1755ce864ee15f";
+const TMDB_API_BASE = "https://api.themoviedb.org/3";
+const TMDB_IMG_BASE = "https://image.tmdb.org";
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+type Basic = { id: string; title: string; year?: number };
+type BuiltMovie = {
+  id: number;
+  name: string;
+  year: number;
+  poster_path?: string | null;
+  backdrop_path?: string | null;
+  genre_ids?: number[];
+  ytKeys: string[];    // sorted best-first
+  source: string;      // imdbTop | imdbList | rt | discover
+};
+
+/* =========================
+   UTIL
+========================= */
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+async function fetchText(url: string): Promise<string> {
+  const r = await fetch(url, { redirect: "follow" });
+  if (!r.ok) throw new Error(`HTTP ${r.status} ${url}`);
+  return r.text();
+}
+async function fetchJSON<T=any>(url: string): Promise<T> {
+  const r = await fetch(url, { redirect: "follow" });
+  if (!r.ok) throw new Error(`HTTP ${r.status} ${url}`);
+  return r.json() as Promise<T>;
+}
+function normTitle(t: string) {
+  return t.toLowerCase().replace(/&amp;/g, "&").replace(/[:’'".,!?]/g, "").replace(/\s+/g, " ").trim();
+}
+function pickBestYouTubeVideo(results: any[]): string[] {
+  const YT = (results || []).filter((v: any) => v.site === "YouTube");
+  const score = (v: any) => {
+    const n = (v.name || "").toLowerCase();
+    let s = 0;
+    if (v.type === "Trailer") s += 6;
+    if (v.official === true) s += 5;
+    if (/\bofficial\b/.test(n)) s += 3;
+    if (/\btrailer\b/.test(n)) s += 2;
+    if (v.size >= 1080) s += 2; else if (v.size >= 720) s += 1;
+    if (/\bteaser\b/.test(n)) s -= 2;
+    if (/\bclip\b/.test(n)) s -= 3;
+    if (/\bspot\b/.test(n)) s -= 2;
+    return s;
+  };
+  return YT.map((v: any) => ({ v, s: score(v) }))
+           .sort((a: any, b: any) => b.s - a.s)
+           .map((x: any) => x.v.key);
+}
+
+/* =========================
+   SCRAPERS (your 2 links)
+========================= */
+
+// IMDb Top 250 → we’ll use all, then later you can slice to Top 100 if wanted
+async function scrapeImdbTop(): Promise<Basic[]> {
+  const html = await fetchText("https://www.imdb.com/chart/top/");
+  const re = /\/title\/(tt\d{7,8})\/[^>]*>([^<]+)<\/a>[\s\S]{0,120}?\((\d{4})\)/g;
+  const out: Basic[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const imdbId = m[1], title = m[2].trim(), year = parseInt(m[3], 10);
+    if (seen.has(imdbId)) continue;
+    seen.add(imdbId);
+    out.push({ id: imdbId, title, year });
+  }
+  return out;
+}
+
+// IMDb custom list (yours): https://www.imdb.com/list/ls545836395/
+async function scrapeImdbList(listId = "ls545836395"): Promise<Basic[]> {
+  const html = await fetchText(`https://www.imdb.com/list/${listId}/`);
+  // list pages have many variants; be flexible
+  const re = /\/title\/(tt\d{7,8})\/[^>]*>([^<]+)<\/a>[\s\S]{0,160}?\((\d{4})\)/g;
+  const out: Basic[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const imdbId = m[1], title = m[2].trim(), year = parseInt(m[3], 10);
+    if (seen.has(imdbId)) continue;
+    seen.add(imdbId);
+    out.push({ id: imdbId, title, year });
+  }
+  return out;
+}
+
+// RottenTomatoes editorial guides 2020–2024
+const RT_GUIDES: Record<number,string> = {
+  2020: "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
+  2021: "https://editorial.rottentomatoes.com/guide/best-movies-of-2021/",
+  2022: "https://editorial.rottentomatoes.com/guide/best-movies-2022/",
+  2023: "https://editorial.rottentomatoes.com/guide/best-movies-2023/",
+  2024: "https://editorial.rottentomatoes.com/guide/best-movies-2024/"
+};
+async function scrapeRtYear(year: number): Promise<Basic[]> {
+  const url = RT_GUIDES[year];
+  if (!url) return [];
+  const html = await fetchText(url);
+  // RT guides commonly wrap titles in <em> or <i> tags, nearby year appears in parentheses
+  // Be permissive: capture Title (Year) patterns
+  const out: Basic[] = [];
+  const seen = new Set<string>();
+  const re = /<em>([^<]+)<\/em>|\b([A-Z][A-Za-z0-9:’'&!?.\- ]+)\s*\((\d{4})\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const title = (m[1] || m[2] || "").trim();
+    const yrStr = m[3] || (/\((\d{4})\)/.exec(html.slice(m.index, m.index + 140))?.[1]);
+    const yearNum = yrStr ? parseInt(yrStr, 10) : year;
+    if (!title || !yearNum) continue;
+    const key = `${normTitle(title)}::${yearNum}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ id: key, title, year: yearNum });
+  }
+  return out;
+}
+
+/* =========================
+   TMDb helpers
+========================= */
+async function tmdbFindByImdb(imdbId: string) {
+  const url = `${TMDB_API_BASE}/find/${encodeURIComponent(imdbId)}?api_key=${TMDB_KEY}&external_source=imdb_id`;
+  return fetchJSON<any>(url);
+}
+async function tmdbSearchTitleYear(title: string, year?: number) {
+  const q = new URLSearchParams({ api_key: TMDB_KEY, query: title, include_adult: "false", language: "en-US" });
+  if (year) q.set("year", String(year));
+  const url = `${TMDB_API_BASE}/search/movie?${q.toString()}`;
+  return fetchJSON<any>(url);
+}
+async function tmdbVideos(id: number) {
+  const url = `${TMDB_API_BASE}/movie/${id}/videos?api_key=${TMDB_KEY}&language=en-US`;
+  return fetchJSON<any>(url);
+}
+async function tmdbDiscoverByYear(year: number, pages = 8) {
+  // vote_count.desc → “big titles” so we avoid deep obscure items without trailers
+  const out: any[] = [];
+  for (let p = 1; p <= pages; p++) {
+    const qs = new URLSearchParams({
+      api_key: TMDB_KEY,
+      language: "en-US",
+      include_adult: "false",
+      sort_by: "vote_count.desc",
+      page: String(p),
+      primary_release_year: String(year)
+    });
+    const url = `${TMDB_API_BASE}/discover/movie?${qs.toString()}`;
+    const data = await fetchJSON<any>(url);
+    out.push(...(data.results || []));
+    await sleep(80);
+  }
+  return out;
+}
+
+/* =========================
+   BUILD CATALOGUE (1k+ titles)
+========================= */
+
+let CACHE: { at: number; items: BuiltMovie[] } | null = null;
+
+router.get("/api/cache/flush", (_req, res) => {
+  CACHE = null;
+  res.json({ ok: true });
+});
+
+router.get("/api/movies/catalogue", async (_req: Request, res: Response) => {
+  try {
+    if (CACHE && Date.now() - CACHE.at < CACHE_TTL_MS) {
+      return res.json({ items: CACHE.items, cached: true });
+    }
+
+    // 1) Seed from your two sources (IMDb Top + IMDb list + RT 2020–2024)
+    const [imdbTop, imdbList, rt20, rt21, rt22, rt23, rt24] = await Promise.all([
+      scrapeImdbTop(),
+      scrapeImdbList("ls545836395"),
+      scrapeRtYear(2020),
+      scrapeRtYear(2021),
+      scrapeRtYear(2022),
+      scrapeRtYear(2023),
+      scrapeRtYear(2024),
+    ]);
+
+    // 2) Add large TMDb discover sets for 2020–2024 (ensures 1k+)
+    const discoverAll: any[] = [];
+    for (const y of [2020, 2021, 2022, 2023, 2024]) {
+      const chunk = await tmdbDiscoverByYear(y, 8); // 8 pages ≈ 160 per year
+      discoverAll.push(...chunk.map(r => ({ tmdb: r, year: y })));
+      await sleep(120);
+    }
+
+    // 3) Normalize → TMDb movie ids
+    const byKey = new Map<string, BuiltMovie>();
+    const pushBuilt = (b: BuiltMovie) => {
+      const key = `movie_${b.id}`;
+      if (!byKey.has(key)) byKey.set(key, b);
+    };
+
+    // IMDb Top / List (with imdbId → TMDb mapping):
+    async function mapImdbBasics(rows: Basic[], source: string) {
+      for (const r of rows) {
+        if (!r.id.startsWith("tt")) continue;
+        const data = await tmdbFindByImdb(r.id); // { movie_results: [...] }
+        const m = (data.movie_results && data.movie_results[0]) || null;
+        if (!m) continue;
+        const vids = await tmdbVideos(m.id).catch(() => ({ results: [] as any[] }));
+        const keys = pickBestYouTubeVideo(vids.results || []);
+        if (keys.length === 0) continue;
+        pushBuilt({
+          id: m.id,
+          name: m.title || r.title,
+          year: parseInt((m.release_date || r.year || 0).toString().slice(0, 4), 10),
+          poster_path: m.poster_path,
+          backdrop_path: m.backdrop_path,
+          genre_ids: m.genre_ids || [],
+          ytKeys: keys,
+          source,
+        });
+        await sleep(60);
+      }
+    }
+    await mapImdbBasics(imdbTop, "imdbTop");
+    await mapImdbBasics(imdbList, "imdbList");
+
+    // RT lists → title+year → TMDb search
+    async function mapRtBasics(rows: Basic[], source: string) {
+      for (const r of rows) {
+        const data = await tmdbSearchTitleYear(r.title, r.year);
+        const m = (data.results || [])[0];
+        if (!m) continue;
+        const vids = await tmdbVideos(m.id).catch(() => ({ results: [] as any[] }));
+        const keys = pickBestYouTubeVideo(vids.results || []);
+        if (keys.length === 0) continue;
+        pushBuilt({
+          id: m.id,
+          name: m.title || r.title,
+          year: parseInt((m.release_date || r.year || 0).toString().slice(0, 4), 10),
+          poster_path: m.poster_path,
+          backdrop_path: m.backdrop_path,
+          genre_ids: m.genre_ids || [],
+          ytKeys: keys,
+          source,
+        });
+        await sleep(60);
+      }
+    }
+    await mapRtBasics(rt20, "rt");
+    await mapRtBasics(rt21, "rt");
+    await mapRtBasics(rt22, "rt");
+    await mapRtBasics(rt23, "rt");
+    await mapRtBasics(rt24, "rt");
+
+    // TMDb discover (already TMDb ids)
+    for (const r of discoverAll) {
+      const m = r.tmdb;
+      const vids = await tmdbVideos(m.id).catch(() => ({ results: [] as any[] }));
+      const keys = pickBestYouTubeVideo(vids.results || []);
+      if (keys.length === 0) continue;
+      pushBuilt({
+        id: m.id,
+        name: m.title,
+        year: parseInt((m.release_date || "0").slice(0, 4), 10),
+        poster_path: m.poster_path,
+        backdrop_path: m.backdrop_path,
+        genre_ids: m.genre_ids || [],
+        ytKeys: keys,
+        source: "discover",
+      });
+      await sleep(40);
+    }
+
+    const items = Array.from(byKey.values());
+    CACHE = { at: Date.now(), items };
+    return res.json({ items, cached: false, count: items.length });
+  } catch (e: any) {
+    console.error("catalogue error", e);
+    res.status(500).json({ error: "catalogue_failed", detail: String(e) });
+  }
+});
+
+/* =========================
+   SIMPLE TMDb PROXIES (unchanged)
+========================= */
+router.get("/api/videos/:type/:id", async (req, res) => {
+  const { type, id } = req.params;
+  const url = `${TMDB_API_BASE}/${encodeURIComponent(type)}/${encodeURIComponent(id)}/videos?api_key=${TMDB_KEY}&language=en-US`;
+  const data = await fetchJSON<any>(url).catch(e => ({ error: String(e) }));
+  res.json(data);
+});
+
+router.get("/api/tmdb/movie/:id", async (req, res) => {
+  const url = `${TMDB_API_BASE}/movie/${encodeURIComponent(req.params.id)}?api_key=${TMDB_KEY}&language=en-US`;
+  const data = await fetchJSON<any>(url).catch(e => ({ error: String(e) }));
+  res.json(data);
+});
+
+/* =========================
+   IMAGE PROXY (poster_path only!)
+========================= */
+router.get("/img/*", async (req: Request, res: Response) => {
+  try {
+    const upstream = `${TMDB_IMG_BASE}/${req.params[0]}`;
+    const r: FetchResponse = await fetch(upstream, { redirect: "follow" });
+    if (!r.ok) return res.status(r.status).send("Upstream error");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.set("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    if ((r as any).body && (Readable as any).fromWeb) {
+      (Readable as any).fromWeb((r as any).body).pipe(res);
+    } else {
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.end(buf);
+    }
+  } catch (e) {
+    res.status(502).send("Proxy error");
+  }
+});
+
+/* =========================
+   sanity
+========================= */
+router.get("/ping", (_req, res) => res.type("text/plain").send("pong"));
+
+
+Why Replit was “cropping”: backdrops were being used. This proxy + client patches below force poster_path first, then fallback.
+
+STEP 2 — Add shared client helpers
+
+Create client/src/lib/videoPick.ts:
+
+// client/src/lib/videoPick.ts
+export function pickBestYouTubeVideo(results: any[]): string[] {
+  const YT = (results || []).filter((v: any) => v.site === "YouTube");
+  const score = (v: any) => {
+    const n = (v.name || "").toLowerCase();
+    let s = 0;
+    if (v.type === "Trailer") s += 6;
+    if (v.official === true) s += 5;
+    if (/\bofficial\b/.test(n)) s += 3;
+    if (/\btrailer\b/.test(n)) s += 2;
+    if (v.size >= 1080) s += 2; else if (v.size >= 720) s += 1;
+    if (/\bteaser\b/.test(n)) s -= 2;
+    if (/\bclip\b/.test(n)) s -= 3;
+    if (/\bspot\b/.test(n)) s -= 2;
+    return s;
+  };
+  return YT.map((v: any) => ({ v, s: score(v) }))
+           .sort((a: any, b: any) => b.s - a.s)
+           .map((x: any) => x.v.key);
+}
+
+export function posterFromTMDbPaths(obj: any): string | null {
+  const p = obj?.poster_path || null;
+  if (p) return `/img/t/p/w500${p}`; // prefer true posters
+  const b = obj?.backdrop_path || null;
+  return b ? `/img/t/p/w500${b}` : null; // fallback only
+}
+
+export const youtubeThumb = (key: string) => `https://i.ytimg.com/vi/${key}/sddefault.jpg`;
+
+STEP 3 — Use the big server catalogue in the client
+
+Replace your catalogue hook/service to consume the new endpoint and set era.
+
+client/src/hooks/useEnhancedCatalogue.ts (paste over)
+
+import { useEffect, useMemo, useState } from "react";
+import { posterFromTMDbPaths, youtubeThumb } from "../lib/videoPick";
+
+export type Movie = {
+  id: string;
+  name: string;
+  year: number;
+  poster: string;
+  ytKeys: string[];      // all candidate video keys
+  genre_ids: number[];
+  features: number[];    // 12-dim vector
+  category: "classic" | "recent";
+};
+
+const GENRES = {
+  Comedy: 35, Drama: 18, Action: 28, Thriller: 53, SciFi: 878, Fantasy: 14,
+  Documentary: 99, Animation: 16, Horror: 27, Crime: 80, Adventure: 12, Family: 10751, Romance: 10749, Mystery: 9648
+};
+
+function fVec(genre_ids: number[], year: number): number[] {
+  const has = (...ids: number[]) => ids.some(g => genre_ids.includes(g)) ? 1 : 0;
+  const comedy = has(GENRES.Comedy), drama = has(GENRES.Drama), action = has(GENRES.Action);
+  const thrill = has(GENRES.Thriller, GENRES.Mystery, GENRES.Crime);
+  const scifi = has(GENRES.SciFi), fanim = has(GENRES.Fantasy, GENRES.Animation);
+  const docu = has(GENRES.Documentary);
+  const light = Math.min(1, comedy*.8 + fanim*.4 + has(GENRES.Family)*.6 + has(GENRES.Romance)*.4);
+  const dark = Math.min(1, thrill*.6 + drama*.4 + has(GENRES.Horror)*.8 + has(GENRES.Crime)*.5);
+  const fast = Math.min(1, action*.8 + thrill*.6 + scifi*.4 + fanim*.3);
+  const slow = Math.min(1, drama*.6 + docu*.4);
+  const recent = year >= 2020 ? 1 : 0; // 12th slot = era
+  return [comedy,drama,action,thrill,scifi,fanim,docu,light,dark,fast,slow,recent];
+}
+
+export function useEnhancedCatalogue() {
+  const [items, setItems] = useState<Movie[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      // hit the new big catalogue
+      const r = await fetch("/api/movies/catalogue");
+      const data = await r.json();
+      const out: Movie[] = (data.items || []).map((m: any) => {
+        const poster = posterFromTMDbPaths(m) || youtubeThumb(m.ytKeys[0]);
+        const year = Number(m.year) || Number((m.release_date || "0").slice(0,4)) || 0;
+        return {
+          id: `movie_${m.id}`,
+          name: m.name,
+          year,
+          poster,
+          ytKeys: m.ytKeys,
+          genre_ids: m.genre_ids || [],
+          features: fVec(m.genre_ids || [], year),
+          category: year >= 2020 ? "recent" : "classic"
+        };
+      });
+      // lightweight shuffle to avoid same-order bias on first render
+      for (let i=out.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [out[i],out[j]]=[out[j],out[i]]; }
+      setItems(out);
+      setLoading(false);
+    })();
+  }, []);
+
+  return { items, loading };
+}
+
+STEP 4 — Make the trailer wheel diverse and resilient to blocked videos
+
+Patch client/src/components/EnhancedTrailerWheelSection.tsx:
+
+Add helpers and recent history at top of component:
+
+const dot = (a:number[], b:number[]) => a.reduce((s,v,i)=> s + (v||0)*(b[i]||0), 0);
+const norm = (a:number[]) => Math.sqrt(dot(a,a)) || 1;
+const cosine = (a:number[], b:number[]) => dot(a,b) / (norm(a)*norm(b));
+
+const [recentHistory, setRecentHistory] = useState<Movie[]>([]);
+
+
+When you advance to next item, push to history:
+
+setRecentHistory(prev => [currentMovie, ...prev].slice(0, 6));
+
+
+In your rankMovies function, diversify:
+
+const rankMovies = useCallback(() => {
+  const available = getAvailableMovies();
+  if (available.length === 0) return [];
+
+  let recentVec: number[] | null = null;
+  if (recentHistory.length > 0) {
+    const d = recentHistory[0].features.length;
+    const sum = new Array(d).fill(0);
+    recentHistory.forEach(m => m.features.forEach((v,i)=> sum[i] += (v||0)));
+    recentVec = sum.map(v => v / recentHistory.length);
+  }
+
+  const LAMBDA = 0.25;
+
+  const scored = available.map(movie => {
+    const base = sigmoid(dotProduct(preferences.w, movie.features)); // your existing weight vec
+    const nov  = calculateNovelty(movie);
+    const div  = recentVec ? -LAMBDA * Math.max(0, cosine(movie.features, recentVec)) : 0;
+    return { movie, score: base + nov + div };
+  });
+  scored.sort((a,b) => b.score - a.score);
+
+  if (Math.random() < explorationRate && scored.length > 6) {
+    const k = 3 + Math.floor(Math.random() * Math.min(12, scored.length - 1));
+    [scored[0], scored[k]] = [scored[k], scored[0]];
+  }
+  return scored.map(s => s.movie);
+}, [getAvailableMovies, preferences.w, calculateNovelty, explorationRate, recentHistory]);
+
+
+When embedding the video, use the first key; if the user hits a blocked video, let them try next source:
+
+// keep index of which ytKey we’re on for the current movie
+const [ytIndex, setYtIndex] = useState(0);
+
+// when currentMovie changes:
+useEffect(() => { setYtIndex(0); }, [currentMovie?.id]);
+
+// iframe src:
+src={`https://www.youtube.com/embed/${currentMovie.ytKeys[ytIndex]}?autoplay=1&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3`}
+
+// add a "Try another source" button next to Skip:
+<button className="btn ghost" onClick={() => {
+  setYtIndex(i => Math.min(i + 1, (currentMovie?.ytKeys.length || 1) - 1));
+}}>Try another source</button>
+
+
+(YouTube doesn’t reliably emit an iframe onError for geo blocks; the manual button is the robust cross-browser fallback.)
+
+STEP 5 — Posters: never use backdrops by default
+
+Make sure your poster component isn’t forcing a zoom. In client/src/components/RobustImage.tsx, keep:
+
+<img src={src} alt={alt} style={{ width: "100%", height: 480, objectFit: "cover", borderRadius: 12 }} onError={handleError} />
+
+
+…and ensure you pass posterFromTMDbPaths(movie) → if null, fall back to youtubeThumb.
+
+STEP 6 — Learning must “feel it” (era support)
+
+You already store/learn a weight vector. With the hook from Step 3 you now have a 12-dim feature vector where the last slot is recentness. Your existing learning code (logistic update on poster picks) will start to push toward recent vs classic depending on choices. Nothing else to change.
+
+STEP 7 — Replit instructions (so it actually applies)
+
+Paste the files above exactly (server + client).
+
+Ensure TMDB_KEY is set (in Replit Secrets) or leave the baked key.
+
+Restart the repl.
+
+Open this URL once to clear stale data:
+/api/cache/flush
+
+Hit this to verify the big dataset is alive:
+/api/movies/catalogue
+You should see { count: ~1200 … } (the exact number will vary).
+
+Load the app, do the poster vetting, and watch the trailer wheel:
+
+you’ll see proper posters,
+
+mix of classics and 2020-2024,
+
+a Try another source button for blocked trailers,
+
+and variety instead of looping the same 5 films.
