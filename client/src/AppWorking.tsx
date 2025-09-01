@@ -28,8 +28,8 @@ function AppWorking() {
 
   const handleSkip = () => {
     if (pair) {
-      skip(pair[0]);
-      skip(pair[1]);
+      skip(pair[0] as Title);
+      skip(pair[1] as Title);
       choose("left"); // Just advance the round
     }
   };
@@ -131,12 +131,12 @@ function AppWorking() {
                 {/* Left Movie */}
                 <div className="text-center">
                   <button
-                    onClick={() => handleChoice(pair[0], "left")}
+                    onClick={() => handleChoice(pair[0] as Title, "left")}
                     className="group relative block w-full mb-4 rounded-xl overflow-hidden hover:scale-105 transition-transform duration-300"
                   >
                     <div className="aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden">
                       <img
-                        src={bestImageUrl(pair[0]) || ''}
+                        src={bestImageUrl(pair[0] as Title) || ''}
                         alt={pair[0].title}
                         className="w-full h-full object-cover"
                         loading="lazy"
@@ -151,12 +151,12 @@ function AppWorking() {
                 {/* Right Movie */}
                 <div className="text-center">
                   <button
-                    onClick={() => handleChoice(pair[1], "right")}
+                    onClick={() => handleChoice(pair[1] as Title, "right")}
                     className="group relative block w-full mb-4 rounded-xl overflow-hidden hover:scale-105 transition-transform duration-300"
                   >
                     <div className="aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden">
                       <img
-                        src={bestImageUrl(pair[1]) || ''}
+                        src={bestImageUrl(pair[1] as Title) || ''}
                         alt={pair[1].title}
                         className="w-full h-full object-cover"
                         loading="lazy"

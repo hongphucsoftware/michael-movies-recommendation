@@ -236,7 +236,7 @@ async function curatedCatalogue(): Promise<CatalogueItem[]> {
   const items: CatalogueItem[] = [];
   const seen = new Set<number>();
 
-  for (const [key, sourcesSet] of allowByKey.entries()) {
+  for (const [key, sourcesSet] of Array.from(allowByKey.entries())) {
     const [titleNorm, yearStr] = key.split("|");
     const year = yearStr ? Number(yearStr) : undefined;
 
@@ -246,7 +246,7 @@ async function curatedCatalogue(): Promise<CatalogueItem[]> {
     if (seen.has(movie.id)) continue;
     seen.add(movie.id);
 
-    const sources = Array.from(sourcesSet);
+    const sources: string[] = Array.from(sourcesSet);
     items.push(toItem(movie, sources));
 
     // tiny delay to be nice to TMDb

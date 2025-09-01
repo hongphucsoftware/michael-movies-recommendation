@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export type QuickPickItem = {
-  id: number;
-  title: string;
-  image?: string | null;
-  [k: string]: any;
-};
+import type { Title } from "../lib/videoPick";
+
+export type QuickPickItem = Title;
 
 function shuffle<T>(arr: T[]): T[] {
   const a = arr.slice();
