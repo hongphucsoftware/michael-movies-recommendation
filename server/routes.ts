@@ -454,13 +454,11 @@ api.get("/catalogue/stats", (_req, res) => {
   });
 });
 
-// Single movie trailer
+// Single
 api.get("/trailer", async (req: Request, res: Response) => {
   try {
     const id = Number(req.query.id);
     if (!id) return res.status(400).json({ ok: false, error: "Missing id" });
-    if (!TMDB_API_KEY) return res.status(400).json({ ok: false, error: "TMDB_API_KEY not set" });
-
     const embed = await bestYouTubeEmbedFor(id);
     res.json({ ok: true, trailer: embed ? { url: embed } : null });
   } catch (e: any) {
@@ -468,28 +466,28 @@ api.get("/trailer", async (req: Request, res: Response) => {
   }
 });
 
-/* -------- Enhanced Trailers: TMDb YouTube → YouTube Search Fallback -------- */
+/* ---------- Trailers: TMDB(YouTube) → else YouTube search (embed) + robust id parsing ---------- */
+
+const TRAILER_TTL_MS = 1000 * 60 * 60 * 24;
+const trailerCache = new Map<number, { embed: string | null; at: number }>();
+
+const ytEmbed = (id: string) => `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
 
 function scoreTmdbVideo(v: any) {
   let s = 0;
-  const type = (v.type || "").toLowerCase();
-  if (type === "trailer") s += 4; else if (type === "teaser") s += 2;
+  const t = (v.type || "").toLowerCase();
+  if (t === "trailer") s += 4; else if (t === "teaser") s += 2;
   if (v.official) s += 3;
   if ((v.name || "").toLowerCase().includes("official")) s += 1;
   if (v.size) s += Math.min(3, Math.floor((v.size ?? 0) / 360));
   return s;
 }
 
-const ytEmbed = (id: string) => `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
-
-const TRAILER_TTL_MS = 1000 * 60 * 60 * 24; // 24h cache
-const trailerCache = new Map<number, { embed: string | null; at: number }>();
-
 async function tmdbYouTubeKey(movieId: number): Promise<string | null> {
   const v1 = await tmdb(`/movie/${movieId}/videos`, { include_video_language: "en,null", language: "en-US" });
   let vids = (v1.results || []).filter((v: any) => v && v.key && String(v.site).toLowerCase() === "youtube");
   if (!vids.length) {
-    const v2 = await tmdb(`/movie/${movieId}/videos`, {});
+    const v2 = await tmdb(`/movie/${movieId}/videos`, {}); // fallback to all langs
     vids = (v2.results || []).filter((v: any) => v && v.key && String(v.site).toLowerCase() === "youtube");
   }
   if (!vids.length) return null;
@@ -497,45 +495,32 @@ async function tmdbYouTubeKey(movieId: number): Promise<string | null> {
   return best?.key || null;
 }
 
-// YouTube search without API - scrapes results page and scores video IDs
-async function youtubeSearchVideoId(query: string, preferYear?: string): Promise<string | null> {
-  const url = `https://www.youtube.com/results?hl=en&search_query=${encodeURIComponent(query)}`;
-  const res = await fetch(url, {
+// Lightweight YouTube search (no API key) to find a trailer id by title/year.
+async function youtubeSearchVideoId(q: string, preferYear?: string): Promise<string | null> {
+  const res = await fetch(`https://www.youtube.com/results?hl=en&search_query=${encodeURIComponent(q)}`, {
     headers: {
       "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121 Safari/537.36",
       "accept-language": "en-US,en;q=0.9",
-      "accept": "text/html,application/xhtml+xml",
-      "cache-control": "no-cache",
-      "pragma": "no-cache",
-      "referer": "https://www.youtube.com/",
+      "cache-control": "no-cache", "pragma": "no-cache", "referer": "https://www.youtube.com/",
     },
   });
   if (!res.ok) return null;
   const html = await res.text();
+  const ids = Array.from(html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)).map(m => m[1]).slice(0, 40);
+  if (!ids.length) return null;
 
-  const ids = Array.from(html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)).map(m => m[1]);
-  const uniq: string[] = [];
-  const seen = new Set<string>();
-  for (const id of ids) { if (!seen.has(id)) { seen.add(id); uniq.push(id); } }
-  const cand = uniq.slice(0, 40);
-  if (!cand.length) return null;
-
-  let best = cand[0], bestScore = -Infinity;
-  for (const id of cand) {
-    const idx = html.indexOf(id);
-    const window = html.slice(Math.max(0, idx - 600), idx + 600).toLowerCase();
+  let best = ids[0], bestScore = -1e9;
+  for (const id of ids) {
+    const i = html.indexOf(id);
+    const w = html.slice(Math.max(0, i - 600), i + 600).toLowerCase();
     let s = 0;
-    if (window.includes("official")) s += 3;
-    if (window.includes("trailer")) s += 3;
-    if (window.includes("teaser")) s += 1;
-    if (window.includes("4k") || window.includes("hd")) s += 1;
-    // Negative cues
-    if (window.includes("fan made")) s -= 3;
-    if (window.includes("fan-made")) s -= 3;
-    if (window.includes("music video")) s -= 3;
-    if (window.includes("game")) s -= 2;
-    // Year preference
-    if (preferYear && window.includes(preferYear)) s += 1;
+    if (w.includes("official")) s += 3;
+    if (w.includes("trailer")) s += 3;
+    if (w.includes("teaser")) s += 1;
+    if (w.includes("fan made") || w.includes("fan-made")) s -= 3;
+    if (w.includes("music video")) s -= 3;
+    if (w.includes("game")) s -= 2;
+    if (preferYear && w.includes(preferYear)) s += 1;
     if (s > bestScore) { bestScore = s; best = id; }
   }
   return best;
@@ -546,21 +531,21 @@ async function bestYouTubeEmbedFor(movieId: number): Promise<string | null> {
   const cached = trailerCache.get(movieId);
   if (cached && now - cached.at < TRAILER_TTL_MS) return cached.embed;
 
-  // 1) Try TMDb for YouTube videos first
+  // 1) TMDB → YouTube
   let key = await tmdbYouTubeKey(movieId);
 
-  // 2) If TMDb has no YouTube videos, search YouTube by title + year
+  // 2) If none on TMDB, search YouTube by title/year
   if (!key) {
     try {
       const meta = await tmdb(`/movie/${movieId}`, { language: "en-US" });
       const title = meta?.title || meta?.original_title || "";
       const year = (meta?.release_date || "").slice(0, 4);
       if (title) {
-        key = await youtubeSearchVideoId(`${title} ${year} official trailer`, year);
-        if (!key) key = await youtubeSearchVideoId(`${title} official trailer`, year);
-        if (!key) key = await youtubeSearchVideoId(`${title} trailer`, year);
+        key = await youtubeSearchVideoId(`${title} ${year} official trailer`, year)
+          || await youtubeSearchVideoId(`${title} official trailer`, year)
+          || await youtubeSearchVideoId(`${title} trailer`, year);
       }
-    } catch { /* ignore search errors */ }
+    } catch {}
   }
 
   const embed = key ? ytEmbed(key) : null;
@@ -568,20 +553,13 @@ async function bestYouTubeEmbedFor(movieId: number): Promise<string | null> {
   return embed;
 }
 
-// Batch: /api/trailers?ids=1,2,3 → { trailers: { [id]: embed|null } }
+// Batch (accepts plain "1,2,3" OR encoded "1%2C2%2C3")
 api.get("/trailers", async (req: Request, res: Response) => {
   try {
     let raw = String(req.query.ids ?? "");
-    // Accept both "1,2,3" and "1%2C2%2C3" (URL encoded commas)
     try { raw = decodeURIComponent(raw); } catch {}
-    const ids = raw
-      .split(",")
-      .map((x) => Number(x.trim()))
-      .filter((n) => Number.isFinite(n))
-      .slice(0, 50);
-
+    const ids = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n)).slice(0, 50);
     if (!ids.length) return res.json({ ok: true, trailers: {} });
-    if (!TMDB_API_KEY) return res.status(400).json({ ok: false, error: "TMDB_API_KEY not set" });
 
     const tasks = ids.map((id) => async () => ({ id, embed: await bestYouTubeEmbedFor(id) }));
     const out = await pLimit(CONCURRENCY, tasks);

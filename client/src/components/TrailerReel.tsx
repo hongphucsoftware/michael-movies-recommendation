@@ -66,7 +66,10 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
   // 3) remove items we just showed during A/B (avoidIds)
   // 4) take top-N and run MMR for diversity
   const { picks, poolSize } = useMemo(() => {
-    const pool0 = items.filter(t => bestImageUrl(t));                 // image gate for UX
+    // Ensure unique TMDB ids in the pool (no duplicates)
+    const byId = new Map<number, Title>();
+    for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
+    const pool0 = Array.from(byId.values());
     const avoid = new Set<number>(avoidIds || []);
     const pool = pool0.filter(t => !avoid.has(t.id));                  // don't re-show A/B pair immediately
 
@@ -116,15 +119,18 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
     let mounted = true;
     (async () => {
       const ids = picks.map(p => p.id);
-      const map = await batchTrailerUrls(ids);
+      const map = await fetchTrailerEmbeds(ids);
       if (!mounted) return;
       setUrls(map);
+      
+      // Auto-select the first playable trailer
       const firstIdx = picks.findIndex(p => map[p.id]);
       if (firstIdx >= 0) {
         setActiveIdx(firstIdx);
         setActiveUrl(map[picks[firstIdx].id] || null);
       } else {
-        setActiveIdx(null); setActiveUrl(null);
+        setActiveIdx(null);
+        setActiveUrl(null);
       }
     })();
     return () => { mounted = false; };
@@ -181,15 +187,14 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
   );
 }
 
-async function batchTrailerUrls(ids: number[]): Promise<Record<number, string|null>> {
+async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|null>> {
   if (!ids.length) return {};
-  // IMPORTANT: do NOT encode the commas - server now handles both formats
-  const qs = ids.join(",");
-  const res = await fetch(`/api/trailers?ids=${qs}`);
-  if (!res.ok) return {};
-  const json = await res.json();
+  const qs = ids.join(",");                           // ← important: do NOT encode commas
+  const r = await fetch(`/api/trailers?ids=${qs}`);
+  if (!r.ok) return {};
+  const j = await r.json();
   const out: Record<number, string|null> = {};
-  Object.keys(json?.trailers || {}).forEach(k => (out[Number(k)] = json.trailers[k]));
+  Object.keys(j?.trailers || {}).forEach(k => out[Number(k)] = j.trailers[k]);
   return out;
 }
 
