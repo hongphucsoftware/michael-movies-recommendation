@@ -181,8 +181,14 @@ export default function TrailerPlayer({
   const [idx, setIdx] = useState(0);
   const [debugOn] = useDebugToggle();
 
+  // Build the same profile the picker uses (for debug panel)
+  const debugProfile = useMemo(
+    () => buildUserProfile(items, recentChosenIds),
+    [items, JSON.stringify(recentChosenIds)]
+  );
+
   // ------- Build 5 correlated picks from full catalogue -------
-  const { picks, debugRows } = useMemo(() => {
+  const picks = useMemo(() => {
     // Unique pool (image present) & avoid repeats
     const avoid = new Set<number>(avoidIds);
     const byId = new Map<number, Title>();
@@ -236,20 +242,33 @@ export default function TrailerPlayer({
       id:x.t.id, title:x.t.title, score:round(x.s), cos:round(x.rel), genre:round(x.gb), antiPop:round(x.antiPop)
     })));
     
-    const picks = sampled.map(x => x.t);
-    const debugRows: DebugRow[] = sampled.map(x => ({
-      id: x.t.id,
-      title: x.t.title,
-      rel: x.rel,
-      genreBias: x.gb,
-      antiPop: x.antiPop,
-      final: x.s,
-      genres: x.t.genres || [],
-      sources: x.t.sources || []
-    }));
-
-    return { picks, debugRows };
+    return sampled.map(x => x.t);
   }, [items, JSON.stringify(recentChosenIds), JSON.stringify(avoidIds), JSON.stringify(learnedVec), count]);
+
+  // ⬇️ Debug rows using the same genre weights as the picker
+  const debugRows: DebugRow[] = useMemo(() => {
+    const genreBias = (t: Title) => {
+      const ids = t.genres || [];
+      if (!ids.length) return 0;
+      let s = 0;
+      for (const g of ids) s += debugProfile.genreWeight[g] || 0;
+      return s / ids.length;
+    };
+
+    return queue.map(t => {
+      const f = t.feature || toFeatureVector(t);
+      const rel = learnedVec && l2(learnedVec) > 0.05 ? cosine(f, learnedVec) : 0;
+      const gb  = genreBias(t);
+      const pop = Math.min(1, (t.popularity || 0) / 100);
+      const antiPop = (rel < 0.35 && gb < 0.35) ? -(0.12 * pop) : 0;
+      // jitter omitted in debug final so numbers are stable/readable
+      const final = 0.55*rel + 0.40*gb + 0.05*0 + antiPop;
+      return {
+        id: t.id, title: t.title, rel, genreBias: gb, antiPop, final,
+        genres: t.genres || [], sources: t.sources || []
+      };
+    });
+  }, [JSON.stringify(queue.map(q => q.id)), JSON.stringify(learnedVec), JSON.stringify(debugProfile.genreWeight)]);
 
   // ------- Prefetch embeds and set initial playable trailer -------
   useEffect(() => {

@@ -1,0 +1,60 @@
+Short answer: it’s almost right.
+
+The cosine numbers (0.39–0.54, avg 0.452) and the verdict ✅ are correct — they show the 5 trailers align with your learned vector.
+
+Brand diversity 5/5 is also correct.
+
+But “Avg genre match: 0” is not correct — that’s a tiny bug in the debug panel: it wasn’t using the same genre weights the picker used, so it prints zero.
+
+Fix that with this small patch so the panel reflects genre alignment properly.
+
+Patch (TrailerPlayer.tsx)
+
+Replace the debugRows block in TrailerPlayer.tsx with this version (uses the same buildUserProfile genre weights as the picker):
+
+// add (or keep) this import near the top if not present:
+// import { toFeatureVector } from "../hooks/useEnhancedCatalogue";
+
+// keep this helper above:
+const l2 = (x: number[]) => Math.sqrt(x.reduce((s, v) => s + v*v, 0));
+const cosine = (a: number[], b: number[]) => {
+  const la = l2(a), lb = l2(b); if (!la || !lb) return 0;
+  let dot = 0; const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) dot += a[i]*b[i];
+  return dot / (la * lb);
+};
+
+// build the same profile the picker used
+const debugProfile = useMemo(
+  () => buildUserProfile(items, recentChosenIds),
+  [items, JSON.stringify(recentChosenIds)]
+);
+
+// ⬇️ REPLACE your existing debugRows useMemo with this
+const debugRows: DebugRow[] = useMemo(() => {
+  const genreBias = (t: Title) => {
+    const ids = t.genres || [];
+    if (!ids.length) return 0;
+    let s = 0;
+    for (const g of ids) s += debugProfile.genreWeight[g] || 0;
+    return s / ids.length;
+  };
+
+  return queue.map(t => {
+    const f = t.feature || toFeatureVector(t);
+    const rel = learnedVec && l2(learnedVec) > 0.05 ? cosine(f, learnedVec) : 0;
+    const gb  = genreBias(t);
+    const pop = Math.min(1, (t.popularity || 0) / 100);
+    const antiPop = (rel < 0.35 && gb < 0.35) ? -(0.12 * pop) : 0;
+    // jitter omitted in debug final so numbers are stable/readable
+    const final = 0.55*rel + 0.40*gb + 0.05*0 + antiPop;
+    return {
+      id: t.id, title: t.title, rel, genreBias: gb, antiPop, final,
+      genres: t.genres || [], sources: t.sources || []
+    };
+  });
+}, [JSON.stringify(queue.map(q => q.id)), JSON.stringify(learnedVec), JSON.stringify(debugProfile.genreWeight)]);
+
+Why your current panel shows genre=0
+
+In the earlier debug code, the genre weights array wasn’t built from the A/B picks (it used an empty set), so the panel displayed zero even though the picker did use genre bias. The patch reads the same weights used to choose the 5 trailers.
