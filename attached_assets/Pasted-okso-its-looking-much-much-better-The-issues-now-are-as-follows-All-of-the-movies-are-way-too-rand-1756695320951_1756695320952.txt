@@ -1,3 +1,37 @@
+okso its looking much much better. The issues now are as follows. All of the movies are way too random (there is asian porn in there!) but the posters and layout is great. it looks like it is connecting to TMDB perfectly through an API. Now that we have the database set correctly, can we look up the movies/posters from that database that correlate to these lists only (for now) https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/ and https://www.imdb.com/list/ls545836395/ and https://www.imdb.com/chart/top/ Finally - the youtube/trailer section seems to not be working. Can we get that back up and runniong. Again, by looking up the titles that correlate to the lists from the urls. so its all about the names/titles of the movies. Kind of like a lookup table in excel (dont do that but you get what i mean). If you understand write the code for replit so this will happen
+ChatGPT said:
+Thought for 1m 4s
+
+Totally get it. We’ll switch to a curated catalogue that only includes movies from the three links you gave (RT 2020 list + IMDb Top 250 + that specific IMDb list), and fix trailers so they resolve reliably.
+
+Below is a drop-in replacement for server/routes.ts that:
+
+Scrapes those three pages to collect titles (+ years when available)
+
+Looks each title up on TMDb (adult disabled), prefers exact/year matches, then popularity
+
+Builds a clean, deduped catalogue (poster-first images) — no random/NSFW noise
+
+Improves trailer picking (second-chance fetch + “Teaser” fallback if no “Trailer”)
+
+Keeps the same endpoints you already wired:
+
+GET /api/catalogue → now serves curated results
+
+POST /api/catalogue/build → force rebuild curated cache
+
+GET /api/trailer?id=TMDB_ID → best YouTube/Vimeo trailer
+
+One-time install (server)
+
+In Replit shell (or “Packages” tab):
+
+npm i cheerio
+
+
+(We use cheerio to parse the HTML from RT/IMDb.)
+
+server/routes.ts (replace entire file)
 import express, { Request, Response } from "express";
 import * as cheerio from "cheerio";
 
@@ -417,3 +451,31 @@ api.get("/health", (_req, res) => {
 });
 
 export default api;
+
+/**
+ * server/index.ts example:
+ * ------------------------
+ * import express from "express";
+ * import api from "./routes";
+ * const app = express();
+ * app.use(express.json());
+ * app.use("/api", api);
+ * app.listen(process.env.PORT || 3000, () => console.log("Server started"));
+ */
+
+What changes for you
+
+Install cheerio (once):
+
+npm i cheerio
+
+
+Rebuild the curated cache:
+
+POST /api/catalogue/build
+
+
+(or just refresh the app — the first GET /api/catalogue will auto-build).
+
+Test trailers
+Open a title; when your UI calls GET /api/trailer?id=..., it should now return a YouTube/Vimeo URL most of the time. If a movie genuinely has no trailer on TMDb, we return trailer: null (you can show “Try another title”).
