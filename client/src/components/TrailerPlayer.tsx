@@ -64,6 +64,8 @@ export default function TrailerPlayer({
   console.log('[TrailerPlayer] Received items:', items.length);
   console.log('[TrailerPlayer] Learned vector length:', learnedVec.length);
   console.log('[TrailerPlayer] Recent chosen IDs:', recentChosenIds.length);
+  console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5)); // Show first 5 values
+  console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
 
   // Build picks using the learned preferences
   const picks = useMemo(() => {
@@ -100,7 +102,7 @@ export default function TrailerPlayer({
 
       const score = similarity + recentPenalty + avoidPenalty + (Math.random() * 0.1); // small jitter
 
-      return { item: t, score, similarity };
+      return { item: t, score, similarity, recentPenalty, avoidPenalty };
     });
 
     // Sort by score and take top candidates

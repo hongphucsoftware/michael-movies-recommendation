@@ -119,6 +119,11 @@ export function useMLLearning(movies: Movie[]) {
       
       const newW = [...prev.preferences.w];
       addInPlace(newW, diff, LEARNING_RATE * gradScale);
+      
+      // A/B LEARNING VERIFICATION
+      const vectorMagnitude = Math.sqrt(newW.reduce((s, v) => s + v*v, 0));
+      console.log(`[A/B LEARNING] Choice ${prev.preferences.choices + 1}: "${winner.name}" beat "${loser.name}"`);
+      console.log(`[A/B LEARNING] Vector magnitude: ${vectorMagnitude.toFixed(3)} (stronger = better personalization)`);
 
       const newExplored = new Set(prev.preferences.explored);
       newExplored.add(winner.id);
