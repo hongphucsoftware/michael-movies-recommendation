@@ -61,6 +61,53 @@ export default function TrailerPlayer({
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
+  // Generate personalized explanation based on learned preferences - MUST be at top level
+  const explanation = useMemo(() => {
+    if (!learnedVec || learnedVec.length < 12 || l2(learnedVec) < 0.1) {
+      return "Curated recommendations just for you";
+    }
+
+    const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
+    const preferences = [];
+    
+    // Genre preferences (stronger threshold for clear signals)
+    if (comedy > 0.7) preferences.push("comedy");
+    if (drama > 0.6) preferences.push("drama");
+    if (action > 0.7) preferences.push("action");
+    if (thriller > 0.6) preferences.push("thrillers");
+    if (scifi > 0.6) preferences.push("sci-fi");
+    if (fantasy > 0.6) preferences.push("fantasy");
+    if (doc > 0.5) preferences.push("documentaries");
+    
+    // Tone preferences
+    if (light > 0.6) preferences.push("feel-good stories");
+    if (dark > 0.6) preferences.push("intense dramas");
+    
+    // Pace preferences  
+    if (fast > 0.7) preferences.push("fast-paced films");
+    if (slow > 0.6) preferences.push("slower-paced narratives");
+    
+    // Era preference
+    if (recent > 0.6) preferences.push("recent releases");
+    else if (recent < 0.3) preferences.push("classic films");
+
+    if (preferences.length === 0) {
+      return "Based on your A/B choices, here are some diverse recommendations";
+    }
+    
+    if (preferences.length === 1) {
+      return `You seem to enjoy ${preferences[0]} — here are some great picks`;
+    }
+    
+    if (preferences.length === 2) {
+      return `Based on your taste for ${preferences[0]} and ${preferences[1]}`;
+    }
+    
+    // For 3+ preferences, pick the strongest ones
+    const top2 = preferences.slice(0, 2);
+    return `You enjoy ${top2[0]}, ${top2[1]}, and more — tailored just for you`;
+  }, [learnedVec]);
+
   console.log('[TrailerPlayer] Received items:', items.length);
   console.log('[TrailerPlayer] Learned vector length:', learnedVec.length);
   console.log('[TrailerPlayer] Recent chosen IDs:', recentChosenIds.length);
@@ -211,53 +258,6 @@ export default function TrailerPlayer({
       </div>
     );
   }
-
-  // Generate personalized explanation based on learned preferences
-  const explanation = useMemo(() => {
-    if (!learnedVec || learnedVec.length < 12 || l2(learnedVec) < 0.1) {
-      return "Curated recommendations just for you";
-    }
-
-    const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
-    const preferences = [];
-    
-    // Genre preferences (stronger threshold for clear signals)
-    if (comedy > 0.7) preferences.push("comedy");
-    if (drama > 0.6) preferences.push("drama");
-    if (action > 0.7) preferences.push("action");
-    if (thriller > 0.6) preferences.push("thrillers");
-    if (scifi > 0.6) preferences.push("sci-fi");
-    if (fantasy > 0.6) preferences.push("fantasy");
-    if (doc > 0.5) preferences.push("documentaries");
-    
-    // Tone preferences
-    if (light > 0.6) preferences.push("feel-good stories");
-    if (dark > 0.6) preferences.push("intense dramas");
-    
-    // Pace preferences  
-    if (fast > 0.7) preferences.push("fast-paced films");
-    if (slow > 0.6) preferences.push("slower-paced narratives");
-    
-    // Era preference
-    if (recent > 0.6) preferences.push("recent releases");
-    else if (recent < 0.3) preferences.push("classic films");
-
-    if (preferences.length === 0) {
-      return "Based on your A/B choices, here are some diverse recommendations";
-    }
-    
-    if (preferences.length === 1) {
-      return `You seem to enjoy ${preferences[0]} — here are some great picks`;
-    }
-    
-    if (preferences.length === 2) {
-      return `Based on your taste for ${preferences[0]} and ${preferences[1]}`;
-    }
-    
-    // For 3+ preferences, pick the strongest ones
-    const top2 = preferences.slice(0, 2);
-    return `You enjoy ${top2[0]}, ${top2[1]}, and more — tailored just for you`;
-  }, [learnedVec]);
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
