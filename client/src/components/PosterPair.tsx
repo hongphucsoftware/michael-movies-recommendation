@@ -6,7 +6,7 @@ import React, { useState } from "react";
 import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 import { useQuickPicks } from "../hooks/useQuickPicks";
 import { useABHistory } from "../hooks/useABHistory";
-import TrailerReel from "./TrailerReel";
+import TrailerPlayer from "./TrailerPlayer";
 
 export default function PosterPair() {
   const { items, total, loading, error, stats } = useEnhancedCatalogue();
@@ -116,7 +116,7 @@ export default function PosterPair() {
             </button>
           </div>
 
-          <TrailerReel items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} />
+          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={5} />
         </div>
       )}
     </div>
