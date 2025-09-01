@@ -99,8 +99,8 @@ export class IMDbService {
   async buildCatalogue(): Promise<Movie[]> {
     try {
       // Check for cached catalogue first (30 minute cache)
-      const cacheKey = 'ts_enhanced_catalogue_v1';
-      const timestampKey = 'ts_enhanced_timestamp_v1';
+      const cacheKey = 'ts_enhanced_catalogue_v2';
+      const timestampKey = 'ts_enhanced_timestamp_v2';
       const cachedData = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(timestampKey);
       const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
@@ -158,11 +158,11 @@ export class IMDbService {
         const id = `movie_${tmdbId}`;
         if (seen.has(id)) continue;
 
-        // Find a YouTube Trailer/Teaser
-        const youtubeKey = await this.getYouTubeTrailer(tmdbId);
+        // Find a YouTube Trailer/Teaser with quality control
+        const youtubeKey = await this.getQualityYouTubeTrailer(tmdbId);
         if (!youtubeKey) continue;
 
-        // Poster: use YouTube thumb (rock-solid)
+        // Poster: use YouTube thumb (rock-solid reliability)
         const poster = this.posterFromYouTube(youtubeKey);
 
         // Use TMDb title as primary source
@@ -182,7 +182,9 @@ export class IMDbService {
           isSeries: false,
           tags,
           features: this.generateFeatureVector(genreIds),
-          imdbRank: rank
+          imdbRank: rank,
+          category: row.category || 'classic',
+          source: row.source || 'imdb_top_250'
         };
 
         movies.push(movie);
@@ -229,6 +231,71 @@ export class IMDbService {
     } catch (error) {
       console.error('Background processing failed:', error);
     }
+  }
+
+  // Find YouTube trailer key for movie with quality control
+  async getQualityYouTubeTrailer(tmdbId: number): Promise<string | null> {
+    try {
+      const data = await this.fetchJSON(`/api/videos/movie/${tmdbId}`);
+      const results = data?.results || [];
+      
+      // Filter for YouTube trailers and teasers
+      const youtubeVideos = results.filter((v: any) => 
+        v.site === 'YouTube' && 
+        (v.type === 'Trailer' || v.type === 'Teaser') &&
+        v.key
+      );
+      
+      if (youtubeVideos.length === 0) return null;
+      
+      // Prioritize by quality indicators
+      const prioritized = youtubeVideos.sort((a: any, b: any) => {
+        // Prefer official trailers over teasers
+        if (a.type === 'Trailer' && b.type === 'Teaser') return -1;
+        if (a.type === 'Teaser' && b.type === 'Trailer') return 1;
+        
+        // Prefer official-sounding names and avoid problematic ones
+        const aOfficial = this.isOfficialTrailer(a.name);
+        const bOfficial = this.isOfficialTrailer(b.name);
+        if (aOfficial && !bOfficial) return -1;
+        if (!aOfficial && bOfficial) return 1;
+        
+        // Prefer shorter names (usually more official)
+        if (a.name.length < b.name.length) return -1;
+        if (a.name.length > b.name.length) return 1;
+        
+        return 0;
+      });
+      
+      // Filter out clearly problematic trailers
+      const filtered = prioritized.filter((v: any) => {
+        const name = v.name.toLowerCase();
+        return !name.includes('private') && 
+               !name.includes('unavailable') &&
+               !name.includes('compilation') &&
+               !name.includes('anniversary');
+      });
+      
+      return filtered[0]?.key || youtubeVideos[0]?.key || null;
+    } catch (error) {
+      console.warn(`No trailer found for TMDb ID ${tmdbId}`);
+      return null;
+    }
+  }
+
+  // Check if trailer name suggests it's official and high quality
+  private isOfficialTrailer(name: string): boolean {
+    const officialTerms = ['official', 'trailer', 'teaser', 'final', 'main'];
+    const avoidTerms = ['compilation', 'anniversary', 'celebration', 'mashup', 'fan', 'reaction', 'private', 'years'];
+    
+    const nameLower = name.toLowerCase();
+    const hasOfficial = officialTerms.some(term => nameLower.includes(term));
+    const hasAvoid = avoidTerms.some(term => nameLower.includes(term));
+    
+    // Also avoid anniversary compilation trailers that say "50 years" etc
+    const hasNumberYears = /\d+\s*years?/.test(nameLower);
+    
+    return hasOfficial && !hasAvoid && !hasNumberYears;
   }
 }
 

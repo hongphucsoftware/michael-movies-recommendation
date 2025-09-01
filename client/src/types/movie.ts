@@ -10,6 +10,8 @@ export interface Movie {
   rating?: number;
   duration?: string;
   imdbRank?: number; // Authentic IMDb Top 250 ranking
+  category?: string; // 'classic' or 'recent'
+  source?: string; // 'imdb_top_250' or 'imdb_custom_list'
 }
 
 export interface UserPreferences {
