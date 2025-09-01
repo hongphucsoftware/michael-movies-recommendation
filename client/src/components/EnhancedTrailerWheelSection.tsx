@@ -114,8 +114,8 @@ export function EnhancedTrailerWheelSection({
     // Mark as recent (for skip and normal next)
     onMarkRecent(currentMovie.id);
     
-    // Track for diversity - keep minimal history for variety
-    setRecentHistory(prev => [currentMovie, ...prev].slice(0, 3)); // keep only last 3
+    // Track for diversity - keep minimal history for variety  
+    setRecentHistory(prev => [currentMovie, ...prev].slice(0, 4)); // keep last 4 for better diversity tracking
 
     // Get next movie
     let nextQueue = [...queue];

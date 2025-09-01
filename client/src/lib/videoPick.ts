@@ -26,8 +26,8 @@ export function pickBestYouTubeVideo(results: any[]): any | null {
 export function posterFromTMDbPaths(obj: any): string | null {
   const p = obj?.poster_path || null;
   if (p) return `https://image.tmdb.org/t/p/w500${p}`;        // prefer posters (avoid cropped backdrops)
-  const b = obj?.backdrop_path || null;
-  return b ? `https://image.tmdb.org/t/p/w500${b}` : null;    // only if no poster is available
+  // DO NOT use backdrop_path - it causes cropping issues
+  return null;    // force fallback to YouTube thumbnail instead of using backdrop
 }
 
 export function youtubeThumb(ytKey: string): string {

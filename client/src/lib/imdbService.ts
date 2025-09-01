@@ -100,16 +100,12 @@ export class IMDbService {
   // Build Top 100 IMDb movies catalogue using server endpoints
   async buildCatalogue(): Promise<Movie[]> {
     try {
-      // Force complete fresh rebuild - v7 with working 2020+ movies and poster fixes
-      const cacheKey = 'ts_enhanced_catalogue_v7_complete_fix';
-      const timestampKey = 'ts_enhanced_timestamp_v7_complete_fix';
+      // Force complete fresh rebuild - v9 with proper categorization and poster fixes
+      const cacheKey = 'ts_enhanced_catalogue_v9_final_fix';
+      const timestampKey = 'ts_enhanced_timestamp_v9_final_fix';
       
-      // Clear ALL old cache versions to force completely fresh build
-      localStorage.removeItem('ts_enhanced_catalogue_v6_variety_fix');
-      localStorage.removeItem('ts_enhanced_timestamp_v6_variety_fix');
-      localStorage.removeItem('ts_enhanced_catalogue_v5_era_fix');
-      localStorage.removeItem('ts_enhanced_timestamp_v5_era_fix');
-      localStorage.removeItem('ts_recent_pairs'); // Clear recent tracking
+      // Clear ALL old cache versions to force rebuild with proper recent/classic categorization  
+      ['ts_enhanced_catalogue_v8_poster_fix', 'ts_enhanced_timestamp_v8_poster_fix', 'ts_enhanced_catalogue_v7_complete_fix', 'ts_enhanced_timestamp_v7_complete_fix', 'ts_enhanced_catalogue_v6_variety_fix', 'ts_enhanced_timestamp_v6_variety_fix', 'ts_enhanced_catalogue_v5_era_fix', 'ts_enhanced_timestamp_v5_era_fix', 'ts_recent_pairs'].forEach(key => localStorage.removeItem(key));
       const cachedData = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(timestampKey);
       const cacheAge = Date.now() - (parseInt(cacheTime || '0'));
@@ -171,14 +167,17 @@ export class IMDbService {
         const youtubeVideo = await this.getQualityYouTubeTrailer(tmdbId);
         if (!youtubeVideo?.key) continue;
 
-        // Poster: use proper TMDb poster paths to avoid cropping issues
-        const tmdbPoster = posterFromTMDbPaths(tmdbMovie);
-        const poster = tmdbPoster || youtubeThumb(youtubeVideo.key);
+        // Poster: direct TMDb poster URL with fallback to YouTube thumbnail  
+        const poster = tmdbMovie.poster_path 
+          ? `https://image.tmdb.org/t/p/w500${tmdbMovie.poster_path}`
+          : youtubeThumb(youtubeVideo.key);
 
         // Use TMDb title as primary source
         const name = tmdbMovie.title || tmdbMovie.original_title || fallbackName || "Classic Movie";
         const year = (tmdbMovie.release_date || fallbackYear || "0000").slice(0, 4);
-        const yearNum = parseInt(year, 10) || undefined;
+        // Extract year from TMDb release_date for accurate era classification  
+        const releaseYear = tmdbMovie.release_date ? parseInt(tmdbMovie.release_date.slice(0,4)) : undefined;
+        const yearNum = releaseYear || parseInt(year, 10) || undefined;
         const genreIds = Array.isArray(tmdbMovie.genre_ids) ? tmdbMovie.genre_ids : [];
 
         const tags: string[] = [];
@@ -194,7 +193,7 @@ export class IMDbService {
           tags,
           features: this.generateFeatureVector(genreIds, yearNum),
           imdbRank: rank,
-          category: row.category || 'classic',
+          category: (row.category === 'recent' || (releaseYear && releaseYear >= 2020)) ? 'recent' : 'classic',
           source: row.source || 'imdb_top_250'
         };
 
