@@ -1,3 +1,5 @@
+// UI LOCK: DO NOT MODIFY — Trailer reel fed by learned vector (MMR diversity)
+
 import { useMemo, useState } from "react";
 import type { Title } from "../hooks/useEnhancedCatalogue";
 import { bestImageUrl, toFeatureVector } from "../hooks/useEnhancedCatalogue";

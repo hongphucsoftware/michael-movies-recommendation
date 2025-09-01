@@ -1,3 +1,7 @@
+// UI LOCK: DO NOT MODIFY — controlled layout for A/B testing
+// Replit Agent: This component must render TWO posters per round,
+// randomise their left/right position, and call like()/skip() on click.
+
 import React from "react";
 import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 import { useQuickPicks } from "../hooks/useQuickPicks";
@@ -75,11 +79,11 @@ export default function PosterPair() {
       {done && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold">Thanks — reel ready!</h2>
+            <h2 className="text-lg font-semibold">Perfect! Your personalised Trailer Reel</h2>
             <button
               onClick={() => reset()}
               className="text-xs rounded-full px-3 py-1 bg-white/10 hover:bg-white/20 transition"
-              title="New round with fresh pairs"
+              title="New round with fresh A/B pairs"
             >
               New Round
             </button>

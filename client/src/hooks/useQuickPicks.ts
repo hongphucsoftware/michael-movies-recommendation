@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+// UI LOCK: DO NOT MODIFY — QuickPick engine (no repeats, left/right debias)
+
+import { useEffect, useRef, useState } from "react";
 
 export type QuickPickItem = { id: number; [k: string]: any };
 
@@ -12,9 +14,8 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 /**
- * Build a deck of unique IDs and yield them in randomized pairs.
- * - Each title appears at most once per session (no repeats).
- * - Each round randomizes which item is left/right to remove side bias.
+ * Build a deck of unique IDs and yield them in randomised pairs.
+ * Each title appears at most once per session (no repeats).
  */
 export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
   const [round, setRound] = useState(0);
