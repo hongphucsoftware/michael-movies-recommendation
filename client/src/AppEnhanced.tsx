@@ -27,11 +27,12 @@ function AppEnhanced() {
     resetAll
   } = useEnhancedCatalogue();
   
-  // Use new loading state if available, fallback to old
-  const isLoading = loading || oldLoading;
-  
   // Use new movies if available and valid, otherwise fall back to old hook
   const finalMovies = (movies && movies.length > 0) ? movies : [];
+  
+  // Use new loading state if available, fallback to old
+  // Only show loading if both systems are loading AND no movies are available
+  const isLoading = (loading || oldLoading) && finalMovies.length === 0;
 
   const {
     preferences,
@@ -73,7 +74,7 @@ function AppEnhanced() {
             }}
           ></div>
         </div>
-        <Header choices={preferences.choices} onboardingComplete={false} />
+        <Header choices={preferences?.choices || 0} onboardingComplete={false} />
         <div className="relative z-10 max-w-7xl mx-auto px-6 pt-32">
           <div className="glass-card p-12 rounded-2xl text-center">
             <Shuffle className="w-16 h-16 mx-auto mb-6 text-netflix-red animate-spin" />
