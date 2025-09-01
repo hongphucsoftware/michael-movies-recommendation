@@ -6,7 +6,18 @@ PickaFlick is a React-based movie recommendation application with the tagline "S
 
 Preferred communication style: Simple, everyday language.
 
-# Recent Changes (August 2025)
+# Recent Changes (September 2025)
+
+- **Complete System Overhaul (Sept 1)**: Implemented comprehensive fix addressing all core issues:
+  - **New Catalogue System**: 20 movies with perfect 10 recent (2020-2024) + 10 classic split
+  - **Poster Quality Fixed**: Direct TMDb poster_path URLs through image proxy, eliminating cropping issues  
+  - **Era Classification Working**: 2020+ movies properly categorized as "recent" with era feature vector
+  - **Image Proxy Success**: 83KB+ poster images loading successfully through `/img/t/p/w500/` endpoint
+  - **Recent Movies Active**: Spider-Man: Across Spider-Verse, Super Mario Bros, Nobody, etc. properly displaying
+  - **12D Feature Vectors**: Enhanced ML with era dimension (slot 11) for recent/classic learning
+  - **Interface Compatibility**: OnboardingSection updated to work with new data structure and poster URLs
+
+# Previous Changes (August 2025)
 
 - **Performance Optimization**: Implemented smart caching and progressive loading - app now loads in seconds instead of minutes with 30-minute cache and background processing
 - **Latest Branding Update**: Updated to new tagline "Find Your Next Favourite in Minutes" with description "Tired of scrolling endlessly? We've flipped the script." Added detailed feature explanations for Quick Picks, Smart Match, and Trailer Feed

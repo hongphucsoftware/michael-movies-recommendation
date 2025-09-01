@@ -43,6 +43,16 @@ function AppEnhanced() {
     reset: resetML,
     getAdventurousnessLabel
   } = useMLLearning(finalMovies);
+  
+  console.log('App states:', { 
+    newMovies: movies?.length || 0, 
+    finalMovies: finalMovies.length,
+    loading, 
+    oldLoading,
+    preferences: !!preferences,
+    currentPair: !!currentPair,
+    onboardingComplete
+  });
 
   // Combined reset function
   const handleReset = () => {
@@ -134,24 +144,22 @@ function AppEnhanced() {
 
       {/* Header */}
       <Header 
-        choices={preferences.choices} 
+        choices={preferences?.choices || 0} 
         onboardingComplete={onboardingComplete}
-        catalogueSize={catalogueSize}
+        catalogueSize={catalogueSize || finalMovies.length}
         watchlistSize={watchlistMovies.length}
       />
 
       <main className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
         {/* Onboarding Phase */}
-        {!onboardingComplete && currentPair && currentPair.length >= 2 && (
+        {!onboardingComplete && currentPair && (currentPair.left && currentPair.right) && (
           <OnboardingSection
             currentPair={currentPair}
-            choices={preferences.choices}
-            onSelectPoster={learnChoice}
-            onSkipPair={skipPair}
-            adventurousness={getAdventurousnessLabel()}
+            onChoice={learnChoice}
+            onSkip={skipPair}
+            preferences={preferences}
             onAdjustAdventurousness={adjustAdventurousness}
             getAdventurousnessLabel={getAdventurousnessLabel}
-            totalMovies={movies.length}
           />
         )}
 

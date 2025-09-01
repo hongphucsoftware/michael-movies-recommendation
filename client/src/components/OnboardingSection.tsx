@@ -24,9 +24,10 @@ export default function OnboardingSection({
   const [progressWidth, setProgressWidth] = useState(0);
 
   useEffect(() => {
-    const percentage = Math.min(100, Math.round(100 * preferences.choices / TARGET_CHOICES));
+    const choices = preferences?.choices || 0;
+    const percentage = Math.min(100, Math.round(100 * choices / TARGET_CHOICES));
     setProgressWidth(percentage);
-  }, [preferences.choices]);
+  }, [preferences?.choices]);
 
   if (!currentPair || !currentPair.left || !currentPair.right) {
     return null;
@@ -55,7 +56,7 @@ export default function OnboardingSection({
               <span className="text-gray-300">Learning Progress</span>
               <div className="flex items-center space-x-2">
                 <span className="bg-netflix-red text-white px-3 py-1 rounded-full text-sm font-semibold">
-                  {Math.min(preferences.choices, TARGET_CHOICES)} / {TARGET_CHOICES}
+                  {Math.min(preferences?.choices || 0, TARGET_CHOICES)} / {TARGET_CHOICES}
                 </span>
                 <div className="bg-electric-blue/20 text-electric-blue px-3 py-1 rounded-full text-sm">
                   <svg className="inline mr-1 w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
