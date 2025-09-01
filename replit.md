@@ -8,14 +8,19 @@ Preferred communication style: Simple, everyday language.
 
 # Recent Changes (September 2025)
 
-- **Personalized Trailer System (Sept 1)**: Implemented complete personalized recommendation engine:
+- **Enhanced A/B-Based Personalization (Sept 1)**: Fixed recommendation algorithm to properly reflect A/B test choices:
+  - **Genre Weight Learning**: Derives genre preferences from actual A/B picks with Laplace smoothing
+  - **Hybrid Scoring**: 55% cosine similarity + 40% genre bias + 5% jitter for balanced recommendations
+  - **Softmax Sampling**: Takes top 250 by score, then samples 5 with controlled randomness for variety
+  - **Brand Deduplication**: Caps to 1 per brand (no more 3x Batman variants in same queue)
+  - **Single Trailer Player**: Shows ONE trailer at a time with Skip/Next, exactly matching original build
+
+- **Complete Trailer System**: Implemented full personalized recommendation engine:
   - **Full Catalogue Access**: All 432 movies from 3 authentic sources (RT 2020, IMDb Top 250, IMDb List) 
   - **A/B History Tracking**: Records user choices during 12-round A/B testing for personalization
-  - **Enhanced Trailer Discovery**: TMDb YouTube videos + YouTube search fallback when TMDb has none
-  - **Smart Ranking Algorithm**: Uses learned preferences + "more like your choices" boost + MMR diversity
+  - **Enhanced Trailer Discovery**: TMDb YouTube videos + RT/IMDb page scraping + YouTube search fallback
   - **Batch Trailer Fetching**: Prefetches all trailer URLs with 24h caching for smooth playback
   - **Auto-Play**: Automatically selects and plays first available trailer from personalized set
-  - **Comprehensive Scraping**: Robust IMDb scraping with multiple CSS selectors and retry logic
 
 # Previous Changes (August 2025)
 

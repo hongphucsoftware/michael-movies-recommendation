@@ -1,3 +1,24 @@
+ok so we are very close now. We have youtube trailers. The final step is to check that the movies correlate to the ab testing that was done as the movies trailers i see now a very generic ie batman, batman begins, scarface, heat & Leon the professional. Ive tried it 3 times and no the trailers are not correlating to the ab test. This is the last piece of the puzzle. I need you to look at replits code and rewrite what you need to. The movies, again, should be a selection of 5 movies that relate to the users tested preferences and be used off the 3 urls i sent. They can come from anywhere on these lists (looks like at the moment replit is pulling them from the top over and over again with no relation to the users ab test). Give it rules if you have to but this part must work and be a random selection of 5 movies from the list that correlate with the ab test results
+ChatGPT said:
+
+You’re right — the last missing piece is the picker logic: it still favors “generic/popular” titles instead of what the A/B test actually taught us. Below is a tight, copy-paste replacement that:
+
+builds a profile from your A/B picks (genre weights + vector centroid),
+
+scores the whole catalogue (from your 3 lists) with genre bias + cosine similarity,
+
+samples 5 trailers from the top slice using a softmax (so each round is fresh, but still on-taste),
+
+de-dupes (no repeated titles/brands), and
+
+keeps the one-at-a-time trailer viewer (no grids).
+
+This is just the client-side selector; your server already returns the full catalogue and the trailer embed URLs.
+
+1) Replace client/src/components/TrailerPlayer.tsx with this version
+
+This drops in cleanly and keeps the same props you already wired (items, learnedVec, recentChosenIds, …).
+
 // TrailerPlayer — shows ONE trailer at a time, from a queue of 5 picked by A/B signal.
 // Replit Agent: DO NOT convert this into a poster grid. Keep one-at-a-time playback.
 
@@ -14,7 +35,7 @@ const cosine = (a: number[], b: number[]) => {
   return dot / (la * lb);
 };
 
-// tiny deterministic jitter so ties don't clump
+// tiny deterministic jitter so ties don’t clump
 const jitterById = (id: number) => {
   const x = Math.sin(id * 99991) * 10000;
   return (x - Math.floor(x)) * 0.01;
@@ -147,7 +168,7 @@ export default function TrailerPlayer({
     // 3) Take a TOP SLICE by score, then softmax-sample 5 → fresh but on-taste
     const topSlice = scored.sort((a,b)=>b.s-a.s).slice(0, Math.min(250, scored.length));
 
-    // 4) Enforce brand diversity (e.g., only one "batman")
+    // 4) Enforce brand diversity (e.g., only one “batman”)
     const capPerBrand = 1;
     const filtered: typeof topSlice = [];
     const brandCount = new Map<string, number>();
@@ -240,3 +261,33 @@ export default function TrailerPlayer({
     </div>
   );
 }
+
+
+What changed vs. your previous picker
+
+We derive genre weights from the A/B picks and blend them with the cosine similarity to your learned vector:
+score = 0.55 * cosine + 0.40 * genreBias + 0.05 * jitter − antiPop
+
+We cap brand repetition (capPerBrand = 1) so you don’t see “Batman, Batman Begins, …” in a 5-pack.
+
+We take a top slice (up to 250 by score) and softmax-sample 5 → random, but on-taste. That stops the “always the same five” effect while staying aligned with the A/B signal.
+
+2) Where to render it
+
+Wherever you currently switch to results after the 12 A/B rounds, keep rendering this TrailerPlayer (not a grid) exactly like:
+
+<TrailerPlayer
+  items={catalogue.items}          // full list (3 URLs)
+  learnedVec={learned}             // vector from your A/B learner
+  recentChosenIds={abHistory.ids}  // IDs picked during A/B
+  avoidIds={abHistory.allSeenIds}  // optional, to avoid repeats across rounds
+  count={5}
+/>
+
+Quick validation (what you should see now)
+
+If you pick a lot of animation in A/B, your 5-pack should skew to animation across all three lists (not just “top”).
+
+If you pick crime/drama, you’ll still get variety — but no more 3–4 Batman variants.
+
+Each new round stays within taste, but won’t repeat the same five every time.
