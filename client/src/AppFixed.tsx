@@ -211,12 +211,12 @@ function AppFixed() {
 
               <TrailerPlayer
                 items={movies.map(m => ({
-                  id: m.id,
+                  id: parseInt(m.id.replace('movie_', '')),
                   title: m.name,
                   year: m.year,
-                  genres: m.genreIds || [],
-                  popularity: m.popularity || 0,
-                  feature: m.feature || [],
+                  genres: m.genre_ids || [],
+                  popularity: 0,
+                  feature: m.features || [],
                   sources: [m.category]
                 }))}
                 learnedVec={preferences.w}

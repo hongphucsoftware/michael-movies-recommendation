@@ -189,7 +189,7 @@ function AppEnhanced() {
               </div>
 
               <TrailerPlayer
-                items={movies.map(m => ({
+                items={finalMovies.map(m => ({
                   id: m.id,
                   title: m.name,
                   year: m.year,
