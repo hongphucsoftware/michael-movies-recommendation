@@ -239,10 +239,25 @@ export default function TrailerPlayer({
 
   // -------- Build candidate pool from FULL catalogue --------
   const picks = useMemo(() => {
+    console.log('[TrailerPlayer] Building picks from items:', items.length);
+    
     // 0) Unique pool with images (FULL catalogue is passed in as `items`)
     const byId = new Map<number, Title>();
-    for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
+    for (const t of items) {
+      if (bestImageUrl(t)) {
+        const numId = typeof t.id === 'string' ? parseInt(t.id.replace(/\D/g, '')) : t.id;
+        if (!isNaN(numId)) {
+          byId.set(numId, { ...t, id: numId });
+        }
+      }
+    }
     let pool0 = Array.from(byId.values());
+    console.log('[TrailerPlayer] Pool with images:', pool0.length);
+
+    if (pool0.length === 0) {
+      console.warn('[TrailerPlayer] No movies with images found!');
+      return [];
+    }
 
     // 1) Build profile (from A/B chosen ids) and decide vector to use
     const profile = buildUserProfile(pool0, recentChosenIds);
@@ -282,6 +297,8 @@ export default function TrailerPlayer({
     const eligible = scored.filter(x => (x.rel >= MIN_REL) || ((0.5*x.rel + 0.5*x.gb) >= MIN_COMBO));
     const top = eligible.sort((a,b)=>b.s-a.s);
 
+    console.log('[TrailerPlayer] Eligible candidates:', eligible.length);
+
     // Brand-cap within candidates to avoid flooding with one franchise
     const capCount = new Map<string, number>();
     const candidates: typeof scored = [];
@@ -293,6 +310,7 @@ export default function TrailerPlayer({
       if (candidates.length >= TOP_CANDIDATES) break;
     }
 
+    console.log('[TrailerPlayer] Final candidates:', candidates.length);
     // Return only Titles for now; we will resolve embeds async in the effect below
     return candidates.map(c => c.t);
   }, [items, JSON.stringify(recentChosenIds), JSON.stringify(learnedVec)]);
@@ -324,12 +342,21 @@ export default function TrailerPlayer({
 
   // ------- Prefetch embeds for CANDIDATES, then select EXACTLY 5 with genre quota, brand/source caps -------
   useEffect(() => {
+    console.log('[TrailerPlayer] Effect triggered with items:', items.length);
     let mounted = true;
     (async () => {
       // Build candidates exactly like in your useMemo "picks"
       const byId = new Map<number, Title>();
-      for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
+      for (const t of items) {
+        if (bestImageUrl(t)) {
+          const numId = typeof t.id === 'string' ? parseInt(t.id.replace(/\D/g, '')) : t.id;
+          if (!isNaN(numId)) {
+            byId.set(numId, { ...t, id: numId });
+          }
+        }
+      }
       const pool = Array.from(byId.values());
+      console.log('[TrailerPlayer] Pool built:', pool.length);
 
       // Preference profile
       const profile = buildUserProfile(pool, recentChosenIds);
@@ -455,6 +482,9 @@ export default function TrailerPlayer({
       const finalTitles = final.map(x => x.t);
       const embedMap: Record<number, string|null> = {};
       final.forEach(x => { embedMap[x.t.id] = x.embed as string; });
+
+      console.log('[TrailerPlayer] Setting queue:', finalTitles.length, 'titles');
+      console.log('[TrailerPlayer] Queue titles:', finalTitles.map(t => t.title));
 
       if (!mounted) return;
       setQueue(finalTitles);
