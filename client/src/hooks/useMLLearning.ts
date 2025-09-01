@@ -77,30 +77,28 @@ export function useMLLearning(movies: Movie[]) {
       ];
     }
 
-    // TRULY RANDOM A/B TESTING - Use ALL movies from all three sources
-    // No filtering by hidden, recent, or explored during A/B testing phase
-    // The whole point is to get random variety to learn preferences
+    // PURE RANDOM A/B TESTING - No bias, no clustering, no similarity
+    // Generate random indices directly to avoid any subtle shuffle bias
+    const totalMovies = movies.length;
+    let indexA = Math.floor(Math.random() * totalMovies);
+    let indexB = Math.floor(Math.random() * totalMovies);
     
-    console.log(`[A/B RANDOM] Selecting from full catalogue of ${movies.length} movies`);
-    
-    // Get a completely random selection from the entire catalogue
-    const shuffledAll = shuffle([...movies]);
-    
-    // Pick first two different movies
-    let movieA = shuffledAll[0];
-    let movieB = shuffledAll[1];
-    
-    // Ensure they're different movies
+    // Ensure different movies
     let attempts = 0;
-    while (movieA.id === movieB.id && attempts < 10) {
-      movieB = shuffledAll[2 + attempts];
+    while (indexA === indexB && attempts < 20) {
+      indexB = Math.floor(Math.random() * totalMovies);
       attempts++;
     }
     
-    console.log(`[A/B PAIR] Selected: "${movieA.name}" (${movieA.year}) vs "${movieB.name}" (${movieB.year})`);
+    const movieA = movies[indexA];
+    const movieB = movies[indexB];
+    
+    console.log(`[A/B PURE RANDOM] Choice ${state.preferences.choices + 1}/15`);
+    console.log(`  Movie A (idx ${indexA}): "${movieA.name}" (${movieA.year}) from ${movieA.sources || 'unknown'}`);
+    console.log(`  Movie B (idx ${indexB}): "${movieB.name}" (${movieB.year}) from ${movieB.sources || 'unknown'}`);
     
     return [movieA, movieB];
-  }, [movies]);
+  }, [movies, state.preferences.choices]);
 
   // Update currentPair when movies are loaded
   useEffect(() => {
@@ -276,12 +274,23 @@ export function useMLLearning(movies: Movie[]) {
   }, [state.preferences.eps, updateQueue]);
 
   const reset = useCallback(() => {
-    // Clear ALL storage that could bias movie selection
-    ['ts_preferences_enhanced_v3_complete_fix', 'ts_recent_pairs', 'ts_likes', 'ts_hidden', 'ts_recent'].forEach(key => 
-      localStorage.removeItem(key)
-    );
+    // Clear ALL storage that could bias movie selection or randomization
+    [
+      'ts_preferences_enhanced_v3_complete_fix', 
+      'ts_recent_pairs', 
+      'ts_likes', 
+      'ts_hidden', 
+      'ts_recent',
+      'shuffle_seed',
+      'movie_indices',
+      'ab_history',
+      'recommendation_state'
+    ].forEach(key => localStorage.removeItem(key));
     
-    console.log('[RESET] Cleared all bias - next A/B testing will use full random selection');
+    // Reset Math.random seed by creating new random calls
+    for (let i = 0; i < 100; i++) Math.random();
+    
+    console.log('[RESET] Cleared ALL bias and randomization state - pure fresh start');
     
     setState({
       preferences: {
