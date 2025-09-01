@@ -6,6 +6,14 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import type { Title } from "../hooks/useEnhancedCatalogue";
 import { toFeatureVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 
+// --- Alignment tuning constants (higher correlation, less generic) ---
+const SCORE_WEIGHTS = { cosine: 0.65, genre: 0.35, jitter: 0.0 }; // was 0.55/0.40/0.05
+const MIN_REL = 0.35;                     // minimum cosine for a title to be eligible
+const MIN_COMBO = 0.28;                   // if cosine is lower, allow if 0.5*rel+0.5*genre >= this
+const TOP_SLICE = 120;                    // consider only the top N scored titles (was 250)
+const PICK_TEMPERATURE = 0.45;            // lower temp => tighter to taste (was 0.65)
+const BRAND_CAP_IN_FIVE = 1;              // still prevent duplicate brands in the 5
+
 /* =========================
    Debug helpers & panel
    Toggle with "?debug=1" or press "D"
@@ -214,28 +222,31 @@ export default function TrailerPlayer({
       const f = t.feature || toFeatureVector(t);
       const rel = useCosine ? cosine(f, u) : 0;
       const gb  = genreBias(t);
-      const base = 0.55*rel + 0.40*gb + 0.05*jitterById(t.id);
+      const base = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb + SCORE_WEIGHTS.jitter*jitterById(t.id);
+      
+      // Only penalize popularity if BOTH similarity and genre are weak AND it's very popular
       const pop = Math.min(1, (t.popularity || 0) / 100);
-      const antiPop = (rel < 0.35 && gb < 0.35) ? -(0.12 * pop) : 0; // escape generic blockbusters when off-taste
+      const antiPop = (pop > 0.60 && rel < 0.33 && gb < 0.30) ? -(0.08 * pop) : 0;
+      
       return { t, s: base + antiPop, rel, gb, antiPop, brand: brandKey(t) };
     });
 
-    // Top slice by score (keeps correlation high)
-    const topSlice = scored.sort((a,b)=>b.s-a.s).slice(0, Math.min(250, scored.length));
+    // FILTER by minimum taste and build top slice
+    const eligible = scored.filter(x => (x.rel >= MIN_REL) || ((0.5*x.rel + 0.5*x.gb) >= MIN_COMBO));
+    const topSlice = eligible.sort((a,b)=>b.s-a.s).slice(0, Math.min(TOP_SLICE, eligible.length));
 
-    // Brand diversity: only one per brand in the 5
-    const capPerBrand = 1;
+    // Brand diversity cap (no duplicate brands in 5)
     const filtered: typeof topSlice = [];
     const brandCount = new Map<string, number>();
     for (const it of topSlice) {
       const c = brandCount.get(it.brand) || 0;
-      if (c >= capPerBrand) continue;
+      if (c >= BRAND_CAP_IN_FIVE) continue;
       brandCount.set(it.brand, c+1);
       filtered.push(it);
     }
 
-    // Softmax sample 5 from filtered top slice (variety with alignment)
-    const sampled = softmaxSample(filtered, x => x.s, count, 0.65);
+    // Softmax sample 5 with tighter temperature
+    const sampled = softmaxSample(filtered, x => x.s, count, PICK_TEMPERATURE);
     
     // Store for debug (console)
     console.debug("[Reco] sampled", sampled.map(x => ({
@@ -262,10 +273,10 @@ export default function TrailerPlayer({
       const pop = Math.min(1, (t.popularity || 0) / 100);
       const antiPop = (rel < 0.35 && gb < 0.35) ? -(0.12 * pop) : 0;
       // jitter omitted in debug final so numbers are stable/readable
-      const final = 0.55*rel + 0.40*gb + 0.05*0 + antiPop;
+      const final = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb + SCORE_WEIGHTS.jitter*0 + antiPop;
       return {
         id: t.id, title: t.title, rel, genreBias: gb, antiPop, final,
-        genres: t.genres || [], sources: t.sources || []
+        genres: t.genres || [], sources: (t as any).sources || []
       };
     });
   }, [JSON.stringify(queue.map(q => q.id)), JSON.stringify(learnedVec), JSON.stringify(debugProfile.genreWeight)]);

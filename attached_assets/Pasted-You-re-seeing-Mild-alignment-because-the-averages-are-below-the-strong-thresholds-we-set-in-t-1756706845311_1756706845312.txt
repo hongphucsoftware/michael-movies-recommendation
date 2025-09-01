@@ -1,0 +1,63 @@
+You’re seeing “⚠️ Mild alignment” because the averages are below the “strong” thresholds we set in the debug panel:
+
+Strong = avgCos ≥ 0.45 or (avgCos ≥ 0.35 and avgGenre ≥ 0.50)
+
+Your run: avgCos = 0.397, avgGenre = 0.111 → mild.
+
+Why it happens: your A/B choices likely span multiple genres (so genre weights are low), and our sampler still allows some variety (temperature 0.65). We can tighten the picker so it favors higher-match items.
+
+Below is a copy-paste patch for Replit that (a) raises alignment, (b) keeps variety controlled, and (c) still avoids duplicates.
+
+⛔️ REPLIT AGENT — APPLY THIS PATCH
+
+File: client/src/components/TrailerPlayer.tsx
+(Keep the one-trailer UI. We are only changing the picker constants and filters.)
+
+1) Add these constants near the top of the file (below imports):
+// --- Alignment tuning constants (higher correlation, less generic) ---
+const SCORE_WEIGHTS = { cosine: 0.65, genre: 0.35, jitter: 0.0 }; // was 0.55/0.40/0.05
+const MIN_REL = 0.35;                     // minimum cosine for a title to be eligible
+const MIN_COMBO = 0.28;                   // if cosine is lower, allow if 0.5*rel+0.5*genre >= this
+const TOP_SLICE = 120;                    // consider only the top N scored titles (was 250)
+const PICK_TEMPERATURE = 0.45;            // lower temp => tighter to taste (was 0.65)
+const BRAND_CAP_IN_FIVE = 1;              // still prevent duplicate brands in the 5
+
+2) In the scoring block inside the useMemo that builds picks, replace the lines that compute base, antiPop, the brand cap, and the top-slice/sample logic:
+// ...inside scored = pool0.map( t => { ... } ):
+
+const base = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb + SCORE_WEIGHTS.jitter*jitterById(t.id);
+
+// Only penalize popularity if BOTH similarity and genre are weak AND it's very popular
+const pop = Math.min(1, (t.popularity || 0) / 100);
+const antiPop = (pop > 0.60 && rel < 0.33 && gb < 0.30) ? -(0.08 * pop) : 0;
+
+return { t, s: base + antiPop, rel, gb, antiPop, brand: brandKey(t) };
+
+// 3) FILTER by minimum taste and build top slice:
+const eligible = scored.filter(x => (x.rel >= MIN_REL) || ((0.5*x.rel + 0.5*x.gb) >= MIN_COMBO));
+const topSlice = eligible.sort((a,b)=>b.s-a.s).slice(0, Math.min(TOP_SLICE, eligible.length));
+
+// 4) Brand diversity cap (no duplicate brands in 5):
+const filtered: typeof topSlice = [];
+const brandCount = new Map<string, number>();
+for (const it of topSlice) {
+  const c = brandCount.get(it.brand) || 0;
+  if (c >= BRAND_CAP_IN_FIVE) continue;
+  brandCount.set(it.brand, c+1);
+  filtered.push(it);
+}
+
+// 5) Softmax sample 5 with tighter temperature:
+const sampled = softmaxSample(filtered, x => x.s, count, PICK_TEMPERATURE).map(x => x.t);
+return sampled;
+
+
+(Leave the rest of the component as-is — iframe player, Back/Next controls, debug panel.)
+
+What changes you should see
+
+Avg cosine typically rises above 0.45 on clear profile runs;
+
+Avg genre rises when A/B choices show a consistent genre;
+
+Still 5/5 brands (no duplicates), with small but meaningful variety between rounds.
