@@ -3,7 +3,7 @@ import { useEnhancedCatalogueNew } from "./hooks/useEnhancedCatalogueNew";
 import { useEnhancedCatalogue } from "./hooks/useEnhancedCatalogue";
 import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
-import { EnhancedTrailerWheelSection } from "./components/EnhancedTrailerWheelSection";
+import TrailerPlayer from "./components/TrailerPlayer";
 import { EnhancedWatchlist } from "./components/EnhancedWatchlist";
 import { RefreshCw, AlertCircle, Shuffle } from "lucide-react";
 import { Badge } from "./components/ui/badge";
@@ -188,15 +188,19 @@ function AppEnhanced() {
                 </div>
               </div>
 
-              <EnhancedTrailerWheelSection
-                movies={movies}
-                preferences={preferences}
-                onSave={saveToWatchlist}
-                onHide={hideItem}
-                onMarkRecent={markAsRecent}
-                getAvailableMovies={getAvailableMovies}
-                explorationRate={preferences.eps}
-                onExplorationChange={adjustAdventurousness}
+              <TrailerPlayer
+                items={movies.map(m => ({
+                  id: m.id,
+                  title: m.name,
+                  year: m.year,
+                  genres: m.genreIds || [],
+                  popularity: m.popularity || 0,
+                  feature: m.feature || [],
+                  sources: [m.category]
+                }))}
+                learnedVec={preferences.w}
+                recentChosenIds={Array.from(preferences.explored).map(id => parseInt(id))}
+                count={5}
               />
             </div>
 
