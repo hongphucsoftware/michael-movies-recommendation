@@ -4,10 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Heart, Eye, EyeOff, SkipForward, Shuffle } from "lucide-react";
 
-// Diversity helper functions
-function dot(a: number[], b: number[]){ return a.reduce((s,v,i)=> s + (v||0)*(b[i]||0), 0); }
-function norm(a: number[]){ return Math.sqrt(dot(a,a)) || 1; }
-function cosine(a: number[], b: number[]){ return dot(a,b) / (norm(a)*norm(b)); }
+// Diversity helper functions for MMR-style variety
+const dot = (a: number[], b: number[]) => a.reduce((s,v,i)=> s + (v||0)*(b[i]||0), 0);
+const norm = (a: number[]) => Math.sqrt(dot(a,a)) || 1;
+const cosine = (a: number[], b: number[]) => dot(a,b) / (norm(a)*norm(b));
 
 interface EnhancedTrailerWheelProps {
   movies: Movie[];
@@ -54,29 +54,37 @@ export function EnhancedTrailerWheelSection({
     const available = getAvailableMovies();
     if (available.length === 0) return [];
 
-    // Much simpler scoring - prioritize variety and exploration
+    // MMR-style diversity scoring to prevent repetitive recommendations
+    // Mean vector of last few shown, to diversify against
+    let recentVec: number[] | null = null;
+    if (recentHistory.length > 0) {
+      const d = recentHistory[0].features.length;
+      const sum = new Array(d).fill(0);
+      recentHistory.forEach(m => m.features.forEach((v,i)=> sum[i] += (v||0)));
+      recentVec = sum.map(v => v / recentHistory.length);
+    }
+
+    const LAMBDA = 0.25; // diversity strength to avoid repetitive crime/drama loops
+
     const scored = available.map(movie => {
-      const baseScore = sigmoid(dotProduct(preferences.w, movie.features));
-      const novelty = calculateNovelty(movie);
-      // Add era bonus to promote 2020+ movies
-      const eraBonus = (movie.features[11] > 0.5) ? 0.2 : 0; // slot 11 = recent era
-      return { movie, score: baseScore + novelty + eraBonus };
+      const base = sigmoid(dotProduct(preferences.w, movie.features));
+      const nov  = calculateNovelty(movie);
+      // Era bonus to promote 2020+ movies - critical fix for variety
+      const eraBonus = (movie.features[11] > 0.5) ? 0.3 : 0; // slot 11 = recent era
+      // Diversity penalty to avoid same-genre clustering
+      const div  = recentVec ? -LAMBDA * Math.max(0, cosine(movie.features, recentVec)) : 0;
+      return { movie, score: base + nov + eraBonus + div };
     });
 
-    // Sort by score but add much more randomness
-    scored.sort((a, b) => b.score - a.score);
+    scored.sort((a,b) => b.score - a.score);
 
-    // Much higher exploration rate to ensure variety
-    const highExploration = Math.max(0.4, explorationRate);
-    if (Math.random() < highExploration && scored.length > 3) {
-      // Pick from top 50% randomly instead of just swapping
-      const topHalf = Math.floor(scored.length * 0.5);
-      const randomPick = Math.floor(Math.random() * topHalf);
-      const temp = scored[0];
-      scored[0] = scored[randomPick];
-      scored[randomPick] = temp;
+    // High exploration to ensure variety (much higher than default)
+    const highExploration = Math.max(0.5, explorationRate);
+    if (Math.random() < highExploration && scored.length > 6) {
+      const k = 3 + Math.floor(Math.random() * Math.min(12, scored.length - 1));
+      [scored[0], scored[k]] = [scored[k], scored[0]];
     }
-    
+
     console.log(`Trailer queue: ${scored.slice(0,5).map(s => `${s.movie.name} (${s.movie.year}) [${s.movie.category}]`).join(', ')}`);
     console.log(`Queue breakdown: ${scored.filter(s => s.movie.category === 'classic').length} classics, ${scored.filter(s => s.movie.category === 'recent').length} recent (2020+)`);
     return scored.map(s => s.movie);

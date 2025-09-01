@@ -16,10 +16,10 @@ const DIMENSION = 12;
 
 export function useMLLearning(movies: Movie[]) {
   const [state, setState] = useState<MLState>(() => {
-    // Fresh start - clear old preferences to fix variety issues
-    const STORAGE_KEY = 'ts_preferences_enhanced_v2_fresh'; // fresh variety fix
-    localStorage.removeItem('ts_preferences_enhanced_v1'); // Clear old restrictive prefs
-    localStorage.removeItem('ts_recent_pairs'); // Clear recent tracking
+    // Complete fresh start - clear ALL old data for maximum variety
+    const STORAGE_KEY = 'ts_preferences_enhanced_v3_complete_fix';
+    // Clear all old storage that might be restricting variety
+    ['ts_preferences_enhanced_v1', 'ts_preferences_enhanced_v2_fresh', 'ts_recent_pairs', 'ts_likes', 'ts_hidden', 'ts_recent'].forEach(key => localStorage.removeItem(key));
     const storedPrefs = localStorage.getItem(STORAGE_KEY);
     const defaultPrefs: UserPreferences = {
       w: zeros(DIMENSION),
@@ -57,7 +57,7 @@ export function useMLLearning(movies: Movie[]) {
 
   // Persist to localStorage whenever preferences change - fresh namespace for variety
   useEffect(() => {
-    const STORAGE_KEY = 'ts_preferences_enhanced_v2_fresh'; // fresh variety fix
+    const STORAGE_KEY = 'ts_preferences_enhanced_v3_complete_fix';
     const toStore = {
       w: state.preferences.w,
       explored: Array.from(state.preferences.explored),

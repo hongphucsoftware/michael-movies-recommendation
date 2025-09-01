@@ -1,0 +1,336 @@
+if anything now it has gotten worse. The posters are zoomed in. It is only focusing on a handful of movies like fightclub, terminator, etc, there is no consistency in the movie trailers shown, etc. The whole idea of this site is for people that dont know what they want to watch, takes the time in selction away for them by learnging and throwing them some ideas and variety. giving these websites to work off was meant to add to the variety but instead its just a very narrow selection. https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/ and https://www.imdb.com/list/ls545836395/
+ChatGPT said:
+
+Thanks for sharing the latest ZIP — I dug through your FileVault (10).zip. Right now your app is still bottlenecked by catalogue and weighting issues, which is why:
+
+Posters look zoomed → you’re using backdrop images inconsistently.
+
+Trailers feel narrow (Fight Club, Godfather, Terminator loop) → your catalogue loader is pulling mostly IMDb Top + a slice of recent, but your learning weights don’t differentiate era strongly enough.
+
+The “video unavailable” error happens because some TMDb-linked YouTube trailers are region-locked.
+
+Why your vetting doesn’t map well to the trailer wheel
+
+Feature vectors only encode broad genres (Drama, Comedy, Action, etc.), tone (light/dark), pace (fast/slow).
+
+So if you pick “Back to the Future” over “12 Angry Men”, the system just sees: “Adventure/Comedy/Sci-Fi vs Drama”.
+
+It nudges weights a little, but then most top movies are still Crime/Drama heavy (IMDb Top bias), so you keep seeing them.
+
+No strong “era” or “variety” signal.
+
+You added 2020–2024 movies, but the recommender doesn’t know “this user prefers recent vs classic”.
+
+Once Crime/Drama dominates, it sticks to that.
+
+Ranking lacks exploration/diversity.
+
+It sorts strictly by dot(weights, features) + a tiny novelty factor.
+
+So once a cluster wins, you see it over and over.
+
+Improvements you should make
+1. Fix posters
+
+In RobustImage / wherever posters are chosen:
+
+const poster = r.poster_path
+  ? `/img/t/p/w500${r.poster_path}`
+  : r.backdrop_path
+    ? `/img/t/p/w500${r.backdrop_path}`
+    : `https://i.ytimg.com/vi/${v.key}/sddefault.jpg`;
+
+
+→ Always prefer poster_path over backdrop (avoids zoom/cropping).
+
+2. Add an “era” dimension
+
+In generateFeatureVector, add one slot for recentness:
+
+const year = parseInt((release_date||"0").slice(0,4));
+const recent = year >= 2020 ? 1 : 0;
+return [comedy, drama, action, thrill, scifi, fantasyAnim, docu, light, dark, fast, slow, recent];
+
+
+→ Now your vetting choices between classics vs new films actually affect the wheel.
+
+3. Add diversity in the trailer queue
+
+In EnhancedTrailerWheelSection.tsx, update rankMovies:
+
+const LAMBDA = 0.25; // diversity strength
+const scored = available.map(movie => {
+  const base = sigmoid(dot(preferences.w, movie.features));
+  const nov  = calculateNovelty(movie);
+  const div  = recentVec ? -LAMBDA * cosine(movie.features, recentVec) : 0;
+  return { movie, score: base + nov + div };
+});
+
+
+→ This penalises showing five mafia epics in a row.
+
+4. Replace bad trailers (region-blocked or 25s teasers)
+
+Use a pickBestYouTubeVideo() function that:
+
+Filters for site === "YouTube" && type === "Trailer".
+
+Scores higher if official === true, name contains “Official Trailer”, and size ≥ 1080.
+
+Falls back only if no good candidate exists.
+
+That eliminates most “video unavailable” and teaser issues.
+
+5. Source variety beyond IMDb Top
+
+Instead of only IMDb Top + Rotten Tomatoes list, add:
+
+discover/movie by decade (so not just the same 50 titles over and over).
+
+now_playing + popular (for freshness).
+
+That will ensure your trailer wheel feels like a living catalogue and not just “the canon.”
+
+✅ With these 5 fixes, your flow will finally feel like:
+
+Poster vetting shapes genre + tone + era preferences.
+
+The trailer wheel reflects those preferences but mixes in variety.
+
+Posters look clean.
+
+You’re not stuck in a Godfather/Fight Club loop.
+
+Do you want me to write out the updated buildCatalogue() + generateFeatureVector() functions (with era support and robust trailer picking), so you can drop them in and test immediately?
+
+You said:
+yes i want you to write all the code to drop in as replit doesnt seem to understand atm
+ChatGPT said:
+
+Awesome — here are copy-paste patches that make your vetting choices steer the trailers, stop the “same 5 movies” loop, fix zoomed posters, and avoid short/blocked trailers.
+
+They match your Node proxy + React/TS codebase from the ZIPs you shared (/client/src/**, /server/**). Paste them exactly where noted.
+
+0) New tiny helpers (one file)
+
+Create client/src/lib/videoPick.ts:
+
+// client/src/lib/videoPick.ts
+// Robust trailer + poster picking shared by imdbService & catalogueService
+
+export function pickBestYouTubeVideo(results: any[]): any | null {
+  const YT = (results || []).filter((r: any) => r.site === "YouTube");
+  if (!YT.length) return null;
+
+  const score = (v: any) => {
+    const n = (v.name || "").toLowerCase();
+    let s = 0;
+    if (v.type === "Trailer") s += 6;
+    if (v.official === true) s += 5;
+    if (/\bofficial\b/.test(n)) s += 3;
+    if (/\btrailer\b/.test(n)) s += 2;
+    if (v.size >= 1080) s += 2; else if (v.size >= 720) s += 1;
+    if (/\bteaser\b/.test(n)) s -= 2;
+    if (/\bclip\b/.test(n)) s -= 3;
+    if (/\bspot\b/.test(n)) s -= 2;
+    return s;
+  };
+
+  return YT.map(v => ({ v, s: score(v) }))
+           .sort((a, b) => b.s - a.s)[0]?.v || null;
+}
+
+export function posterFromTMDbPaths(obj: any): string | null {
+  const p = obj?.poster_path || null;
+  if (p) return `/img/t/p/w500${p}`;        // prefer posters (avoid cropped backdrops)
+  const b = obj?.backdrop_path || null;
+  return b ? `/img/t/p/w500${b}` : null;    // only if no poster is available
+}
+
+export function youtubeThumb(ytKey: string): string {
+  return `https://i.ytimg.com/vi/${ytKey}/sddefault.jpg`;
+}
+
+1) Make feature vectors understand era (recent vs classic)
+A) client/src/lib/imdbService.ts
+
+Find your feature vector builder and replace it with this 12-dim version (same size you already use, last slot = recentness):
+
+// === replace your existing generateFeatureVector in imdbService.ts ===
+private generateFeatureVector(genreIds: number[], releaseYear?: number): number[] {
+  const hasAny = (...ids: number[]) => ids.some(g => genreIds.includes(g)) ? 1 : 0;
+  const comedy = hasAny(this.GENRES.Comedy);
+  const drama  = hasAny(this.GENRES.Drama);
+  const action = hasAny(this.GENRES.Action);
+  const thrill = hasAny(this.GENRES.Thriller, this.GENRES.Mystery, this.GENRES.Crime);
+  const scifi  = hasAny(this.GENRES.SciFi);
+  const fanim  = hasAny(this.GENRES.Fantasy, this.GENRES.Animation);
+  const docu   = hasAny(this.GENRES.Documentary);
+
+  const light  = Math.min(1, comedy*0.8 + fanim*0.4 + hasAny(this.GENRES.Family)*0.6 + hasAny(this.GENRES.Romance)*0.4);
+  const dark   = Math.min(1, thrill*0.6 + drama*0.4 + hasAny(this.GENRES.Horror)*0.8 + hasAny(this.GENRES.Crime)*0.5);
+  const fast   = Math.min(1, action*0.8 + thrill*0.6 + scifi*0.4 + fanim*0.3);
+  const slow   = Math.min(1, drama*0.6 + docu*0.4);
+
+  // 12th slot: recentness (makes 2020–2024 behave differently to classics)
+  const recent = releaseYear && releaseYear >= 2020 ? 1 : 0;
+
+  return [comedy, drama, action, thrill, scifi, fanim, docu, light, dark, fast, slow, recent];
+}
+
+
+Where you construct each movie from IMDb→TMDb, pass the year:
+
+const yearNum = parseInt((details.release_date || "0").slice(0,4), 10) || undefined;
+const features = this.generateFeatureVector(genreIds, yearNum);
+
+
+…and use the new poster/trailer helpers (next section).
+
+B) client/src/lib/catalogueService.ts
+
+Do the same in this file: update the signature and pass the year when building each movie:
+
+// === replace your generateFeatureVector here to match imdbService.ts ===
+private generateFeatureVector(genreIds: number[], _type: string, releaseYear?: number): number[] {
+  const hasAny = (...ids: number[]) => ids.some(g => genreIds.includes(g)) ? 1 : 0;
+  const comedy = hasAny(this.GENRES.Comedy);
+  const drama  = hasAny(this.GENRES.Drama);
+  const action = hasAny(this.GENRES.Action);
+  const thrill = hasAny(this.GENRES.Thriller, this.GENRES.Mystery, this.GENRES.Crime);
+  const scifi  = hasAny(this.GENRES.SciFi);
+  const fanim  = hasAny(this.GENRES.Fantasy, this.GENRES.Animation);
+  const docu   = hasAny(this.GENRES.Documentary);
+  const light  = Math.min(1, comedy*0.8 + fanim*0.4 + hasAny(this.GENRES.Family)*0.6 + hasAny(this.GENRES.Romance)*0.4);
+  const dark   = Math.min(1, thrill*0.6 + drama*0.4 + hasAny(this.GENRES.Horror)*0.8 + hasAny(this.GENRES.Crime)*0.5);
+  const fast   = Math.min(1, action*0.8 + thrill*0.6 + scifi*0.4 + fanim*0.3);
+  const slow   = Math.min(1, drama*0.6 + docu*0.4);
+  const recent = releaseYear && releaseYear >= 2020 ? 1 : 0;
+  return [comedy, drama, action, thrill, scifi, fanim, docu, light, dark, fast, slow, recent];
+}
+
+
+When pushing each movie:
+
+const yearNum = parseInt((r.release_date || "0").slice(0,4), 10) || undefined;
+features: this.generateFeatureVector(r.genre_ids || [], "movie", yearNum)
+
+2) Use proper posters and the best trailer everywhere
+
+In both imdbService.ts and catalogueService.ts:
+
+Add at the top:
+
+import { pickBestYouTubeVideo, posterFromTMDbPaths, youtubeThumb } from "./videoPick";
+
+
+Replace your current trailer pick:
+
+const v = pickBestYouTubeVideo(vs.results || []);
+if (!v) continue;
+
+
+Replace poster assignment:
+
+const tmdbPoster = posterFromTMDbPaths(details || r);
+const poster = tmdbPoster ? tmdbPoster : youtubeThumb(v.key);
+
+
+This fixes the zoomed/cropped poster issue (we prefer poster_path) and avoids short/blocked trailers by picking the best match.
+
+3) Add diversity to the trailer ranking (no more 5 crime epics in a row)
+
+Open client/src/components/EnhancedTrailerWheelSection.tsx.
+
+Add these helpers near the top:
+
+const dot = (a:number[], b:number[]) => a.reduce((s,v,i)=> s + (v||0)*(b[i]||0), 0);
+const norm = (a:number[]) => Math.sqrt(dot(a,a)) || 1;
+const cosine = (a:number[], b:number[]) => dot(a,b) / (norm(a)*norm(b));
+
+
+Keep a tiny history of what the user just saw:
+
+const [recentHistory, setRecentHistory] = useState<Movie[]>([]);
+
+
+When you advance (where you already pop/save/hide), push to history:
+
+setRecentHistory(prev => [currentMovie, ...prev].slice(0, 6));
+
+
+Now change your rankMovies to subtract a diversity term:
+
+const rankMovies = useCallback(() => {
+  const available = getAvailableMovies();
+  if (available.length === 0) return [];
+
+  // Mean vector of last few shown, to diversify against
+  let recentVec: number[] | null = null;
+  if (recentHistory.length > 0) {
+    const d = recentHistory[0].features.length;
+    const sum = new Array(d).fill(0);
+    recentHistory.forEach(m => m.features.forEach((v,i)=> sum[i] += (v||0)));
+    recentVec = sum.map(v => v / recentHistory.length);
+  }
+
+  const LAMBDA = 0.25; // 0.2–0.35 works well
+
+  const scored = available.map(movie => {
+    const base = sigmoid(dotProduct(preferences.w, movie.features));
+    const nov  = calculateNovelty(movie);
+    const div  = recentVec ? -LAMBDA * Math.max(0, cosine(movie.features, recentVec)) : 0;
+    return { movie, score: base + nov + div };
+  });
+
+  scored.sort((a,b) => b.score - a.score);
+
+  // keep your exploration logic
+  if (Math.random() < explorationRate && scored.length > 6) {
+    const k = 3 + Math.floor(Math.random() * Math.min(12, scored.length - 1));
+    [scored[0], scored[k]] = [scored[k], scored[0]];
+  }
+
+  return scored.map(s => s.movie);
+}, [getAvailableMovies, preferences.w, calculateNovelty, explorationRate, recentHistory]);
+
+
+Effect: still respects what the user taught during vetting, but spreads similar titles so the wheel has variety.
+
+4) (Optional but recommended) Tougher image fallback
+
+Open client/src/components/RobustImage.tsx and harden onError so YouTube thumbs fallback to hqdefault before the placeholder:
+
+const YT_SD = /https:\/\/i\.ytimg\.com\/vi\/([^/]+)\/sddefault\.jpg/;
+
+const handleError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+  const el = e.currentTarget;
+  if (YT_SD.test(el.src)) {
+    const key = el.src.match(YT_SD)![1];
+    el.src = `https://i.ytimg.com/vi/${key}/hqdefault.jpg`;
+    return;
+  }
+  el.src = PLACEHOLDER;  // your existing SVG/data URI
+  onError?.();
+};
+
+
+Also ensure the poster <img> CSS uses something like object-fit: cover; border-radius: …; (you already do) — with poster paths the “zoomed backdrop” problem goes away.
+
+5) (Optional) Namespace the saved profile per catalogue
+
+If you’re swapping between “Top 100 all-time” and “Best 2020–2024”, use a distinct storage key so weights aren’t mixed:
+
+client/src/hooks/useMLLearning.ts
+
+const STORAGE_KEY = 'ts_preferences_enhanced_v2'; // change once; old data stays separate
+
+What you’ll notice after these patches
+
+Onboarding picks change the era weight as well as genre/tone/pace → the trailer wheel now differs when you pick recent posters vs classics.
+
+The wheel shows variety instead of hammering “Fight Club / Godfather / Terminator”.
+
+Posters no longer appear “zoomed” (we use real poster art first).
+
+Far fewer short/blocked trailers (we pick official, high-quality uploads).

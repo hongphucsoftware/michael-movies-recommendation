@@ -1,4 +1,5 @@
 import type { Movie } from "@/types/movie";
+import { pickBestYouTubeVideo, posterFromTMDbPaths, youtubeThumb } from "./videoPick";
 
 // TMDb genre ID mappings for feature vectors
 const GENRE_MAP: { [key: number]: string } = {
@@ -36,26 +37,25 @@ export class IMDbService {
     Sport: [] // Will need to infer from other signals
   };
 
-  // Generate 12-dimensional feature vector from TMDb genre IDs
   // Generate 12-dim vector from TMDb genre IDs + era (keeps DIMENSION=12)
   private generateFeatureVector(genreIds: number[], releaseYear?: number): number[] {
-    const has = (ids: number[]) => ids.some(g => genreIds.includes(g)) ? 1 : 0;
+    const hasAny = (...ids: number[]) => ids.some(g => genreIds.includes(g)) ? 1 : 0;
+    
+    const comedy = hasAny(...this.GENRES.Comedy);
+    const drama  = hasAny(...this.GENRES.Drama);
+    const action = hasAny(...this.GENRES.Action);
+    const thrill = hasAny(...this.GENRES.Thriller, 9648, 80); // Mystery, Crime
+    const scifi  = hasAny(...this.GENRES.SciFi);
+    const fanim  = hasAny(...this.GENRES.Fantasy, ...this.GENRES.Animation);
+    const docu   = hasAny(...this.GENRES.Documentary);
 
-    const comedy = has(this.GENRES.Comedy);
-    const drama  = has(this.GENRES.Drama);
-    const action = has(this.GENRES.Action);
-    const thrill = has([...this.GENRES.Thriller]);
-    const scifi  = has(this.GENRES.SciFi);
-    const fanim  = has([...this.GENRES.Fantasy, ...this.GENRES.Animation]);
-    const docu   = has(this.GENRES.Documentary);
-
-    const light  = Math.min(1, comedy*0.8 + fanim*0.4 + has(this.GENRES.Family)*0.6 + has(this.GENRES.Romance)*0.4);
-    const dark   = Math.min(1, thrill*0.6 + drama*0.4 + has(this.GENRES.Horror)*0.8 + has([80])*0.5);
+    const light  = Math.min(1, comedy*0.8 + fanim*0.4 + hasAny(...this.GENRES.Family)*0.6 + hasAny(...this.GENRES.Romance)*0.4);
+    const dark   = Math.min(1, thrill*0.6 + drama*0.4 + hasAny(...this.GENRES.Horror)*0.8 + hasAny(80)*0.5);
     const fast   = Math.min(1, action*0.8 + thrill*0.6 + scifi*0.4 + fanim*0.3);
     const slow   = Math.min(1, drama*0.6 + docu*0.4);
 
-    // Slot 12 = "recentness" (movies only) - key fix for era distinction
-    const recent = (releaseYear && releaseYear >= 2020) ? 1 : 0;
+    // 12th slot: recentness (makes 2020–2024 behave differently to classics)
+    const recent = releaseYear && releaseYear >= 2020 ? 1 : 0;
 
     return [comedy, drama, action, thrill, scifi, fanim, docu, light, dark, fast, slow, recent];
   }
@@ -100,11 +100,13 @@ export class IMDbService {
   // Build Top 100 IMDb movies catalogue using server endpoints
   async buildCatalogue(): Promise<Movie[]> {
     try {
-      // Force fresh rebuild - v6 with variety and poster fixes
-      const cacheKey = 'ts_enhanced_catalogue_v6_variety_fix';
-      const timestampKey = 'ts_enhanced_timestamp_v6_variety_fix';
+      // Force complete fresh rebuild - v7 with working 2020+ movies and poster fixes
+      const cacheKey = 'ts_enhanced_catalogue_v7_complete_fix';
+      const timestampKey = 'ts_enhanced_timestamp_v7_complete_fix';
       
-      // Clear old cache versions to force fresh build
+      // Clear ALL old cache versions to force completely fresh build
+      localStorage.removeItem('ts_enhanced_catalogue_v6_variety_fix');
+      localStorage.removeItem('ts_enhanced_timestamp_v6_variety_fix');
       localStorage.removeItem('ts_enhanced_catalogue_v5_era_fix');
       localStorage.removeItem('ts_enhanced_timestamp_v5_era_fix');
       localStorage.removeItem('ts_recent_pairs'); // Clear recent tracking
@@ -165,16 +167,13 @@ export class IMDbService {
         const id = `movie_${tmdbId}`;
         if (seen.has(id)) continue;
 
-        // Find a YouTube Trailer/Teaser with quality control
-        const youtubeKey = await this.getQualityYouTubeTrailer(tmdbId);
-        if (!youtubeKey) continue;
+        // Find best YouTube trailer using enhanced quality control
+        const youtubeVideo = await this.getQualityYouTubeTrailer(tmdbId);
+        if (!youtubeVideo?.key) continue;
 
-        // Poster: use hybrid approach - larger TMDb posters for better quality
-        const tmdbPoster = tmdbMovie.poster_path ? `https://image.tmdb.org/t/p/w780${tmdbMovie.poster_path}` : null;
-        const youtubePoster = this.posterFromYouTube(youtubeKey);
-        
-        // Prefer TMDb poster for consistency, fallback to YouTube if needed
-        const poster = tmdbPoster || youtubePoster;
+        // Poster: use proper TMDb poster paths to avoid cropping issues
+        const tmdbPoster = posterFromTMDbPaths(tmdbMovie);
+        const poster = tmdbPoster || youtubeThumb(youtubeVideo.key);
 
         // Use TMDb title as primary source
         const name = tmdbMovie.title || tmdbMovie.original_title || fallbackName || "Classic Movie";
@@ -190,7 +189,7 @@ export class IMDbService {
           name,
           year,
           poster,
-          youtube: youtubeKey,
+          youtube: youtubeVideo.key,
           isSeries: false,
           tags,
           features: this.generateFeatureVector(genreIds, yearNum),
@@ -246,8 +245,8 @@ export class IMDbService {
     }
   }
 
-  // Find YouTube trailer key for movie with quality control
-  async getQualityYouTubeTrailer(tmdbId: number): Promise<string | null> {
+  // Find YouTube trailer using enhanced quality control  
+  async getQualityYouTubeTrailer(tmdbId: number): Promise<any | null> {
     try {
       const data = await this.fetchJSON(`/api/videos/movie/${tmdbId}`);
       const results = data?.results || [];
@@ -289,7 +288,7 @@ export class IMDbService {
                !name.includes('anniversary');
       });
       
-      return filtered[0]?.key || youtubeVideos[0]?.key || null;
+      return filtered[0] || youtubeVideos[0] || null;
     } catch (error) {
       console.warn(`No trailer found for TMDb ID ${tmdbId}`);
       return null;
