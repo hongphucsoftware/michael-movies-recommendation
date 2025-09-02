@@ -72,53 +72,80 @@ export default function TrailerPlayer({
   console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5)); // Show first 5 values
   console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
 
-  // Generate explanation based on A/B learning alignment
+  // Generate explanation based on actual A/B choices and resulting picks
   const dynamicExplanation = useMemo(() => {
     if (!queue.length || !learnedVec.length) return explanation;
 
-    // Analyze the learned preference vector directly
+    // Analyze the actual movies in the queue to build accurate explanation
+    const movieTitles = queue.map(m => m.title.toLowerCase());
+    const genres = new Set<string>();
+    const themes = new Set<string>();
+    
+    // Detect war movies and military themes
+    const warIndicators = ['war', 'battle', 'military', 'soldier', 'combat', 'battlefield', 'army', 'navy', 'marines', 'vietnam', 'wwii', 'ww2', 'world war', 'platoon', 'apocalypse', 'full metal', 'saving private', 'black hawk', 'dunkirk', '1917', 'hacksaw ridge'];
+    const warMovies = queue.filter(m => 
+      warIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
+    );
+    
+    // Detect action/thriller themes
+    const actionIndicators = ['mission', 'impossible', 'fast', 'furious', 'die hard', 'terminator', 'rambo', 'batman', 'superman', 'spider', 'avengers', 'john wick'];
+    const actionMovies = queue.filter(m => 
+      actionIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
+    );
+    
+    // Detect crime/drama themes
+    const crimeIndicators = ['godfather', 'goodfellas', 'pulp fiction', 'scarface', 'casino', 'departed', 'heat', 'reservoir', 'kill bill'];
+    const crimeMovies = queue.filter(m => 
+      crimeIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
+    );
+    
+    // Detect sci-fi themes
+    const scifiIndicators = ['star', 'space', 'alien', 'blade runner', 'matrix', 'interstellar', 'inception', 'dune'];
+    const scifiMovies = queue.filter(m => 
+      scifiIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
+    );
+
+    // Build genre list based on actual content
+    if (warMovies.length >= 2) genres.add('war films');
+    if (actionMovies.length >= 2) genres.add('action thrillers');
+    if (crimeMovies.length >= 2) genres.add('crime dramas');
+    if (scifiMovies.length >= 2) genres.add('sci-fi epics');
+    
+    // Check era preferences from actual queue
+    const recentMovies = queue.filter(m => parseInt(m.year) >= 2015).length;
+    const classicMovies = queue.filter(m => parseInt(m.year) <= 1990).length;
+    
+    if (recentMovies >= 3) themes.add('recent releases');
+    if (classicMovies >= 3) themes.add('classic cinema');
+    
+    // Analyze learned vector for additional context
     const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
-
-    // Build insights based on the strongest learned preferences
-    const preferences = [];
-
-    // Strong preferences (above 0.7)
-    if (action > 0.7) preferences.push('action-packed films');
-    if (comedy > 0.7) preferences.push('comedies');
-    if (drama > 0.7) preferences.push('dramatic stories');
-    if (thriller > 0.7) preferences.push('thrillers');
-    if (scifi > 0.7) preferences.push('sci-fi adventures');
-    if (fantasy > 0.7) preferences.push('fantasy epics');
-
-    // Medium preferences (0.5-0.7)
-    if (action > 0.5 && action <= 0.7) preferences.push('action elements');
-    if (drama > 0.5 && drama <= 0.7) preferences.push('compelling dramas');
-    if (recent > 0.6) preferences.push('recent releases');
-    else if (recent < 0.4) preferences.push('classic films');
-
-    // Tone preferences
-    if (dark > 0.6) preferences.push('intense stories');
-    if (light > 0.6) preferences.push('lighter entertainment');
-    if (fast > 0.6) preferences.push('fast-paced films');
-
-    // Vector strength indicator
-    const vectorMagnitude = Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0));
-    const isStrongSignal = vectorMagnitude > 2.0;
-
-    if (preferences.length === 0 || !isStrongSignal) {
-      return `Based on your A/B choices — building your taste profile`;
+    
+    // Only add vector-based preferences if they're very strong AND match the queue
+    if (drama > 0.8 && crimeMovies.length > 0) genres.add('intense dramas');
+    if (action > 0.8 && actionMovies.length > 0) genres.add('high-octane action');
+    
+    // Build explanation from actual content
+    const genreList = Array.from(genres);
+    const themeList = Array.from(themes);
+    
+    if (genreList.length === 0 && themeList.length === 0) {
+      // Fallback to specific movie titles
+      return `Featuring: ${queue.slice(0, 2).map(m => m.title).join(', ')}${queue.length > 2 ? ` and ${queue.length - 2} more` : ''}`;
     }
-
-    if (preferences.length === 1) {
-      return `Your clear preference for ${preferences[0]} — from A/B learning`;
+    
+    const allPrefs = [...genreList, ...themeList];
+    
+    if (allPrefs.length === 1) {
+      return `Your preference for ${allPrefs[0]} — from your A/B choices`;
     }
-
-    if (preferences.length === 2) {
-      return `You like ${preferences[0]} and ${preferences[1]} — A/B personalized`;
+    
+    if (allPrefs.length === 2) {
+      return `You chose ${allPrefs[0]} and ${allPrefs[1]} — A/B personalized`;
     }
-
-    // For 3+ preferences, show the strongest ones
-    return `Your taste: ${preferences.slice(0, 2).join(', ')} and more — A/B matched`;
+    
+    // For 3+ preferences, show the top 2
+    return `Your taste: ${allPrefs.slice(0, 2).join(' and ')} — based on your A/B picks`;
   }, [queue, explanation, learnedVec]);
 
   // Build picks using the learned preferences with proper A/B alignment
