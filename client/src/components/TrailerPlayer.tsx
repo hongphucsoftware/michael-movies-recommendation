@@ -72,68 +72,96 @@ export default function TrailerPlayer({
   console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5)); // Show first 5 values
   console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
 
-  // Generate explanation based on actual movies in queue
+  // Generate detailed explanation based on actual movies and learned preferences
   const dynamicExplanation = useMemo(() => {
     if (!queue.length) return explanation;
     
-    // Analyze the actual movies selected
-    const genres = new Set<string>();
-    const decades = new Set<string>();
-    const isRecent = queue.filter(m => parseInt(m.year) >= 2015).length;
-    const isClassic = queue.filter(m => parseInt(m.year) <= 1990).length;
+    // Analyze learned vector for user preferences
+    const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec.length >= 12 ? learnedVec : Array(12).fill(0);
     
-    // Extract genre info from titles (simple heuristics)
-    queue.forEach(movie => {
+    // Create detailed movie analysis
+    const movieDetails = queue.map(movie => {
       const title = movie.title.toLowerCase();
-      if (title.includes('batman') || title.includes('action') || movie.title.match(/bad boys|fast|furious/i)) genres.add('action');
-      if (title.includes('godfather') || title.includes('pulp fiction') || title.includes('goodfellas') || movie.title.match(/crime|gang|mafia/i)) genres.add('crime');
-      if (title.includes('comedy') || movie.title.match(/funny|laugh|comedy/i)) genres.add('comedy');
-      if (title.includes('drama') || movie.title.match(/oscar|academy/i)) genres.add('drama');
-      if (movie.title.match(/sci-fi|space|future|alien/i)) genres.add('sci-fi');
-      if (movie.title.match(/fantasy|magic|dragon|lord of the rings/i)) genres.add('fantasy');
-      if (movie.title.match(/horror|scary|ghost|zombie/i)) genres.add('horror');
-      if (movie.title.match(/romance|love|heart/i)) genres.add('romance');
-      if (movie.title.match(/animation|animated|pixar|disney/i)) genres.add('animation');
-      
       const year = parseInt(movie.year);
-      if (year >= 2015) decades.add('recent');
-      else if (year >= 2000) decades.add('2000s');
-      else if (year >= 1990) decades.add('90s');
-      else if (year >= 1980) decades.add('80s');
-      else decades.add('classics');
+      
+      // Genre detection with expanded patterns
+      const genres = [];
+      if (title.match(/comedy|funny|laugh|mrs\. harris|mitchells/i)) genres.push('comedy');
+      if (title.match(/drama|oscar|academy|sting/i)) genres.push('drama');
+      if (title.match(/action|mission|impossible|fall guy/i)) genres.push('action');
+      if (title.match(/crime|gang|mafia|godfather|pulp fiction|goodfellas/i)) genres.push('crime');
+      if (title.match(/thriller|suspense|usual suspects/i)) genres.push('thriller');
+      if (title.match(/sci-fi|space|future|alien/i)) genres.push('sci-fi');
+      if (title.match(/fantasy|magic|dragon|lord of the rings/i)) genres.push('fantasy');
+      if (title.match(/animation|animated|pixar|disney|mitchells/i)) genres.push('animation');
+      if (title.match(/romance|love|heart|harris/i)) genres.push('romance');
+      if (title.match(/war|military|battle/i)) genres.push('war');
+      
+      return {
+        title: movie.title,
+        year,
+        genres,
+        isRecent: year >= 2015,
+        isClassic: year <= 1990,
+        is2000s: year >= 2000 && year < 2015
+      };
     });
     
-    const genreList = Array.from(genres);
-    const eraList = Array.from(decades);
+    // Build intelligent explanation based on learned preferences and actual selection
+    const uniqueGenres = [...new Set(movieDetails.flatMap(m => m.genres))];
+    const recentCount = movieDetails.filter(m => m.isRecent).length;
+    const classicCount = movieDetails.filter(m => m.isClassic).length;
+    const modernCount = movieDetails.filter(m => m.is2000s).length;
     
-    // Build specific explanation
-    if (genreList.length === 0 && eraList.length === 0) {
-      return `Showing: ${queue.map(m => m.title).slice(0, 2).join(', ')}${queue.length > 2 ? ` and ${queue.length - 2} more` : ''}`;
+    // Create preference-based insights
+    const insights = [];
+    
+    // Genre insights based on learned vector
+    if (comedy > 0.6 && uniqueGenres.includes('comedy')) {
+      insights.push('comedy picks');
+    } else if (action > 0.7 && uniqueGenres.includes('action')) {
+      insights.push('action-packed selections');
+    } else if (drama > 0.6 && uniqueGenres.includes('drama')) {
+      insights.push('character-driven dramas');
+    } else if (uniqueGenres.length >= 3) {
+      insights.push(`diverse ${uniqueGenres.slice(0, 2).join(' and ')} mix`);
+    } else if (uniqueGenres.length >= 1) {
+      insights.push(`${uniqueGenres[0]} favorites`);
     }
     
-    const parts = [];
-    if (genreList.length === 1) {
-      parts.push(genreList[0]);
-    } else if (genreList.length === 2) {
-      parts.push(`${genreList[0]} and ${genreList[1]}`);
-    } else if (genreList.length >= 3) {
-      parts.push(`${genreList[0]}, ${genreList[1]}, and more`);
+    // Era insights
+    if (recent > 0.6 && recentCount >= 3) {
+      insights.push('modern releases');
+    } else if (recent < 0.3 && classicCount >= 3) {
+      insights.push('timeless classics');
+    } else if (classicCount >= 2 && recentCount >= 2) {
+      insights.push('spanning multiple eras');
     }
     
-    if (isRecent >= 3) {
-      parts.push('recent hits');
-    } else if (isClassic >= 3) {
-      parts.push('classic films');
-    } else if (eraList.size >= 2) {
-      parts.push('films across different eras');
+    // Tone insights
+    if (light > 0.6) {
+      insights.push('uplifting stories');
+    } else if (dark > 0.6) {
+      insights.push('intense narratives');
     }
     
-    if (parts.length === 0) {
-      return `Your curated selection: ${queue[0]?.title}${queue.length > 1 ? ` and ${queue.length - 1} more` : ''}`;
+    // Build final explanation
+    if (insights.length === 0) {
+      return `Selected: ${movieDetails.map(m => m.title).slice(0, 2).join(', ')}${queue.length > 2 ? ` + ${queue.length - 2} more` : ''}`;
     }
     
-    return `Your taste for ${parts.join(' and ')} — personalized for you`;
-  }, [queue, explanation]);
+    const movieList = queue.length <= 3 
+      ? queue.map(m => m.title).join(', ')
+      : `${queue[0].title}, ${queue[1].title} + ${queue.length - 2} more`;
+    
+    if (insights.length === 1) {
+      return `${insights[0]}: ${movieList}`;
+    } else if (insights.length === 2) {
+      return `${insights[0]} and ${insights[1]}: ${movieList}`;
+    } else {
+      return `${insights[0]}, ${insights[1]} and more: ${movieList}`;
+    }
+  }, [queue, explanation, learnedVec]);
 
   // Build picks using the learned preferences
   const picks = useMemo(() => {
