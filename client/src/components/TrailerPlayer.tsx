@@ -9,9 +9,9 @@ import { toFeatureVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 // Math helpers
 const l2 = (x: number[]) => Math.sqrt(x.reduce((s, v) => s + v*v, 0));
 const cosine = (a: number[], b: number[]) => {
-  const la = l2(a), lb = l2(b); 
+  const la = l2(a), lb = l2(b);
   if (!la || !lb) return 0;
-  let dot = 0; 
+  let dot = 0;
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) dot += a[i]*b[i];
   return dot / (la * lb);
@@ -47,11 +47,11 @@ function softmaxSample<T>(items: T[], getScore: (t: T)=>number, k: number, tempe
 }
 
 type Props = {
-  items: Title[];            
-  learnedVec: number[];      
-  recentChosenIds: number[]; 
-  avoidIds?: number[];       
-  count?: number;            
+  items: Title[];
+  learnedVec: number[];
+  recentChosenIds: number[];
+  avoidIds?: number[];
+  count?: number;
 };
 
 export default function TrailerPlayer({
@@ -72,158 +72,132 @@ export default function TrailerPlayer({
   console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5)); // Show first 5 values
   console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
 
-  // Generate detailed explanation based on actual movies and learned preferences
+  // Generate explanation based on A/B learning alignment
   const dynamicExplanation = useMemo(() => {
-    if (!queue.length) return explanation;
-    
-    // Analyze learned vector for user preferences
-    const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec.length >= 12 ? learnedVec : Array(12).fill(0);
-    
-    // Create detailed movie analysis
-    const movieDetails = queue.map(movie => {
-      const title = movie.title.toLowerCase();
-      const year = parseInt(movie.year);
-      
-      // Genre detection with expanded patterns
-      const genres = [];
-      if (title.match(/comedy|funny|laugh|mrs\. harris|mitchells/i)) genres.push('comedy');
-      if (title.match(/drama|oscar|academy|sting/i)) genres.push('drama');
-      if (title.match(/action|mission|impossible|fall guy/i)) genres.push('action');
-      if (title.match(/crime|gang|mafia|godfather|pulp fiction|goodfellas/i)) genres.push('crime');
-      if (title.match(/thriller|suspense|usual suspects/i)) genres.push('thriller');
-      if (title.match(/sci-fi|space|future|alien/i)) genres.push('sci-fi');
-      if (title.match(/fantasy|magic|dragon|lord of the rings/i)) genres.push('fantasy');
-      if (title.match(/animation|animated|pixar|disney|mitchells/i)) genres.push('animation');
-      if (title.match(/romance|love|heart|harris/i)) genres.push('romance');
-      if (title.match(/war|military|battle/i)) genres.push('war');
-      
-      return {
-        title: movie.title,
-        year,
-        genres,
-        isRecent: year >= 2015,
-        isClassic: year <= 1990,
-        is2000s: year >= 2000 && year < 2015
-      };
-    });
-    
-    // Build intelligent explanation based on learned preferences and actual selection
-    const uniqueGenres = [...new Set(movieDetails.flatMap(m => m.genres))];
-    const recentCount = movieDetails.filter(m => m.isRecent).length;
-    const classicCount = movieDetails.filter(m => m.isClassic).length;
-    const modernCount = movieDetails.filter(m => m.is2000s).length;
-    
-    // Create preference-based insights
-    const insights = [];
-    
-    // Genre insights based on learned vector
-    if (comedy > 0.6 && uniqueGenres.includes('comedy')) {
-      insights.push('comedy picks');
-    } else if (action > 0.7 && uniqueGenres.includes('action')) {
-      insights.push('action-packed selections');
-    } else if (drama > 0.6 && uniqueGenres.includes('drama')) {
-      insights.push('character-driven dramas');
-    } else if (uniqueGenres.length >= 3) {
-      insights.push(`diverse ${uniqueGenres.slice(0, 2).join(' and ')} mix`);
-    } else if (uniqueGenres.length >= 1) {
-      insights.push(`${uniqueGenres[0]} favorites`);
+    if (!queue.length || !learnedVec.length) return explanation;
+
+    // Analyze the learned preference vector directly
+    const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
+
+    // Build insights based on the strongest learned preferences
+    const preferences = [];
+
+    // Strong preferences (above 0.7)
+    if (action > 0.7) preferences.push('action-packed films');
+    if (comedy > 0.7) preferences.push('comedies');
+    if (drama > 0.7) preferences.push('dramatic stories');
+    if (thriller > 0.7) preferences.push('thrillers');
+    if (scifi > 0.7) preferences.push('sci-fi adventures');
+    if (fantasy > 0.7) preferences.push('fantasy epics');
+
+    // Medium preferences (0.5-0.7)
+    if (action > 0.5 && action <= 0.7) preferences.push('action elements');
+    if (drama > 0.5 && drama <= 0.7) preferences.push('compelling dramas');
+    if (recent > 0.6) preferences.push('recent releases');
+    else if (recent < 0.4) preferences.push('classic films');
+
+    // Tone preferences
+    if (dark > 0.6) preferences.push('intense stories');
+    if (light > 0.6) preferences.push('lighter entertainment');
+    if (fast > 0.6) preferences.push('fast-paced films');
+
+    // Vector strength indicator
+    const vectorMagnitude = Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0));
+    const isStrongSignal = vectorMagnitude > 2.0;
+
+    if (preferences.length === 0 || !isStrongSignal) {
+      return `Based on your A/B choices — building your taste profile`;
     }
-    
-    // Era insights
-    if (recent > 0.6 && recentCount >= 3) {
-      insights.push('modern releases');
-    } else if (recent < 0.3 && classicCount >= 3) {
-      insights.push('timeless classics');
-    } else if (classicCount >= 2 && recentCount >= 2) {
-      insights.push('spanning multiple eras');
+
+    if (preferences.length === 1) {
+      return `Your clear preference for ${preferences[0]} — from A/B learning`;
     }
-    
-    // Tone insights
-    if (light > 0.6) {
-      insights.push('uplifting stories');
-    } else if (dark > 0.6) {
-      insights.push('intense narratives');
+
+    if (preferences.length === 2) {
+      return `You like ${preferences[0]} and ${preferences[1]} — A/B personalized`;
     }
-    
-    // Build final explanation
-    if (insights.length === 0) {
-      return `Selected: ${movieDetails.map(m => m.title).slice(0, 2).join(', ')}${queue.length > 2 ? ` + ${queue.length - 2} more` : ''}`;
-    }
-    
-    const movieList = queue.length <= 3 
-      ? queue.map(m => m.title).join(', ')
-      : `${queue[0].title}, ${queue[1].title} + ${queue.length - 2} more`;
-    
-    if (insights.length === 1) {
-      return `${insights[0]}: ${movieList}`;
-    } else if (insights.length === 2) {
-      return `${insights[0]} and ${insights[1]}: ${movieList}`;
-    } else {
-      return `${insights[0]}, ${insights[1]} and more: ${movieList}`;
-    }
+
+    // For 3+ preferences, show the strongest ones
+    return `Your taste: ${preferences.slice(0, 2).join(', ')} and more — A/B matched`;
   }, [queue, explanation, learnedVec]);
 
-  // Build picks using the learned preferences
+  // Build picks using the learned preferences with proper A/B alignment
   const picks = useMemo(() => {
-    if (!items.length) {
-      console.warn('[TrailerPlayer] No items provided');
+    if (!items.length || !learnedVec.length) return [];
+
+    console.log('[TrailerPlayer] Items with images:', items.filter(item => bestImageUrl(item)).length);
+
+    // Filter items with valid posters and exclude recently seen
+    const available = items
+      .filter(item => bestImageUrl(item))
+      .filter(item => !recentChosenIds.includes(item.id))
+      .filter(item => !avoidIds.includes(item.id));
+
+    if (available.length === 0) {
+      console.warn('[TrailerPlayer] No available items with images');
       return [];
     }
 
-    // Filter items with valid images and convert IDs to numbers
-    const withImages = items.filter(t => bestImageUrl(t)).map(t => ({
-      ...t,
-      id: typeof t.id === 'string' ? parseInt(t.id.replace(/\D/g, '')) : t.id
-    })).filter(t => !isNaN(t.id));
+    // Score each movie using learned preferences - direct dot product scoring
+    const scored = available.map(item => {
+      const features = item.feature || toFeatureVector(item);
 
-    console.log('[TrailerPlayer] Items with images:', withImages.length);
+      // Use dot product directly with learned vector (this is what A/B testing optimizes)
+      const preferenceScore = features.reduce((sum, feature, idx) => {
+        return sum + (feature * (learnedVec[idx] || 0));
+      }, 0);
 
-    if (!withImages.length) return [];
+      // Normalize to 0-1 range using sigmoid
+      const normalizedScore = 1 / (1 + Math.exp(-preferenceScore));
 
-    // If no learned vector, return random sample
-    if (!learnedVec || learnedVec.length === 0 || l2(learnedVec) < 0.05) {
-      console.log('[TrailerPlayer] No learned vector, using random selection');
-      const shuffled = [...withImages].sort(() => Math.random() - 0.5);
-      return shuffled.slice(0, count);
-    }
+      // Small novelty boost for variety
+      const noveltyBoost = recentChosenIds.includes(item.id) ? 0 : 0.03;
 
-    // Score items based on cosine similarity to learned preferences
-    const scored = withImages.map(t => {
-      const feature = t.feature || toFeatureVector(t);
-      const similarity = cosine(feature, learnedVec);
-
-      // Add some variety - prefer items not recently chosen
-      const recentPenalty = recentChosenIds.includes(t.id) ? -0.2 : 0;
-      const avoidPenalty = avoidIds.includes(t.id) ? -0.5 : 0;
-
-      const score = similarity + recentPenalty + avoidPenalty + (Math.random() * 0.1); // small jitter
-
-      return { item: t, score, similarity, recentPenalty, avoidPenalty };
+      return {
+        item,
+        score: normalizedScore + noveltyBoost,
+        preferenceScore: preferenceScore.toFixed(3)
+      };
     });
 
-    // Sort by score and take top candidates
-    const sorted = scored.sort((a, b) => b.score - a.score);
-    const topCandidates = sorted.slice(0, Math.min(50, sorted.length));
+    // Sort by preference-aligned score
+    scored.sort((a, b) => b.score - a.score);
 
-    console.log('[TrailerPlayer] Top candidate scores:', topCandidates.slice(0, 10).map(s => ({
-      title: s.item.title,
-      score: s.score.toFixed(3),
-      similarity: s.similarity.toFixed(3)
-    })));
-
-    // Use softmax sampling for diversity
-    const selected = softmaxSample(
-      topCandidates, 
-      candidate => candidate.score, 
-      count,
-      0.5 // temperature for variety
+    console.log('[TrailerPlayer] A/B-aligned scoring:',
+      scored.slice(0, 10).map(s => ({
+        title: s.item.title,
+        score: s.score.toFixed(3),
+        rawPreference: s.preferenceScore
+      }))
     );
 
-    const final = selected.map(s => s.item);
+    // Take top candidates with minimal diversity shuffling
+    const topCandidates = scored.slice(0, Math.min(15, scored.length));
 
-    console.log('[TrailerPlayer] Final picks:', final.map(f => f.title));
+    // Light shuffle for some variety but maintain preference ranking
+    if (topCandidates.length > count) {
+      // Keep top 60% as-is, shuffle remaining 40%
+      const keepTop = Math.ceil(count * 0.6);
+      const shuffleFrom = topCandidates.slice(keepTop);
 
-    return final;
+      // Fisher-Yates shuffle on lower portion
+      for (let i = shuffleFrom.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffleFrom[i], shuffleFrom[j]] = [shuffleFrom[j], shuffleFrom[i]];
+      }
+
+      const final = [
+        ...topCandidates.slice(0, keepTop),
+        ...shuffleFrom.slice(0, count - keepTop)
+      ];
+
+      console.log('[TrailerPlayer] Final picks (preference-weighted):', final.map(s => s.item.title));
+      return final.map(s => s.item);
+    }
+
+    const result = topCandidates.slice(0, count).map(s => s.item);
+    console.log('[TrailerPlayer] Final picks (top preference matches):', result.map(item => item.title));
+    return result;
   }, [items, learnedVec, recentChosenIds, avoidIds, count]);
 
   // Fetch trailer embeds when picks change
@@ -265,19 +239,19 @@ export default function TrailerPlayer({
   const canPrev = idx > 0;
   const canNext = idx + 1 < queue.length;
 
-  const prev = useCallback(() => { 
-    if (canPrev) setIdx(i => Math.max(0, i-1)); 
+  const prev = useCallback(() => {
+    if (canPrev) setIdx(i => Math.max(0, i-1));
   }, [canPrev]);
 
-  const next = useCallback(() => { 
-    if (canNext) setIdx(i => Math.min(queue.length-1, i+1)); 
+  const next = useCallback(() => {
+    if (canNext) setIdx(i => Math.min(queue.length-1, i+1));
   }, [canNext]);
 
   // Keyboard navigation
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { 
-      if (e.key === "ArrowLeft") prev(); 
-      if (e.key === "ArrowRight") next(); 
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") prev();
+      if (e.key === "ArrowRight") next();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -351,8 +325,8 @@ export default function TrailerPlayer({
           onClick={prev}
           disabled={!canPrev}
           className={`flex-1 sm:flex-none px-4 py-3 sm:px-6 sm:py-3 rounded-lg text-sm sm:text-base font-medium transition-colors ${
-            canPrev 
-              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600" 
+            canPrev
+              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600"
               : "bg-neutral-900 opacity-50 cursor-not-allowed"
           }`}>
           <span className="flex items-center justify-center gap-2">
@@ -364,8 +338,8 @@ export default function TrailerPlayer({
           onClick={next}
           disabled={!canNext}
           className={`flex-1 sm:flex-none px-4 py-3 sm:px-6 sm:py-3 rounded-lg text-sm sm:text-base font-medium transition-colors ${
-            canNext 
-              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600" 
+            canNext
+              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600"
               : "bg-neutral-900 opacity-50 cursor-not-allowed"
           }`}>
           <span className="flex items-center justify-center gap-2">
