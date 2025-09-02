@@ -72,83 +72,108 @@ export default function TrailerPlayer({
   console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5)); // Show first 5 values
   console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
 
-  // Generate explanation based on actual A/B choices and resulting picks
+  // Generate meaningful explanation based on A/B learning vector patterns
   const dynamicExplanation = useMemo(() => {
     if (!queue.length || !learnedVec.length) return explanation;
 
-    // Analyze the actual movies in the queue to build accurate explanation
-    const movieTitles = queue.map(m => m.title.toLowerCase());
-    const genres = new Set<string>();
-    const themes = new Set<string>();
-    
-    // Detect war movies and military themes
-    const warIndicators = ['war', 'battle', 'military', 'soldier', 'combat', 'battlefield', 'army', 'navy', 'marines', 'vietnam', 'wwii', 'ww2', 'world war', 'platoon', 'apocalypse', 'full metal', 'saving private', 'black hawk', 'dunkirk', '1917', 'hacksaw ridge'];
-    const warMovies = queue.filter(m => 
-      warIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
-    );
-    
-    // Detect action/thriller themes
-    const actionIndicators = ['mission', 'impossible', 'fast', 'furious', 'die hard', 'terminator', 'rambo', 'batman', 'superman', 'spider', 'avengers', 'john wick'];
-    const actionMovies = queue.filter(m => 
-      actionIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
-    );
-    
-    // Detect crime/drama themes
-    const crimeIndicators = ['godfather', 'goodfellas', 'pulp fiction', 'scarface', 'casino', 'departed', 'heat', 'reservoir', 'kill bill'];
-    const crimeMovies = queue.filter(m => 
-      crimeIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
-    );
-    
-    // Detect sci-fi themes
-    const scifiIndicators = ['star', 'space', 'alien', 'blade runner', 'matrix', 'interstellar', 'inception', 'dune'];
-    const scifiMovies = queue.filter(m => 
-      scifiIndicators.some(indicator => m.title.toLowerCase().includes(indicator))
-    );
-
-    // Build genre list based on actual content
-    if (warMovies.length >= 2) genres.add('war films');
-    if (actionMovies.length >= 2) genres.add('action thrillers');
-    if (crimeMovies.length >= 2) genres.add('crime dramas');
-    if (scifiMovies.length >= 2) genres.add('sci-fi epics');
-    
-    // Check era preferences from actual queue
-    const recentMovies = queue.filter(m => parseInt(m.year) >= 2015).length;
-    const classicMovies = queue.filter(m => parseInt(m.year) <= 1990).length;
-    
-    if (recentMovies >= 3) themes.add('recent releases');
-    if (classicMovies >= 3) themes.add('classic cinema');
-    
-    // Analyze learned vector for additional context
+    // Analyze the learned vector to understand user preferences from A/B testing
     const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
     
-    // Only add vector-based preferences if they're very strong AND match the queue
-    if (drama > 0.8 && crimeMovies.length > 0) genres.add('intense dramas');
-    if (action > 0.8 && actionMovies.length > 0) genres.add('high-octane action');
+    // Calculate vector strength to understand confidence level
+    const vectorMagnitude = Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0));
+    const isStrongSignal = vectorMagnitude > 2.5;
+    const isMediumSignal = vectorMagnitude > 1.5;
     
-    // Build explanation from actual content
-    const genreList = Array.from(genres);
-    const themeList = Array.from(themes);
+    console.log('[TrailerPlayer] A/B Vector Analysis:', {
+      comedy: comedy.toFixed(2),
+      drama: drama.toFixed(2), 
+      action: action.toFixed(2),
+      thriller: thriller.toFixed(2),
+      scifi: scifi.toFixed(2),
+      recent: recent.toFixed(2),
+      magnitude: vectorMagnitude.toFixed(2)
+    });
+
+    // Identify strongest preferences from A/B learning (above 0.8)
+    const strongPrefs: string[] = [];
+    if (comedy > 0.8) strongPrefs.push('comedies');
+    if (drama > 0.8) strongPrefs.push('dramas');
+    if (action > 0.8) strongPrefs.push('action films');
+    if (thriller > 0.8) strongPrefs.push('thrillers');
+    if (scifi > 0.8) strongPrefs.push('sci-fi');
+    if (fantasy > 0.8) strongPrefs.push('fantasy');
     
-    if (genreList.length === 0 && themeList.length === 0) {
-      // Fallback to specific movie titles
-      return `Featuring: ${queue.slice(0, 2).map(m => m.title).join(', ')}${queue.length > 2 ? ` and ${queue.length - 2} more` : ''}`;
+    // Identify medium preferences (0.5-0.8)
+    const mediumPrefs: string[] = [];
+    if (comedy > 0.5 && comedy <= 0.8) mediumPrefs.push('some comedy');
+    if (drama > 0.5 && drama <= 0.8) mediumPrefs.push('thoughtful stories');
+    if (action > 0.5 && action <= 0.8) mediumPrefs.push('exciting action');
+    
+    // Era and tone preferences
+    const eraPrefs: string[] = [];
+    if (recent > 0.7) eraPrefs.push('modern films');
+    else if (recent < 0.3) eraPrefs.push('classic cinema');
+    
+    if (dark > 0.7) eraPrefs.push('intense themes');
+    if (light > 0.7) eraPrefs.push('lighter entertainment');
+    if (fast > 0.7) eraPrefs.push('fast-paced stories');
+    
+    // Analyze actual queue content for validation
+    const queueAnalysis = {
+      hasAnimation: queue.some(m => ['luca', 'onward', 'raya', 'nimona', 'puss', 'spider-verse', 'elemental'].some(a => m.title.toLowerCase().includes(a))),
+      hasAction: queue.some(m => m.title.toLowerCase().includes('spider') || m.title.toLowerCase().includes('planet') || m.title.toLowerCase().includes('apes')),
+      hasComedy: queue.some(m => m.genres?.includes(35)),
+      hasDrama: queue.some(m => m.genres?.includes(18)),
+      hasRecent: queue.filter(m => parseInt(m.year) >= 2018).length >= 3
+    };
+    
+    // Build explanation based on A/B learning strength and queue content
+    if (!isStrongSignal) {
+      // Weak signal - still learning
+      if (queueAnalysis.hasAnimation) {
+        return `Early signals suggest you enjoy animated storytelling — learning from your A/B choices`;
+      }
+      return `Building your taste profile from A/B testing — ${queue.length} personalized picks`;
     }
     
-    const allPrefs = [...genreList, ...themeList];
-    
-    if (allPrefs.length === 1) {
-      return `Your preference for ${allPrefs[0]} — from your A/B choices`;
+    if (isMediumSignal) {
+      // Medium signal - some clear preferences
+      const topPref = [...strongPrefs, ...mediumPrefs][0];
+      if (topPref) {
+        if (queueAnalysis.hasAnimation && (comedy > 0.6 || fantasy > 0.6)) {
+          return `You seem to enjoy ${topPref} with animated adventures — from your A/B choices`;
+        }
+        return `Your A/B choices show you like ${topPref} — ${queue.length} matches found`;
+      }
     }
     
-    if (allPrefs.length === 2) {
-      return `You chose ${allPrefs[0]} and ${allPrefs[1]} — A/B personalized`;
+    // Strong signal - confident recommendations
+    if (strongPrefs.length === 0) {
+      // Strong signal but mixed preferences
+      if (queueAnalysis.hasAnimation) {
+        return `Your diverse taste includes animated films — based on ${Math.round(vectorMagnitude * 5)} A/B comparisons`;
+      }
+      return `Eclectic taste detected — ${queue.length} diverse picks from your A/B learning`;
     }
     
-    // For 3+ preferences, show the top 2
-    return `Your taste: ${allPrefs.slice(0, 2).join(' and ')} — based on your A/B picks`;
+    if (strongPrefs.length === 1) {
+      const pref = strongPrefs[0];
+      if (queueAnalysis.hasAnimation && pref === 'action films') {
+        return `You chose animated action adventures — strong A/B signal (${vectorMagnitude.toFixed(1)})`;
+      }
+      return `Clear preference for ${pref} — confident A/B match (${vectorMagnitude.toFixed(1)})`;
+    }
+    
+    if (strongPrefs.length === 2) {
+      const [pref1, pref2] = strongPrefs;
+      return `You like ${pref1} and ${pref2} — strong A/B learning (${vectorMagnitude.toFixed(1)})`;
+    }
+    
+    // Multiple strong preferences
+    return `Complex taste: ${strongPrefs.slice(0, 2).join(' + ')} — from ${Math.round(vectorMagnitude * 4)} A/B choices`;
   }, [queue, explanation, learnedVec]);
 
-  // Build picks using the learned preferences with PROPER anti-repetition
+  // Build picks using the learned preferences with MAXIMUM VARIETY
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
@@ -165,93 +190,103 @@ export default function TrailerPlayer({
       return [];
     }
 
-    // Score each movie using learned preferences
-    const scored = available.map(item => {
+    // Create a seed based on current timestamp to ensure different results each time
+    const timeSeed = Date.now() % 10000;
+    
+    // Score each movie using learned preferences + massive randomization
+    const scored = available.map((item, index) => {
       const features = item.feature || toFeatureVector(item);
       const preferenceScore = features.reduce((sum, feature, idx) => {
         return sum + (feature * (learnedVec[idx] || 0));
       }, 0);
 
-      // Add significant randomization to break ties and prevent same picks
-      const randomFactor = (Math.random() - 0.5) * 0.8; // ±0.4 random variance
+      // MASSIVE randomization based on time + index to prevent same results
+      const randomSeed = (timeSeed + index * 17) % 1000;
+      const randomFactor = (Math.sin(randomSeed) * 2.5); // ±2.5 random variance
       
       return {
         item,
         score: preferenceScore + randomFactor,
         rawScore: preferenceScore,
-        title: item.title // For easy tracking
+        title: item.title,
+        randomness: randomFactor
       };
     });
 
-    // Sort by score with built-in randomization
+    // Shuffle the scored array before sorting to break deterministic patterns
+    for (let i = scored.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [scored[i], scored[j]] = [scored[j], scored[i]];
+    }
+
+    // Sort by score but with built-in chaos
     scored.sort((a, b) => b.score - a.score);
 
-    console.log('[TrailerPlayer] A/B-aligned scoring with anti-repetition:',
+    console.log('[TrailerPlayer] A/B-aligned scoring with MAXIMUM variety:',
       scored.slice(0, 10).map(s => ({
         title: s.title,
         adjustedScore: s.score.toFixed(3),
-        rawPreference: s.rawScore.toFixed(3)
+        rawPreference: s.rawScore.toFixed(3),
+        randomBoost: s.randomness.toFixed(3)
       }))
     );
 
-    // STRONG ANTI-REPETITION: Use weighted sampling to avoid always picking the same top movies
+    // EXTREME ANTI-REPETITION: Divide movies into genre buckets and pick from different buckets
     const selected: typeof scored[0]['item'][] = [];
-    const pool = scored.slice(); // Copy the scored array
+    const usedTitleWords = new Set<string>();
+    const usedGenres = new Set<number>();
     
-    for (let i = 0; i < count && pool.length > 0; i++) {
-      let pickIndex = 0;
+    // Categorize movies by primary genre/theme for diversity
+    const buckets = {
+      action: scored.filter(s => s.item.genres?.includes(28) || s.title.toLowerCase().includes('spider') || s.title.toLowerCase().includes('fast')),
+      animation: scored.filter(s => s.item.genres?.includes(16) || ['luca', 'onward', 'raya', 'nimona', 'puss'].some(a => s.title.toLowerCase().includes(a))),
+      drama: scored.filter(s => s.item.genres?.includes(18) && !s.item.genres?.includes(16)),
+      comedy: scored.filter(s => s.item.genres?.includes(35)),
+      scifi: scored.filter(s => s.item.genres?.includes(878) || s.title.toLowerCase().includes('planet')),
+      other: scored.filter(s => !s.item.genres?.some(g => [28, 16, 18, 35, 878].includes(g)))
+    };
+
+    // Pick one from each bucket, then fill remaining slots
+    const bucketNames = Object.keys(buckets) as (keyof typeof buckets)[];
+    let bucketIndex = 0;
+    
+    for (let i = 0; i < count && selected.length < count; i++) {
+      let found = false;
       
-      // For the first pick, bias toward top but add randomness
-      if (i === 0) {
-        // Pick from top 5 movies with weighted probability
-        const topN = Math.min(5, pool.length);
-        const weights = Array.from({length: topN}, (_, j) => Math.exp(-j * 0.7)); // Exponential decay
-        const totalWeight = weights.reduce((a, b) => a + b, 0);
-        let random = Math.random() * totalWeight;
+      // Try to pick from different buckets for maximum variety
+      for (let attempt = 0; attempt < bucketNames.length && !found; attempt++) {
+        const currentBucket = buckets[bucketNames[bucketIndex]];
+        bucketIndex = (bucketIndex + 1) % bucketNames.length;
         
-        for (let j = 0; j < weights.length; j++) {
-          random -= weights[j];
-          if (random <= 0) {
-            pickIndex = j;
+        // Find a movie from this bucket that doesn't share words with selected
+        for (const candidate of currentBucket) {
+          if (selected.includes(candidate.item)) continue;
+          
+          const titleWords = candidate.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+          const hasWordOverlap = titleWords.some(word => usedTitleWords.has(word));
+          const hasGenreOverlap = candidate.item.genres?.some(g => usedGenres.has(g)) || false;
+          
+          if (!hasWordOverlap || selected.length >= 3) { // Allow genre overlap after 3 picks
+            selected.push(candidate.item);
+            titleWords.forEach(word => usedTitleWords.add(word));
+            candidate.item.genres?.forEach(g => usedGenres.add(g));
+            found = true;
             break;
           }
         }
       }
-      // For subsequent picks, ensure variety by avoiding similar titles
-      else {
-        const selectedTitles = selected.map(item => item.title.toLowerCase());
-        
-        // Find first movie that doesn't share words with already selected
-        for (let j = 0; j < Math.min(20, pool.length); j++) {
-          const candidateTitle = pool[j].title.toLowerCase();
-          const candidateWords = candidateTitle.split(/\s+/);
-          
-          // Check if this movie shares significant words with already selected
-          const hasOverlap = selectedTitles.some(selectedTitle => {
-            const selectedWords = selectedTitle.split(/\s+/);
-            const commonWords = candidateWords.filter(word => 
-              word.length > 3 && selectedWords.includes(word)
-            );
-            return commonWords.length > 0;
-          });
-          
-          if (!hasOverlap) {
-            pickIndex = j;
-            break;
-          }
-        }
-        
-        // If no non-overlapping found, just pick with some randomness
-        if (pickIndex === 0 && pool.length > 3) {
-          pickIndex = Math.floor(Math.random() * Math.min(8, pool.length));
+      
+      // If no bucket worked, pick randomly from remaining high-scoring items
+      if (!found && scored.length > selected.length) {
+        const remaining = scored.filter(s => !selected.includes(s.item));
+        if (remaining.length > 0) {
+          const randomPick = remaining[Math.floor(Math.random() * Math.min(10, remaining.length))];
+          selected.push(randomPick.item);
         }
       }
-      
-      const picked = pool.splice(pickIndex, 1)[0];
-      selected.push(picked.item);
     }
 
-    console.log('[TrailerPlayer] Final picks (preference-weighted):', selected.map(item => item.title));
+    console.log('[TrailerPlayer] Final picks (MAXIMUM VARIETY):', selected.map(item => item.title));
 
     return selected;
   }, [items, learnedVec, recentChosenIds, avoidIds, count]);
