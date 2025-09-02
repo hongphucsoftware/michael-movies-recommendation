@@ -148,7 +148,7 @@ export default function TrailerPlayer({
     return `Your taste: ${allPrefs.slice(0, 2).join(' and ')} — based on your A/B picks`;
   }, [queue, explanation, learnedVec]);
 
-  // Build picks using the learned preferences with proper A/B alignment
+  // Build picks using the learned preferences with genre-aware diversity
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
@@ -165,65 +165,101 @@ export default function TrailerPlayer({
       return [];
     }
 
-    // Score each movie using learned preferences - direct dot product scoring
+    // Score each movie using learned preferences - use RAW dot product for better separation
     const scored = available.map(item => {
       const features = item.feature || toFeatureVector(item);
 
-      // Use dot product directly with learned vector (this is what A/B testing optimizes)
+      // Use RAW dot product - no sigmoid compression to maintain score differences
       const preferenceScore = features.reduce((sum, feature, idx) => {
         return sum + (feature * (learnedVec[idx] || 0));
       }, 0);
 
-      // Normalize to 0-1 range using sigmoid
-      const normalizedScore = 1 / (1 + Math.exp(-preferenceScore));
+      // Era bonus to promote variety across time periods
+      const eraBonus = (features[11] > 0.5) ? 0.2 : 0.1; // Recent vs classic bonus
 
-      // Small novelty boost for variety
-      const noveltyBoost = recentChosenIds.includes(item.id) ? 0 : 0.03;
+      // Genre detection for diversity
+      const isAnimation = features[0] > 0.6; // Comedy high = often animation
+      const isAction = features[2] > 0.6;    // Action
+      const isDrama = features[1] > 0.6;     // Drama
+      const isSciFi = features[4] > 0.6;     // Sci-fi
 
       return {
         item,
-        score: normalizedScore + noveltyBoost,
-        preferenceScore: preferenceScore.toFixed(3)
+        score: preferenceScore + eraBonus,
+        rawScore: preferenceScore,
+        isAnimation,
+        isAction,
+        isDrama,
+        isSciFi,
+        era: features[11] > 0.5 ? 'recent' : 'classic'
       };
     });
 
-    // Sort by preference-aligned score
+    // Sort by preference score but implement genre-aware diverse selection
     scored.sort((a, b) => b.score - a.score);
 
-    console.log('[TrailerPlayer] A/B-aligned scoring:',
+    console.log('[TrailerPlayer] A/B-aligned scoring (RAW):',
       scored.slice(0, 10).map(s => ({
         title: s.item.title,
-        score: s.score.toFixed(3),
-        rawPreference: s.preferenceScore
+        rawScore: s.rawScore.toFixed(3),
+        era: s.era,
+        animation: s.isAnimation,
+        action: s.isAction,
+        drama: s.isDrama
       }))
     );
 
-    // Take top candidates with minimal diversity shuffling
-    const topCandidates = scored.slice(0, Math.min(15, scored.length));
+    // DIVERSE SELECTION: Pick from different genre buckets to avoid clustering
+    const selected: typeof scored = [];
+    const genreCounts = { animation: 0, action: 0, drama: 0, scifi: 0, other: 0 };
+    const eraCounts = { recent: 0, classic: 0 };
+    const maxPerGenre = 2; // Max 2 movies per genre
+    const maxPerEra = 3;   // Max 3 movies per era
 
-    // Light shuffle for some variety but maintain preference ranking
-    if (topCandidates.length > count) {
-      // Keep top 60% as-is, shuffle remaining 40%
-      const keepTop = Math.ceil(count * 0.6);
-      const shuffleFrom = topCandidates.slice(keepTop);
+    // First pass: Take top picks respecting diversity constraints
+    for (const candidate of scored) {
+      if (selected.length >= count) break;
 
-      // Fisher-Yates shuffle on lower portion
-      for (let i = shuffleFrom.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffleFrom[i], shuffleFrom[j]] = [shuffleFrom[j], shuffleFrom[i]];
+      // Determine genre category
+      let genreKey = 'other';
+      if (candidate.isAnimation) genreKey = 'animation';
+      else if (candidate.isAction) genreKey = 'action';
+      else if (candidate.isDrama) genreKey = 'drama';
+      else if (candidate.isSciFi) genreKey = 'scifi';
+
+      // Check diversity constraints
+      const genreOk = genreCounts[genreKey as keyof typeof genreCounts] < maxPerGenre;
+      const eraOk = eraCounts[candidate.era as keyof typeof eraCounts] < maxPerEra;
+
+      if (genreOk && eraOk) {
+        selected.push(candidate);
+        genreCounts[genreKey as keyof typeof genreCounts]++;
+        eraCounts[candidate.era as keyof typeof eraCounts]++;
       }
-
-      const final = [
-        ...topCandidates.slice(0, keepTop),
-        ...shuffleFrom.slice(0, count - keepTop)
-      ];
-
-      console.log('[TrailerPlayer] Final picks (preference-weighted):', final.map(s => s.item.title));
-      return final.map(s => s.item);
     }
 
-    const result = topCandidates.slice(0, count).map(s => s.item);
-    console.log('[TrailerPlayer] Final picks (top preference matches):', result.map(item => item.title));
+    // Second pass: Fill remaining slots if needed (relaxed constraints)
+    if (selected.length < count) {
+      for (const candidate of scored) {
+        if (selected.length >= count) break;
+        if (!selected.includes(candidate)) {
+          selected.push(candidate);
+        }
+      }
+    }
+
+    const result = selected.slice(0, count).map(s => s.item);
+    
+    console.log('[TrailerPlayer] Final diverse picks:', result.map(item => item.title));
+    console.log('[TrailerPlayer] Genre distribution:', {
+      animation: selected.filter(s => s.isAnimation).length,
+      action: selected.filter(s => s.isAction).length,
+      drama: selected.filter(s => s.isDrama).length,
+      scifi: selected.filter(s => s.isSciFi).length,
+      recent: selected.filter(s => s.era === 'recent').length,
+      classic: selected.filter(s => s.era === 'classic').length
+    });
+
     return result;
   }, [items, learnedVec, recentChosenIds, avoidIds, count]);
 
