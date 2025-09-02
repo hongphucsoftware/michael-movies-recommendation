@@ -148,7 +148,7 @@ export default function TrailerPlayer({
     return `Your taste: ${allPrefs.slice(0, 2).join(' and ')} — based on your A/B picks`;
   }, [queue, explanation, learnedVec]);
 
-  // Build picks using the learned preferences with genre-aware diversity
+  // Build picks using the learned preferences with PROPER anti-repetition
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
@@ -165,102 +165,95 @@ export default function TrailerPlayer({
       return [];
     }
 
-    // Score each movie using learned preferences - use RAW dot product for better separation
+    // Score each movie using learned preferences
     const scored = available.map(item => {
       const features = item.feature || toFeatureVector(item);
-
-      // Use RAW dot product - no sigmoid compression to maintain score differences
       const preferenceScore = features.reduce((sum, feature, idx) => {
         return sum + (feature * (learnedVec[idx] || 0));
       }, 0);
 
-      // Era bonus to promote variety across time periods
-      const eraBonus = (features[11] > 0.5) ? 0.2 : 0.1; // Recent vs classic bonus
-
-      // Genre detection for diversity
-      const isAnimation = features[0] > 0.6; // Comedy high = often animation
-      const isAction = features[2] > 0.6;    // Action
-      const isDrama = features[1] > 0.6;     // Drama
-      const isSciFi = features[4] > 0.6;     // Sci-fi
-
+      // Add significant randomization to break ties and prevent same picks
+      const randomFactor = (Math.random() - 0.5) * 0.8; // ±0.4 random variance
+      
       return {
         item,
-        score: preferenceScore + eraBonus,
+        score: preferenceScore + randomFactor,
         rawScore: preferenceScore,
-        isAnimation,
-        isAction,
-        isDrama,
-        isSciFi,
-        era: features[11] > 0.5 ? 'recent' : 'classic'
+        title: item.title // For easy tracking
       };
     });
 
-    // Sort by preference score but implement genre-aware diverse selection
+    // Sort by score with built-in randomization
     scored.sort((a, b) => b.score - a.score);
 
-    console.log('[TrailerPlayer] A/B-aligned scoring (RAW):',
+    console.log('[TrailerPlayer] A/B-aligned scoring with anti-repetition:',
       scored.slice(0, 10).map(s => ({
-        title: s.item.title,
-        rawScore: s.rawScore.toFixed(3),
-        era: s.era,
-        animation: s.isAnimation,
-        action: s.isAction,
-        drama: s.isDrama
+        title: s.title,
+        adjustedScore: s.score.toFixed(3),
+        rawPreference: s.rawScore.toFixed(3)
       }))
     );
 
-    // DIVERSE SELECTION: Pick from different genre buckets to avoid clustering
-    const selected: typeof scored = [];
-    const genreCounts = { animation: 0, action: 0, drama: 0, scifi: 0, other: 0 };
-    const eraCounts = { recent: 0, classic: 0 };
-    const maxPerGenre = 2; // Max 2 movies per genre
-    const maxPerEra = 3;   // Max 3 movies per era
-
-    // First pass: Take top picks respecting diversity constraints
-    for (const candidate of scored) {
-      if (selected.length >= count) break;
-
-      // Determine genre category
-      let genreKey = 'other';
-      if (candidate.isAnimation) genreKey = 'animation';
-      else if (candidate.isAction) genreKey = 'action';
-      else if (candidate.isDrama) genreKey = 'drama';
-      else if (candidate.isSciFi) genreKey = 'scifi';
-
-      // Check diversity constraints
-      const genreOk = genreCounts[genreKey as keyof typeof genreCounts] < maxPerGenre;
-      const eraOk = eraCounts[candidate.era as keyof typeof eraCounts] < maxPerEra;
-
-      if (genreOk && eraOk) {
-        selected.push(candidate);
-        genreCounts[genreKey as keyof typeof genreCounts]++;
-        eraCounts[candidate.era as keyof typeof eraCounts]++;
-      }
-    }
-
-    // Second pass: Fill remaining slots if needed (relaxed constraints)
-    if (selected.length < count) {
-      for (const candidate of scored) {
-        if (selected.length >= count) break;
-        if (!selected.includes(candidate)) {
-          selected.push(candidate);
+    // STRONG ANTI-REPETITION: Use weighted sampling to avoid always picking the same top movies
+    const selected: typeof scored[0]['item'][] = [];
+    const pool = scored.slice(); // Copy the scored array
+    
+    for (let i = 0; i < count && pool.length > 0; i++) {
+      let pickIndex = 0;
+      
+      // For the first pick, bias toward top but add randomness
+      if (i === 0) {
+        // Pick from top 5 movies with weighted probability
+        const topN = Math.min(5, pool.length);
+        const weights = Array.from({length: topN}, (_, j) => Math.exp(-j * 0.7)); // Exponential decay
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        let random = Math.random() * totalWeight;
+        
+        for (let j = 0; j < weights.length; j++) {
+          random -= weights[j];
+          if (random <= 0) {
+            pickIndex = j;
+            break;
+          }
         }
       }
+      // For subsequent picks, ensure variety by avoiding similar titles
+      else {
+        const selectedTitles = selected.map(item => item.title.toLowerCase());
+        
+        // Find first movie that doesn't share words with already selected
+        for (let j = 0; j < Math.min(20, pool.length); j++) {
+          const candidateTitle = pool[j].title.toLowerCase();
+          const candidateWords = candidateTitle.split(/\s+/);
+          
+          // Check if this movie shares significant words with already selected
+          const hasOverlap = selectedTitles.some(selectedTitle => {
+            const selectedWords = selectedTitle.split(/\s+/);
+            const commonWords = candidateWords.filter(word => 
+              word.length > 3 && selectedWords.includes(word)
+            );
+            return commonWords.length > 0;
+          });
+          
+          if (!hasOverlap) {
+            pickIndex = j;
+            break;
+          }
+        }
+        
+        // If no non-overlapping found, just pick with some randomness
+        if (pickIndex === 0 && pool.length > 3) {
+          pickIndex = Math.floor(Math.random() * Math.min(8, pool.length));
+        }
+      }
+      
+      const picked = pool.splice(pickIndex, 1)[0];
+      selected.push(picked.item);
     }
 
-    const result = selected.slice(0, count).map(s => s.item);
-    
-    console.log('[TrailerPlayer] Final diverse picks:', result.map(item => item.title));
-    console.log('[TrailerPlayer] Genre distribution:', {
-      animation: selected.filter(s => s.isAnimation).length,
-      action: selected.filter(s => s.isAction).length,
-      drama: selected.filter(s => s.isDrama).length,
-      scifi: selected.filter(s => s.isSciFi).length,
-      recent: selected.filter(s => s.era === 'recent').length,
-      classic: selected.filter(s => s.era === 'classic').length
-    });
+    console.log('[TrailerPlayer] Final picks (preference-weighted):', selected.map(item => item.title));
 
-    return result;
+    return selected;
   }, [items, learnedVec, recentChosenIds, avoidIds, count]);
 
   // Fetch trailer embeds when picks change
