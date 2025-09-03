@@ -1,3 +1,4 @@
+
 // UI LOCK — TrailerPlayer shows ONE trailer at a time. No grids, no poster walls.
 // Replit Agent: Do NOT replace this component with a grid view.
 // It must queue 5 trailers chosen by the A/B signal and play them sequentially.
@@ -28,24 +29,6 @@ async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|
   return out;
 }
 
-// Weighted sample without replacement using softmax
-function softmaxSample<T>(items: T[], getScore: (t: T)=>number, k: number, temperature = 0.65): T[] {
-  const pool = items.slice();
-  const out: T[] = [];
-  for (let pick = 0; pick < k && pool.length; pick++) {
-    const scores = pool.map(getScore);
-    const max = Math.max(...scores);
-    const exps = scores.map(s => Math.exp((s - max) / Math.max(temperature, 1e-6)));
-    const sum = exps.reduce((a,b)=>a+b, 0) || 1;
-    let r = Math.random() * sum;
-    let idx = 0;
-    for (; idx < exps.length; idx++) { r -= exps[idx]; if (r <= 0) break; }
-    const chosen = pool.splice(Math.min(idx, pool.length-1), 1)[0];
-    out.push(chosen);
-  }
-  return out;
-}
-
 type Props = {
   items: Title[];
   learnedVec: number[];
@@ -61,125 +44,65 @@ export default function TrailerPlayer({
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
-  // Generate explanation based on actual selected movies - MUST be at top level
-  const explanation = useMemo(() => {
-    return "Based on your A/B choices, here are your personalized picks";
-  }, []);
-
   console.log('[TrailerPlayer] Received items:', items.length);
   console.log('[TrailerPlayer] Learned vector length:', learnedVec.length);
   console.log('[TrailerPlayer] Recent chosen IDs:', recentChosenIds.length);
-  console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5)); // Show first 5 values
+  console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5));
   console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
 
-  // Generate meaningful explanation based on A/B learning vector patterns
-  const dynamicExplanation = useMemo(() => {
-    if (!queue.length || !learnedVec.length) return explanation;
+  // Analyze A/B learning vector to understand user preferences
+  const abAnalysis = useMemo(() => {
+    if (!learnedVec.length) return { preferences: [], strength: 'none', explanation: 'Learning in progress...' };
 
-    // Analyze the learned vector to understand user preferences from A/B testing
     const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
-    
-    // Calculate vector strength to understand confidence level
     const vectorMagnitude = Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0));
-    const isStrongSignal = vectorMagnitude > 2.5;
-    const isMediumSignal = vectorMagnitude > 1.5;
     
-    console.log('[TrailerPlayer] A/B Vector Analysis:', {
-      comedy: comedy.toFixed(2),
-      drama: drama.toFixed(2), 
-      action: action.toFixed(2),
-      thriller: thriller.toFixed(2),
-      scifi: scifi.toFixed(2),
-      recent: recent.toFixed(2),
+    console.log('[TrailerPlayer] A/B Vector Breakdown:', {
+      comedy: comedy?.toFixed(2) || '0',
+      drama: drama?.toFixed(2) || '0', 
+      action: action?.toFixed(2) || '0',
+      thriller: thriller?.toFixed(2) || '0',
+      scifi: scifi?.toFixed(2) || '0',
+      fantasy: fantasy?.toFixed(2) || '0',
+      recent: recent?.toFixed(2) || '0',
       magnitude: vectorMagnitude.toFixed(2)
     });
 
-    // Identify strongest preferences from A/B learning (above 0.8)
-    const strongPrefs: string[] = [];
-    if (comedy > 0.8) strongPrefs.push('comedies');
-    if (drama > 0.8) strongPrefs.push('dramas');
-    if (action > 0.8) strongPrefs.push('action films');
-    if (thriller > 0.8) strongPrefs.push('thrillers');
-    if (scifi > 0.8) strongPrefs.push('sci-fi');
-    if (fantasy > 0.8) strongPrefs.push('fantasy');
+    const preferences = [];
     
-    // Identify medium preferences (0.5-0.8)
-    const mediumPrefs: string[] = [];
-    if (comedy > 0.5 && comedy <= 0.8) mediumPrefs.push('some comedy');
-    if (drama > 0.5 && drama <= 0.8) mediumPrefs.push('thoughtful stories');
-    if (action > 0.5 && action <= 0.8) mediumPrefs.push('exciting action');
-    
-    // Era and tone preferences
-    const eraPrefs: string[] = [];
-    if (recent > 0.7) eraPrefs.push('modern films');
-    else if (recent < 0.3) eraPrefs.push('classic cinema');
-    
-    if (dark > 0.7) eraPrefs.push('intense themes');
-    if (light > 0.7) eraPrefs.push('lighter entertainment');
-    if (fast > 0.7) eraPrefs.push('fast-paced stories');
-    
-    // Analyze actual queue content for validation
-    const queueAnalysis = {
-      hasAnimation: queue.some(m => ['luca', 'onward', 'raya', 'nimona', 'puss', 'spider-verse', 'elemental'].some(a => m.title.toLowerCase().includes(a))),
-      hasAction: queue.some(m => m.title.toLowerCase().includes('spider') || m.title.toLowerCase().includes('planet') || m.title.toLowerCase().includes('apes')),
-      hasComedy: queue.some(m => m.genres?.includes(35)),
-      hasDrama: queue.some(m => m.genres?.includes(18)),
-      hasRecent: queue.filter(m => parseInt(m.year) >= 2018).length >= 3
-    };
-    
-    // Build explanation based on A/B learning strength and queue content
-    if (!isStrongSignal) {
-      // Weak signal - still learning
-      if (queueAnalysis.hasAnimation) {
-        return `Early signals suggest you enjoy animated storytelling — learning from your A/B choices`;
-      }
-      return `Building your taste profile from A/B testing — ${queue.length} personalized picks`;
-    }
-    
-    if (isMediumSignal) {
-      // Medium signal - some clear preferences
-      const topPref = [...strongPrefs, ...mediumPrefs][0];
-      if (topPref) {
-        if (queueAnalysis.hasAnimation && (comedy > 0.6 || fantasy > 0.6)) {
-          return `You seem to enjoy ${topPref} with animated adventures — from your A/B choices`;
-        }
-        return `Your A/B choices show you like ${topPref} — ${queue.length} matches found`;
-      }
-    }
-    
-    // Strong signal - confident recommendations
-    if (strongPrefs.length === 0) {
-      // Strong signal but mixed preferences
-      if (queueAnalysis.hasAnimation) {
-        return `Your diverse taste includes animated films — based on ${Math.round(vectorMagnitude * 5)} A/B comparisons`;
-      }
-      return `Eclectic taste detected — ${queue.length} diverse picks from your A/B learning`;
-    }
-    
-    if (strongPrefs.length === 1) {
-      const pref = strongPrefs[0];
-      if (queueAnalysis.hasAnimation && pref === 'action films') {
-        return `You chose animated action adventures — strong A/B signal (${vectorMagnitude.toFixed(1)})`;
-      }
-      return `Clear preference for ${pref} — confident A/B match (${vectorMagnitude.toFixed(1)})`;
-    }
-    
-    if (strongPrefs.length === 2) {
-      const [pref1, pref2] = strongPrefs;
-      return `You like ${pref1} and ${pref2} — strong A/B learning (${vectorMagnitude.toFixed(1)})`;
-    }
-    
-    // Multiple strong preferences
-    return `Complex taste: ${strongPrefs.slice(0, 2).join(' + ')} — from ${Math.round(vectorMagnitude * 4)} A/B choices`;
-  }, [queue, explanation, learnedVec]);
+    // Identify strong preferences (> 0.7)
+    if (comedy > 0.7) preferences.push({ type: 'comedy', strength: comedy, label: 'comedies' });
+    if (drama > 0.7) preferences.push({ type: 'drama', strength: drama, label: 'dramatic films' });
+    if (action > 0.7) preferences.push({ type: 'action', strength: action, label: 'action films' });
+    if (thriller > 0.7) preferences.push({ type: 'thriller', strength: thriller, label: 'thrillers' });
+    if (scifi > 0.7) preferences.push({ type: 'scifi', strength: scifi, label: 'sci-fi' });
+    if (fantasy > 0.7) preferences.push({ type: 'fantasy', strength: fantasy, label: 'fantasy' });
 
-  // Build picks using the learned preferences with MAXIMUM VARIETY
+    // Sort by strength
+    preferences.sort((a, b) => b.strength - a.strength);
+    
+    let strength = 'weak';
+    if (vectorMagnitude > 2.5) strength = 'strong';
+    else if (vectorMagnitude > 1.5) strength = 'medium';
+
+    // Build explanation
+    let explanation = 'Building your taste profile from A/B testing';
+    if (preferences.length === 0) {
+      explanation = vectorMagnitude > 1.0 ? 'Your diverse taste profile from A/B choices' : 'Learning your preferences through A/B testing';
+    } else if (preferences.length === 1) {
+      explanation = `Your clear preference for ${preferences[0].label} from A/B testing`;
+    } else if (preferences.length >= 2) {
+      explanation = `You like ${preferences[0].label} and ${preferences[1].label} from A/B choices`;
+    }
+
+    return { preferences, strength, explanation, vectorMagnitude };
+  }, [learnedVec]);
+
+  // Advanced A/B-driven movie selection with maximum diversity
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
-    console.log('[TrailerPlayer] Items with images:', items.filter(item => bestImageUrl(item)).length);
-
-    // Filter items with valid posters and exclude recently seen
+    // Filter to movies with images and not recently seen
     const available = items
       .filter(item => bestImageUrl(item))
       .filter(item => !recentChosenIds.includes(item.id))
@@ -190,106 +113,183 @@ export default function TrailerPlayer({
       return [];
     }
 
-    // Create a seed based on current timestamp to ensure different results each time
-    const timeSeed = Date.now() % 10000;
-    
-    // Score each movie using learned preferences + massive randomization
+    console.log('[TrailerPlayer] Available movies:', available.length);
+    console.log('[TrailerPlayer] A/B Analysis:', abAnalysis);
+
+    // Score each movie based on A/B learning + diversity factors
     const scored = available.map((item, index) => {
       const features = item.feature || toFeatureVector(item);
-      const preferenceScore = features.reduce((sum, feature, idx) => {
+      
+      // Core preference score from A/B learning
+      const abScore = features.reduce((sum, feature, idx) => {
         return sum + (feature * (learnedVec[idx] || 0));
       }, 0);
 
-      // MASSIVE randomization based on time + index to prevent same results
-      const randomSeed = (timeSeed + index * 17) % 1000;
-      const randomFactor = (Math.sin(randomSeed) * 2.5); // ±2.5 random variance
-      
+      // Diversity factors to prevent same movie clustering
+      const titleWords = item.title.toLowerCase().split(/\s+/);
+      const diversityFactors = {
+        // Year diversity bonus/penalty
+        yearDiversity: Math.abs(parseInt(item.year) - 2010) > 10 ? 0.3 : 0,
+        
+        // Genre diversity - avoid clustering around single genres
+        genreSpread: item.genres && item.genres.length > 2 ? 0.2 : 0,
+        
+        // Source diversity - prefer mixing sources
+        sourceBonus: item.sources?.includes('imdbTop') ? 0.1 : 
+                    item.sources?.includes('rt2020') ? 0.15 : 0.05,
+        
+        // Title uniqueness - avoid similar titles
+        titleUnique: titleWords.length > 2 ? 0.1 : 0,
+        
+        // Random factor to break ties and ensure variety
+        randomFactor: (Math.sin(Date.now() + index * 47) + 1) * 1.0 // ±1.0 random
+      };
+
+      const diversityScore = Object.values(diversityFactors).reduce((sum, val) => sum + val, 0);
+      const finalScore = abScore + diversityScore;
+
       return {
         item,
-        score: preferenceScore + randomFactor,
-        rawScore: preferenceScore,
-        title: item.title,
-        randomness: randomFactor
+        abScore,
+        diversityScore,
+        finalScore,
+        title: item.title
       };
     });
 
-    // Shuffle the scored array before sorting to break deterministic patterns
-    for (let i = scored.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [scored[i], scored[j]] = [scored[j], scored[i]];
-    }
+    // Sort by final score
+    scored.sort((a, b) => b.finalScore - a.finalScore);
 
-    // Sort by score but with built-in chaos
-    scored.sort((a, b) => b.score - a.score);
-
-    console.log('[TrailerPlayer] A/B-aligned scoring with MAXIMUM variety:',
+    console.log('[TrailerPlayer] Top scored movies for A/B preferences:',
       scored.slice(0, 10).map(s => ({
         title: s.title,
-        adjustedScore: s.score.toFixed(3),
-        rawPreference: s.rawScore.toFixed(3),
-        randomBoost: s.randomness.toFixed(3)
+        abScore: s.abScore.toFixed(3),
+        diversity: s.diversityScore.toFixed(3),
+        final: s.finalScore.toFixed(3),
+        year: s.item.year,
+        sources: s.item.sources
       }))
     );
 
-    // EXTREME ANTI-REPETITION: Divide movies into genre buckets and pick from different buckets
+    // Advanced selection with genre/theme diversity enforcement
     const selected: typeof scored[0]['item'][] = [];
-    const usedTitleWords = new Set<string>();
     const usedGenres = new Set<number>();
-    
-    // Categorize movies by primary genre/theme for diversity
-    const buckets = {
-      action: scored.filter(s => s.item.genres?.includes(28) || s.title.toLowerCase().includes('spider') || s.title.toLowerCase().includes('fast')),
-      animation: scored.filter(s => s.item.genres?.includes(16) || ['luca', 'onward', 'raya', 'nimona', 'puss'].some(a => s.title.toLowerCase().includes(a))),
-      drama: scored.filter(s => s.item.genres?.includes(18) && !s.item.genres?.includes(16)),
+    const usedDecades = new Set<string>();
+    const usedTitleWords = new Set<string>();
+    const usedSources = new Set<string>();
+
+    // Create selection pools for maximum variety
+    const pools = {
+      recent: scored.filter(s => parseInt(s.item.year) >= 2015),
+      classic: scored.filter(s => parseInt(s.item.year) < 2000),
+      middle: scored.filter(s => parseInt(s.item.year) >= 2000 && parseInt(s.item.year) < 2015),
+      action: scored.filter(s => s.item.genres?.includes(28)),
+      drama: scored.filter(s => s.item.genres?.includes(18)),
       comedy: scored.filter(s => s.item.genres?.includes(35)),
-      scifi: scored.filter(s => s.item.genres?.includes(878) || s.title.toLowerCase().includes('planet')),
-      other: scored.filter(s => !s.item.genres?.some(g => [28, 16, 18, 35, 878].includes(g)))
+      thriller: scored.filter(s => s.item.genres?.includes(53)),
+      scifi: scored.filter(s => s.item.genres?.includes(878)),
+      all: scored
     };
 
-    // Pick one from each bucket, then fill remaining slots
-    const bucketNames = Object.keys(buckets) as (keyof typeof buckets)[];
-    let bucketIndex = 0;
+    // Selection strategy based on A/B preferences
+    const selectionStrategy = [];
     
+    if (abAnalysis.preferences.length > 0) {
+      // Use A/B preferences to guide selection
+      for (const pref of abAnalysis.preferences.slice(0, 2)) {
+        if (pref.type === 'action' && pools.action.length > 0) selectionStrategy.push('action');
+        if (pref.type === 'drama' && pools.drama.length > 0) selectionStrategy.push('drama');
+        if (pref.type === 'comedy' && pools.comedy.length > 0) selectionStrategy.push('comedy');
+        if (pref.type === 'thriller' && pools.thriller.length > 0) selectionStrategy.push('thriller');
+        if (pref.type === 'scifi' && pools.scifi.length > 0) selectionStrategy.push('scifi');
+      }
+    }
+    
+    // Add era diversity based on recent preference
+    if (learnedVec[11] > 0.6) {
+      selectionStrategy.push('recent');
+    } else if (learnedVec[11] < 0.4) {
+      selectionStrategy.push('classic');
+    } else {
+      selectionStrategy.push('middle');
+    }
+    
+    // Fill remaining slots with 'all' for maximum variety
+    while (selectionStrategy.length < count) {
+      selectionStrategy.push('all');
+    }
+
+    console.log('[TrailerPlayer] Selection strategy based on A/B learning:', selectionStrategy);
+
+    // Execute selection strategy
     for (let i = 0; i < count && selected.length < count; i++) {
-      let found = false;
+      const pool = pools[selectionStrategy[i] as keyof typeof pools] || pools.all;
       
-      // Try to pick from different buckets for maximum variety
-      for (let attempt = 0; attempt < bucketNames.length && !found; attempt++) {
-        const currentBucket = buckets[bucketNames[bucketIndex]];
-        bucketIndex = (bucketIndex + 1) % bucketNames.length;
+      // Find best movie from this pool that maximizes diversity
+      let bestCandidate = null;
+      let bestDiversityScore = -1;
+      
+      for (const candidate of pool) {
+        if (selected.includes(candidate.item)) continue;
         
-        // Find a movie from this bucket that doesn't share words with selected
-        for (const candidate of currentBucket) {
-          if (selected.includes(candidate.item)) continue;
-          
-          const titleWords = candidate.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-          const hasWordOverlap = titleWords.some(word => usedTitleWords.has(word));
-          const hasGenreOverlap = candidate.item.genres?.some(g => usedGenres.has(g)) || false;
-          
-          if (!hasWordOverlap || selected.length >= 3) { // Allow genre overlap after 3 picks
-            selected.push(candidate.item);
-            titleWords.forEach(word => usedTitleWords.add(word));
-            candidate.item.genres?.forEach(g => usedGenres.add(g));
-            found = true;
-            break;
-          }
+        // Calculate diversity score for this candidate
+        const decade = Math.floor(parseInt(candidate.item.year) / 10) * 10;
+        const titleWords = candidate.item.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        const candidateGenres = candidate.item.genres || [];
+        const candidateSources = candidate.item.sources || [];
+        
+        let diversityScore = 0;
+        
+        // Bonus for unused decade
+        if (!usedDecades.has(decade.toString())) diversityScore += 2.0;
+        
+        // Bonus for unused genres
+        const unusedGenres = candidateGenres.filter(g => !usedGenres.has(g));
+        diversityScore += unusedGenres.length * 0.5;
+        
+        // Bonus for unused title words
+        const unusedWords = titleWords.filter(w => !usedTitleWords.has(w));
+        diversityScore += unusedWords.length * 0.3;
+        
+        // Bonus for unused sources
+        const unusedSources = candidateSources.filter(s => !usedSources.has(s));
+        diversityScore += unusedSources.length * 0.4;
+        
+        // Factor in the original A/B score
+        diversityScore += candidate.finalScore * 0.3;
+        
+        if (diversityScore > bestDiversityScore) {
+          bestDiversityScore = diversityScore;
+          bestCandidate = candidate;
         }
       }
       
-      // If no bucket worked, pick randomly from remaining high-scoring items
-      if (!found && scored.length > selected.length) {
-        const remaining = scored.filter(s => !selected.includes(s.item));
-        if (remaining.length > 0) {
-          const randomPick = remaining[Math.floor(Math.random() * Math.min(10, remaining.length))];
-          selected.push(randomPick.item);
-        }
+      if (bestCandidate) {
+        selected.push(bestCandidate.item);
+        
+        // Update used sets to maintain diversity
+        const decade = Math.floor(parseInt(bestCandidate.item.year) / 10) * 10;
+        usedDecades.add(decade.toString());
+        
+        bestCandidate.item.genres?.forEach(g => usedGenres.add(g));
+        bestCandidate.item.sources?.forEach(s => usedSources.add(s));
+        
+        const titleWords = bestCandidate.item.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        titleWords.forEach(w => usedTitleWords.add(w));
+        
+        console.log(`[TrailerPlayer] Selected ${i+1}: "${bestCandidate.item.title}" (${bestCandidate.item.year}) from ${bestCandidate.item.sources} - diversity score: ${bestDiversityScore.toFixed(2)}`);
       }
     }
 
-    console.log('[TrailerPlayer] Final picks (MAXIMUM VARIETY):', selected.map(item => item.title));
+    console.log('[TrailerPlayer] Final A/B-driven selection:', selected.map(item => ({
+      title: item.title,
+      year: item.year,
+      sources: item.sources,
+      genres: item.genres
+    })));
 
     return selected;
-  }, [items, learnedVec, recentChosenIds, avoidIds, count]);
+  }, [items, learnedVec, recentChosenIds, avoidIds, count, abAnalysis]);
 
   // Fetch trailer embeds when picks change
   useEffect(() => {
@@ -304,7 +304,7 @@ export default function TrailerPlayer({
     let mounted = true;
 
     (async () => {
-      console.log('[TrailerPlayer] Fetching trailers for picks:', picks.length);
+      console.log('[TrailerPlayer] Fetching trailers for A/B-driven picks:', picks.length);
       const ids = picks.map(p => p.id);
       const embedMap = await fetchTrailerEmbeds(ids);
 
@@ -362,12 +362,12 @@ export default function TrailerPlayer({
     return (
       <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h2 className="text-lg sm:text-xl font-semibold">Your Trailer Reel</h2>
+          <h2 className="text-lg sm:text-xl font-semibold">Your Personalized Trailer Reel</h2>
           <div className="text-xs sm:text-sm opacity-60">0 / 0</div>
         </div>
         <div className="text-center py-12">
-          <div className="text-lg mb-2">Building your personalized trailer queue...</div>
-          <div className="text-sm opacity-60">Please wait while we find trailers that match your taste</div>
+          <div className="text-lg mb-2">Building your A/B-personalized trailer queue...</div>
+          <div className="text-sm opacity-60">Finding trailers that match your choices from the A/B testing</div>
         </div>
       </div>
     );
@@ -377,18 +377,18 @@ export default function TrailerPlayer({
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="flex flex-col mb-4 sm:mb-6">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg sm:text-xl font-semibold">Your Trailer Reel</h2>
+          <h2 className="text-lg sm:text-xl font-semibold">Your Personalized Trailer Reel</h2>
           <div className="text-xs sm:text-sm opacity-60">{idx + 1} / {queue.length}</div>
         </div>
         <div className="text-xs sm:text-sm opacity-70 italic">
-          {dynamicExplanation}
+          {abAnalysis.explanation}
         </div>
       </div>
 
       {current && (
         <div className="mb-4 sm:mb-6">
           <div className="text-base sm:text-lg font-medium mb-3 sm:mb-4 text-center sm:text-left">
-            {current.title}
+            {current.title} ({current.year})
           </div>
           <div className="aspect-video w-full rounded-lg sm:rounded-xl overflow-hidden bg-black shadow-lg">
             {embed ? (

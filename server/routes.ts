@@ -16,7 +16,7 @@ if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY.");
 const SOURCES = {
   rt2020: "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
   imdbTop: "https://www.imdb.com/chart/top/",
-  imdbList: "https://www.imdb.com/list/ls545836395/",
+  imdbList: "https://www.imdb.com/list/ls055422143/", // Updated URL
 };
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -236,7 +236,7 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
   const out: RawTitle[] = [];
   let page = 1;
   while (true) {
-    const pageUrl = url.endsWith("/") ? `${url}?page=${page}` : `${url}/?page=${page}`;
+    const pageUrl = url.endsWith("/") ? `${url}page=${page}` : `${url}/?page=${page}`;
     const html = await httpText(pageUrl);
     const $ = cheerio.load(html);
     const before = out.length;
@@ -282,89 +282,9 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
     if (after === before || !hasNext || out.length >= hardLimit) break;
     page++;
   }
-  
+
   console.log(`[SCRAPE IMDB LIST] Found ${out.length} titles from IMDb List`);
   return dedupeRaw(out);
-}
-
-/* -------------------- TMDb resolution (raw query, strict check) -------------------- */
-
-async function searchStrict(rawTitle: string, normalized: string, year?: number): Promise<TMDbMovie | null> {
-  // First try: exact search with year
-  let params: any = { query: rawTitle, include_adult: "false", language: "en-US" };
-  if (year) params.year = year;
-  let s = await tmdb("/search/movie", params);
-  let cands: TMDbMovie[] = (s.results || []).filter((x: any) => x && !x.adult);
-
-  // Try exact match first
-  let exact = cands.find((c) => {
-    const t1 = norm(c.title || "");
-    const t2 = norm(c.original_title || "");
-    const yr = (c.release_date || "").slice(0, 4);
-    const yearOk = year ? String(year) === yr : true;
-    return yearOk && (t1 === normalized || t2 === normalized);
-  });
-  if (exact) return exact;
-
-  // Second try: search without year constraint to capture more movies
-  if (year && cands.length === 0) {
-    params = { query: rawTitle, include_adult: "false", language: "en-US" };
-    s = await tmdb("/search/movie", params);
-    cands = (s.results || []).filter((x: any) => x && !x.adult);
-  }
-
-  // Try year-based matching (more flexible)
-  if (year && cands.length > 0) {
-    const yearRange = [year - 1, year, year + 1]; // Allow 1 year variance
-    const sameYear = cands
-      .filter((c) => {
-        const yr = parseInt((c.release_date || "").slice(0, 4));
-        return yearRange.includes(yr);
-      })
-      .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
-    if (sameYear) return sameYear;
-  }
-
-  // Try partial title matching (more permissive)
-  const partialMatch = cands
-    .filter((c) => {
-      const t = norm(c.title || c.original_title || "");
-      const minLength = Math.max(3, Math.floor(normalized.length * 0.6)); // Reduced from 0.85 to 0.6
-      return t.includes(normalized.slice(0, minLength)) || normalized.includes(t.slice(0, minLength));
-    })
-    .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
-  if (partialMatch) return partialMatch;
-
-  // Last resort: try alternative search with cleaned title
-  const cleanTitle = rawTitle.replace(/[^\w\s]/g, '').trim();
-  if (cleanTitle !== rawTitle && cleanTitle.length > 2) {
-    params = { query: cleanTitle, include_adult: "false", language: "en-US" };
-    s = await tmdb("/search/movie", params);
-    cands = (s.results || []).filter((x: any) => x && !x.adult);
-    
-    if (cands.length > 0) {
-      return cands.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
-    }
-  }
-
-  // Final fallback: return the most popular result if we have any
-  if (cands.length > 0) {
-    console.log(`[FALLBACK] Using best guess for "${rawTitle}": ${cands[0].title}`);
-    return cands.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
-  }
-
-  return null;
-}
-
-async function pLimit<T>(n: number, tasks: (() => Promise<T>)[]) {
-  const out: T[] = []; let i = 0;
-  const workers = new Array(n).fill(0).map(async () => {
-    while (i < tasks.length) {
-      const idx = i++; out[idx] = await tasks[idx]();
-    }
-  });
-  await Promise.all(workers);
-  return out;
 }
 
 /* -------------------- Build ALL titles -------------------- */
@@ -373,11 +293,11 @@ const cache = { catalogue: [] as Item[], ts: 0, stats: {} as any, misses: [] as 
 
 async function buildAll(): Promise<Item[]> {
   console.log("[BUILD ALL] Starting comprehensive scrape from all 3 sources...");
-  
+
   const [rt, top, list] = await Promise.all([
     scrapeRT2020(SOURCES.rt2020),
     scrapeImdbTop(SOURCES.imdbTop),
-    scrapeImdbList(SOURCES.imdbList),
+    scrapeImdbList(SOURCES.imdbList), // Using the updated URL
   ]);
   const union = dedupeRaw([...rt, ...top, ...list]);
 
@@ -411,12 +331,12 @@ async function buildAll(): Promise<Item[]> {
   for (const r of res) { if (r.item) items.push(r.item); else if (r.miss) misses.push(r.miss); }
 
   console.log(`[RESOLVE] Found ${items.length} movies, ${misses.length} missed`);
-  
+
   // Log missed titles for debugging
   if (misses.length > 0) {
     console.log(`[MISSED TITLES] Examples:`, misses.slice(0, 10).map(m => `"${m.title}" (${m.year || 'no year'})`));
   }
-  
+
   // Additional recovery attempt for missed titles with relaxed search
   if (misses.length > 20) {
     console.log(`[RECOVERY] Attempting to recover ${misses.length} missed titles with relaxed search...`);
@@ -427,7 +347,7 @@ async function buildAll(): Promise<Item[]> {
         const params = { query: shortTitle, include_adult: "false", language: "en-US" };
         const s = await tmdb("/search/movie", params);
         const cands: TMDbMovie[] = (s.results || []).filter((x: any) => x && !x.adult);
-        
+
         if (cands.length > 0) {
           const best = cands[0]; // Just take the first result
           if (seen.has(best.id)) return null;
@@ -438,7 +358,7 @@ async function buildAll(): Promise<Item[]> {
         return null;
       } catch { return null; }
     });
-    
+
     const recovered = await pLimit(CONCURRENCY, recoveryTasks);
     const recoveredItems = recovered.filter(Boolean) as Item[];
     items.push(...recoveredItems);
@@ -447,7 +367,7 @@ async function buildAll(): Promise<Item[]> {
 
   // Store external URLs during scraping for trailer resolution
   const extUrls = new Map<number, {rtUrl?: string; imdbUrl?: string}>();
-  
+
   items.forEach(item => {
     if (item.ext) {
       extUrls.set(item.id, item.ext);
@@ -474,7 +394,7 @@ async function buildAll(): Promise<Item[]> {
     withPosters: items.filter(i => i.posterUrl).length,
   };
   cache.misses = misses;
-  
+
   console.log(`[COMPLETE] Final catalogue: ${items.length} movies with ${items.filter(i => i.posterUrl).length} posters`);
   return items;
 }
@@ -545,7 +465,7 @@ api.get("/catalogue/stats", (_req, res) => {
     imdbList: cache.catalogue.filter(item => item.sources.includes("imdbList")).length,
     total: cache.catalogue.length
   };
-  
+
   res.json({ 
     ok: true, 
     stats: cache.stats,
@@ -569,7 +489,7 @@ api.get("/catalogue/verify", (_req, res) => {
       error: "Catalogue not built yet. Call /api/catalogue first.",
     });
   }
-  
+
   const verification = {
     totalMovies: cache.catalogue.length,
     sourceMovies: {
@@ -588,7 +508,7 @@ api.get("/catalogue/verify", (_req, res) => {
       "https://www.imdb.com/list/ls545836395/"
     ]
   };
-  
+
   res.json({
     ok: true,
     verification,
@@ -596,7 +516,7 @@ api.get("/catalogue/verify", (_req, res) => {
   });
 });
 
-// Single
+// Single trailer
 api.get("/trailer", async (req: Request, res: Response) => {
   try {
     const id = Number(req.query.id);
@@ -777,7 +697,7 @@ async function bestYouTubeEmbedFor(movieId: number): Promise<string | null> {
   return embed;
 }
 
-// Batch (accepts plain "1,2,3" OR encoded "1%2C2%2C3")
+// Batch trailers
 api.get("/trailers", async (req: Request, res: Response) => {
   try {
     let raw = String(req.query.ids ?? "");
@@ -820,14 +740,15 @@ function scoreVideos(vids: any[]) {
     .sort((a, b) => b.__score - a.__score);
 }
 
+// Health check
 api.get("/health", (_req, res) => {
   const stats = cache.stats || {};
   const enforcementWarnings = [];
-  
+
   if (cache.catalogue.length < 800) {
     enforcementWarnings.push(`Total catalogue only ${cache.catalogue.length} movies - expected 800+ from all 3 sources`);
   }
-  
+
   if (stats.counts) {
     if (stats.counts.imdbTop < 200) {
       enforcementWarnings.push(`IMDb Top 250 only ${stats.counts.imdbTop} titles - expected ~250`);
@@ -839,7 +760,7 @@ api.get("/health", (_req, res) => {
       enforcementWarnings.push(`IMDb List only ${stats.counts.imdbList} titles - expected 300+`);
     }
   }
-  
+
   res.json({
     ok: true,
     cacheItems: cache.catalogue.length,
