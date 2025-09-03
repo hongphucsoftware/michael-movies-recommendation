@@ -16,7 +16,7 @@ if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY.");
 const SOURCES = {
   rt2020: "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
   imdbTop: "https://www.imdb.com/chart/top/",
-  imdbList: "https://www.imdb.com/list/ls055422143/", // Updated URL
+  imdbList: "https://www.imdb.com/list/ls055422143", // Fixed URL format - remove trailing slash
 };
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -236,8 +236,26 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
   const out: RawTitle[] = [];
   let page = 1;
   while (true) {
-    const pageUrl = url.endsWith("/") ? `${url}page=${page}` : `${url}/?page=${page}`;
-    const html = await httpText(pageUrl);
+    const pageUrl = url.includes("?") ? `${url}&page=${page}` : `${url}?page=${page}`;
+    
+    let html: string;
+    try {
+      html = await httpText(pageUrl);
+    } catch (error) {
+      console.warn(`[SCRAPE IMDB LIST] Failed to fetch page ${page}: ${error}`);
+      if (page === 1) {
+        // Try without page parameter for first page
+        try {
+          html = await httpText(url);
+        } catch (retryError) {
+          console.error(`[SCRAPE IMDB LIST] Failed to fetch base URL: ${retryError}`);
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    
     const $ = cheerio.load(html);
     const before = out.length;
 
@@ -258,6 +276,23 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
       if (title) out.push({ title, year, src: "imdbList" });
     });
 
+    // Additional modern selectors for IMDb lists
+    $("li.titleColumn").each((_i, el) => {
+      const a = $(el).find("a").first();
+      const title = a.text().trim();
+      const year = parseYear($(el).find("span.secondaryInfo").text());
+      if (title) out.push({ title, year, src: "imdbList" });
+    });
+
+    // Try broader selectors as fallback
+    $("h3.ipc-title a").each((_i, el) => {
+      const title = $(el).text().trim();
+      const parentItem = $(el).closest("li, div.lister-item");
+      const yearText = parentItem.find("span[class*='year'], span.lister-item-year, span.sc-").text();
+      const year = parseYear(yearText);
+      if (title && title.length > 2) out.push({ title, year, src: "imdbList" });
+    });
+
     // JSON-LD fallback if present
     $("script[type='application/ld+json']").each((_i, el) => {
       try {
@@ -276,11 +311,21 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
     });
 
     const after = out.length;
+    console.log(`[SCRAPE IMDB LIST] Page ${page}: found ${after - before} new titles (total: ${after})`);
+    
     const hasNext =
       $("a.lister-page-next.next-page").length > 0 ||
-      /page=\d+/.test($("a:contains('Next')").attr("href") || "");
-    if (after === before || !hasNext || out.length >= hardLimit) break;
+      /page=\d+/.test($("a:contains('Next')").attr("href") || "") ||
+      $("a[class*='next']").length > 0;
+    
+    if (after === before || !hasNext || out.length >= hardLimit) {
+      console.log(`[SCRAPE IMDB LIST] Stopping: noNewItems=${after === before}, noNext=${!hasNext}, hitLimit=${out.length >= hardLimit}`);
+      break;
+    }
     page++;
+    
+    // Add delay between pages to be respectful
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 
   console.log(`[SCRAPE IMDB LIST] Found ${out.length} titles from IMDb List`);
@@ -294,11 +339,22 @@ const cache = { catalogue: [] as Item[], ts: 0, stats: {} as any, misses: [] as 
 async function buildAll(): Promise<Item[]> {
   console.log("[BUILD ALL] Starting comprehensive scrape from all 3 sources...");
 
-  const [rt, top, list] = await Promise.all([
+  // Use Promise.allSettled to handle individual source failures gracefully
+  const results = await Promise.allSettled([
     scrapeRT2020(SOURCES.rt2020),
     scrapeImdbTop(SOURCES.imdbTop),
-    scrapeImdbList(SOURCES.imdbList), // Using the updated URL
+    scrapeImdbList(SOURCES.imdbList),
   ]);
+
+  const rt = results[0].status === 'fulfilled' ? results[0].value : [];
+  const top = results[1].status === 'fulfilled' ? results[1].value : [];
+  const list = results[2].status === 'fulfilled' ? results[2].value : [];
+
+  // Log any failed sources
+  if (results[0].status === 'rejected') console.warn('[SCRAPE] RT 2020 failed:', results[0].reason?.message);
+  if (results[1].status === 'rejected') console.warn('[SCRAPE] IMDb Top failed:', results[1].reason?.message);
+  if (results[2].status === 'rejected') console.warn('[SCRAPE] IMDb List failed:', results[2].reason?.message);
+
   const union = dedupeRaw([...rt, ...top, ...list]);
 
   console.log(`[SCRAPE TOTALS] RT:${rt.length}, IMDb Top:${top.length}, IMDb List:${list.length}, Union:${union.length}`);
