@@ -16,7 +16,12 @@ if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY.");
 const SOURCES = {
   rt2020: "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
   imdbTop: "https://www.imdb.com/chart/top/",
-  imdbList: "https://www.imdb.com/list/ls055422143", // Fixed URL format - remove trailing slash
+  imdbList: "https://www.imdb.com/list/ls565399909/", // Added list 1
+  imdbList2: "https://www.imdb.com/list/ls064708279/", // Added list 2
+  imdbList3: "https://www.imdb.com/list/ls057670103/", // Added list 3
+  imdbThrillers: "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc", // Added Thriller list
+  imdbList4: "https://www.imdb.com/list/ls005762897/", // Added list 4
+  imdbList5: "https://www.imdb.com/list/ls545836395/", // Original list 3
 };
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -115,7 +120,7 @@ async function tmdb(path: string, params: Record<string, any> = {}) {
 async function searchStrict(title: string, normTitle: string, year?: number): Promise<TMDbMovie | null> {
   const params = { query: title, include_adult: "false", language: "en-US" };
   if (year) params.year = String(year);
-  
+
   const s = await tmdb("/search/movie", params);
   const cands: TMDbMovie[] = (s.results || []).filter((x: any) => x && !x.adult);
 
@@ -293,7 +298,7 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
   let page = 1;
   while (true) {
     const pageUrl = url.includes("?") ? `${url}&page=${page}` : `${url}?page=${page}`;
-    
+
     let html: string;
     try {
       html = await httpText(pageUrl);
@@ -311,7 +316,7 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
         break;
       }
     }
-    
+
     const $ = cheerio.load(html);
     const before = out.length;
 
@@ -368,18 +373,18 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
 
     const after = out.length;
     console.log(`[SCRAPE IMDB LIST] Page ${page}: found ${after - before} new titles (total: ${after})`);
-    
+
     const hasNext =
       $("a.lister-page-next.next-page").length > 0 ||
       /page=\d+/.test($("a:contains('Next')").attr("href") || "") ||
       $("a[class*='next']").length > 0;
-    
+
     if (after === before || !hasNext || out.length >= hardLimit) {
       console.log(`[SCRAPE IMDB LIST] Stopping: noNewItems=${after === before}, noNext=${!hasNext}, hitLimit=${out.length >= hardLimit}`);
       break;
     }
     page++;
-    
+
     // Add delay between pages to be respectful
     await new Promise(resolve => setTimeout(resolve, 500));
   }
@@ -388,39 +393,104 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
   return dedupeRaw(out);
 }
 
+// IMDb search results page (e.g., for genres)
+async function scrapeImdbSearchResults(url: string, hardLimit = 1000): Promise<RawTitle[]> {
+  const out: RawTitle[] = [];
+  let page = 1;
+  while (true) {
+    const pageUrl = url.includes("?") ? `${url}&page=${page}` : `${url}?page=${page}`;
+
+    let html: string;
+    try {
+      html = await httpText(pageUrl);
+    } catch (error) {
+      console.warn(`[SCRAPE IMDB SEARCH] Failed to fetch page ${page}: ${error}`);
+      if (page === 1) {
+        try {
+          html = await httpText(url);
+        } catch (retryError) {
+          console.error(`[SCRAPE IMDB SEARCH] Failed to fetch base URL: ${retryError}`);
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    const $ = cheerio.load(html);
+    const before = out.length;
+
+    // Selectors for search results page
+    $(".lister-item.mode-advanced").each((_i, el) => {
+      const titleEl = $(el).find("h3.lister-item-header a").first();
+      const title = titleEl.text().trim();
+      const year = parseYear($(el).find("span.lister-item-year").first().text().trim());
+      if (title) out.push({ title, year, src: "imdbSearch" });
+    });
+
+    // Fallback selectors for potential changes in IMDb layout
+    $("div.lister-item.mode-detail").each((_i, el) => {
+      const titleEl = $(el).find("h3 a").first();
+      const title = titleEl.text().trim();
+      const year = parseYear($(el).find("span.lister-item-year").text());
+      if (title) out.push({ title, year, src: "imdbSearch" });
+    });
+
+    // More general selectors
+    $("div[class*='lister-item']").each((_i, el) => {
+      const titleEl = $(el).find("h3 a, .ipc-title a").first();
+      const title = titleEl.text().trim();
+      const yearText = $(el).find("span[class*='year'], span.lister-item-year").text();
+      const year = parseYear(yearText);
+      if (title && title.length > 2) out.push({ title, year, src: "imdbSearch" });
+    });
+
+    const after = out.length;
+    console.log(`[SCRAPE IMDB SEARCH] Page ${page}: found ${after - before} new titles (total: ${after})`);
+
+    // Check for a "Next" button or page indicator
+    const hasNext = $("a.next-page").length > 0 || $("a[href*='page=']").filter((i, el) => $(el).text().trim() === String(page + 1)).length > 0;
+
+    if (after === before || !hasNext || out.length >= hardLimit) {
+      console.log(`[SCRAPE IMDB SEARCH] Stopping: noNewItems=${after === before}, noNext=${!hasNext}, hitLimit=${out.length >= hardLimit}`);
+      break;
+    }
+    page++;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  console.log(`[SCRAPE IMDB SEARCH] Found ${out.length} titles from IMDb Search`);
+  return dedupeRaw(out);
+}
+
+
 /* -------------------- Build ALL titles -------------------- */
 
 const cache = { catalogue: [] as Item[], ts: 0, stats: {} as any, misses: [] as RawTitle[] };
 
 async function buildAll(): Promise<Item[]> {
-  console.log("[BUILD ALL] Starting comprehensive scrape from all 3 sources...");
+  console.log("[BUILD ALL] Starting comprehensive scrape from all sources...");
 
-  // Use Promise.allSettled to handle individual source failures gracefully
-  const results = await Promise.allSettled([
+  // Scrape all sources in parallel
+  const [rt, top, list, list2, list3, list4, thrillers, list5] = await Promise.all([
     scrapeRT2020(SOURCES.rt2020),
     scrapeImdbTop(SOURCES.imdbTop),
-    scrapeImdbList(SOURCES.imdbList),
+    scrapeImdbList(SOURCES.imdbList, 1000),
+    scrapeImdbList(SOURCES.imdbList2, 1000),
+    scrapeImdbList(SOURCES.imdbList3, 1000),
+    scrapeImdbList(SOURCES.imdbList4, 1000),
+    scrapeImdbSearchResults(SOURCES.imdbThrillers, 1000),
+    scrapeImdbList(SOURCES.imdbList5, 1000),
   ]);
 
-  const rt = results[0].status === 'fulfilled' ? results[0].value : [];
-  const top = results[1].status === 'fulfilled' ? results[1].value : [];
-  const list = results[2].status === 'fulfilled' ? results[2].value : [];
-
-  // Log any failed sources
-  if (results[0].status === 'rejected') console.warn('[SCRAPE] RT 2020 failed:', results[0].reason?.message);
-  if (results[1].status === 'rejected') console.warn('[SCRAPE] IMDb Top failed:', results[1].reason?.message);
-  if (results[2].status === 'rejected') console.warn('[SCRAPE] IMDb List failed:', results[2].reason?.message);
-
-  const union = dedupeRaw([...rt, ...top, ...list]);
-
-  console.log(`[SCRAPE TOTALS] RT:${rt.length}, IMDb Top:${top.length}, IMDb List:${list.length}, Union:${union.length}`);
+  const union = dedupeRaw([...rt, ...top, ...list, ...list2, ...list3, ...list4, ...thrillers, ...list5]);
+  console.log(`[SCRAPE TOTALS] RT:${rt.length}, IMDb Top:${top.length}, IMDb List:${list.length}, List2:${list2.length}, List3:${list3.length}, List4:${list4.length}, Thrillers:${thrillers.length}, List5:${list5.length}, Union:${union.length}`);
 
   // Enforcement check - refuse to continue with low counts
   if (top.length < 200) {
     console.warn(`[ENFORCEMENT] IMDb Top 250 only yielded ${top.length} titles - expected ~250. Continuing anyway.`);
   }
   if (union.length < 400) {
-    console.warn(`[ENFORCEMENT] Total scraped only ${union.length} titles - expected 500+. Need to capture MORE from the 3 URLs.`);
+    console.warn(`[ENFORCEMENT] Total scraped only ${union.length} titles - expected 500+. Need to capture MORE from the sources.`);
   }
   if (union.length < 100) {
     throw new Error(`[ENFORCEMENT FAILURE] Only ${union.length} titles scraped - this is too low. Check scraper selectors.`);
@@ -500,7 +570,7 @@ async function buildAll(): Promise<Item[]> {
   });
 
   cache.stats = {
-    counts: { rt2020: rt.length, imdbTop: top.length, imdbList: list.length, totalScraped: union.length },
+    counts: { rt2020: rt.length, imdbTop: top.length, imdbList: list.length, list2: list2.length, list3: list3.length, list4: list4.length, thrillers: thrillers.length, list5: list5.length, totalScraped: union.length },
     resolved: items.length,
     missed: union.length - items.length,
     withPosters: items.filter(i => i.posterUrl).length,
@@ -528,15 +598,15 @@ api.get("/catalogue", async (req: Request, res: Response) => {
       ok: true,
       total: items.length,
       items: items.map((m) => ({ ...m, image: m.posterUrl || m.backdropUrl || null })),
-      sources: ["rt2020", "imdbTop", "imdbList"],
-      policy: "ALL_TITLES_FROM_THREE_URLS",
+      sources: ["rt2020", "imdbTop", "imdbList", "imdbList2", "imdbList3", "imdbList4", "imdbThrillers", "imdbList5"],
+      policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS",
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message ?? String(e) });
   }
 });
 
-// Optional: strict health to catch accidental caps on the client
+// Optional: strict health to confirm all sources are being used
 api.get("/health/full", (_req, res) => {
   res.json({
     ok: true,
@@ -555,7 +625,7 @@ api.post("/catalogue/build", async (_req, res) => {
       total: cache.catalogue.length, 
       rebuiltAt: cache.ts, 
       stats: cache.stats,
-      enforcementWarning: cache.catalogue.length < 50 ? "Collection too small - check scraper selectors" : null,
+      enforcementWarning: cache.catalogue.length < 300 ? "Collection too small - check scraper selectors" : null,
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message ?? String(e) });
@@ -575,6 +645,11 @@ api.get("/catalogue/stats", (_req, res) => {
     rt2020: cache.catalogue.filter(item => item.sources.includes("rt2020")).length,
     imdbTop: cache.catalogue.filter(item => item.sources.includes("imdbTop")).length,
     imdbList: cache.catalogue.filter(item => item.sources.includes("imdbList")).length,
+    imdbList2: cache.catalogue.filter(item => item.sources.includes("imdbList2")).length,
+    imdbList3: cache.catalogue.filter(item => item.sources.includes("imdbList3")).length,
+    imdbList4: cache.catalogue.filter(item => item.sources.includes("imdbList4")).length,
+    imdbThrillers: cache.catalogue.filter(item => item.sources.includes("imdbSearch")).length,
+    imdbList5: cache.catalogue.filter(item => item.sources.includes("imdbList5")).length,
     total: cache.catalogue.length
   };
 
@@ -584,10 +659,15 @@ api.get("/catalogue/stats", (_req, res) => {
     sourceBreakdown,
     misses: cache.misses,
     enforcementWarning: cache.catalogue.length < 300 ? "Collection too small - check scraper selectors" : null,
-    mandate: "MUST_USE_ALL_MOVIES_FROM_ALL_3_SOURCES",
+    mandate: "MUST_USE_ALL_MOVIES_FROM_ALL_SOURCES",
     sources: [
       "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
       "https://www.imdb.com/chart/top/",
+      "https://www.imdb.com/list/ls565399909/",
+      "https://www.imdb.com/list/ls064708279/",
+      "https://www.imdb.com/list/ls057670103/",
+      "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc",
+      "https://www.imdb.com/list/ls005762897/",
       "https://www.imdb.com/list/ls545836395/"
     ]
   });
@@ -608,15 +688,25 @@ api.get("/catalogue/verify", (_req, res) => {
       rt2020: cache.catalogue.filter(item => item.sources.includes("rt2020")).length,
       imdbTop: cache.catalogue.filter(item => item.sources.includes("imdbTop")).length,
       imdbList: cache.catalogue.filter(item => item.sources.includes("imdbList")).length,
+      imdbList2: cache.catalogue.filter(item => item.sources.includes("imdbList2")).length,
+      imdbList3: cache.catalogue.filter(item => item.sources.includes("imdbList3")).length,
+      imdbList4: cache.catalogue.filter(item => item.sources.includes("imdbList4")).length,
+      imdbThrillers: cache.catalogue.filter(item => item.sources.includes("imdbSearch")).length,
+      imdbList5: cache.catalogue.filter(item => item.sources.includes("imdbList5")).length,
     },
     compliance: {
       usingAllSources: true,
-      minimumMet: cache.catalogue.length >= 300,
-      policy: "ALL_TITLES_FROM_THREE_MANDATORY_URLS"
+      minimumMet: cache.catalogue.length >= 800, // Increased minimum for more sources
+      policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS_NO_LIMITS"
     },
     mandatorySources: [
       "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
-      "https://www.imdb.com/chart/top/", 
+      "https://www.imdb.com/chart/top/",
+      "https://www.imdb.com/list/ls565399909/",
+      "https://www.imdb.com/list/ls064708279/",
+      "https://www.imdb.com/list/ls057670103/",
+      "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc",
+      "https://www.imdb.com/list/ls005762897/",
       "https://www.imdb.com/list/ls545836395/"
     ]
   };
@@ -858,7 +948,7 @@ api.get("/health", (_req, res) => {
   const enforcementWarnings = [];
 
   if (cache.catalogue.length < 800) {
-    enforcementWarnings.push(`Total catalogue only ${cache.catalogue.length} movies - expected 800+ from all 3 sources`);
+    enforcementWarnings.push(`Total catalogue only ${cache.catalogue.length} movies - expected 800+ from all 8 sources`);
   }
 
   if (stats.counts) {
@@ -869,7 +959,22 @@ api.get("/health", (_req, res) => {
       enforcementWarnings.push(`RT 2020 only ${stats.counts.rt2020} titles - expected 30+`);
     }
     if (stats.counts.imdbList < 200) {
-      enforcementWarnings.push(`IMDb List only ${stats.counts.imdbList} titles - expected 300+`);
+      enforcementWarnings.push(`IMDb List 1 only ${stats.counts.imdbList} titles - expected 300+`);
+    }
+    if (stats.counts.imdbList2 < 200) {
+      enforcementWarnings.push(`IMDb List 2 only ${stats.counts.imdbList2} titles - expected 300+`);
+    }
+    if (stats.counts.imdbList3 < 200) {
+      enforcementWarnings.push(`IMDb List 3 only ${stats.counts.imdbList3} titles - expected 300+`);
+    }
+    if (stats.counts.imdbList4 < 200) {
+      enforcementWarnings.push(`IMDb List 4 only ${stats.counts.imdbList4} titles - expected 300+`);
+    }
+    if (stats.counts.thrillers < 200) {
+      enforcementWarnings.push(`IMDb Thrillers only ${stats.counts.thrillers} titles - expected 300+`);
+    }
+     if (stats.counts.imdbList5 < 200) {
+      enforcementWarnings.push(`IMDb List 5 only ${stats.counts.imdbList5} titles - expected 300+`);
     }
   }
 
@@ -878,9 +983,9 @@ api.get("/health", (_req, res) => {
     cacheItems: cache.catalogue.length,
     cacheAgeMs: Date.now() - cache.ts,
     stats: cache.stats,
-    sources: ["rt2020", "imdbTop", "imdbList"],
+    sources: ["rt2020", "imdbTop", "imdbList", "imdbList2", "imdbList3", "imdbList4", "imdbThrillers", "imdbList5"],
     enforcementWarnings: enforcementWarnings.length > 0 ? enforcementWarnings : null,
-    policy: "ALL_TITLES_FROM_THREE_URLS - NO_CAPS_NO_LIMITS",
+    policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS_NO_LIMITS",
   });
 });
 
