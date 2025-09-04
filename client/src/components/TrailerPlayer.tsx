@@ -131,7 +131,7 @@ export default function TrailerPlayer({
     return { preferences, strength, explanation, vectorMagnitude };
   }, [learnedVec]);
 
-  // Properly A/B-driven movie selection using learned preferences
+  // A/B-driven movie selection using direct genre preference matching
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
@@ -156,44 +156,100 @@ export default function TrailerPlayer({
       fantasy: learnedVec[5]?.toFixed(2)
     });
 
-    // Score each movie using the learned preference vector directly
-    const scored = available.map((item, index) => {
-      const features = item.feature || toFeatureVector(item);
+    // Map TMDb genre IDs to our A/B test indices
+    const genreToIndex: Record<number, number> = {
+      35: 0,   // Comedy
+      18: 1,   // Drama  
+      28: 2,   // Action
+      53: 3,   // Thriller
+      878: 4,  // Sci-Fi
+      14: 5,   // Fantasy
+      12: 2,   // Adventure -> Action
+      80: 3,   // Crime -> Thriller
+      27: 3,   // Horror -> Thriller
+      10749: 1, // Romance -> Drama
+      16: 0,   // Animation -> Comedy
+      9648: 3, // Mystery -> Thriller
+      36: 1,   // History -> Drama
+      10752: 2, // War -> Action
+      37: 2    // Western -> Action
+    };
+
+    // Score movies based on A/B learned preferences
+    const scored = available.map((item) => {
+      let abScore = 0;
+      let genreMatches = 0;
+
+      // Calculate direct A/B preference score
+      if (item.genres && item.genres.length > 0) {
+        for (const genreId of item.genres) {
+          const prefIndex = genreToIndex[genreId];
+          if (prefIndex !== undefined && learnedVec[prefIndex] !== undefined) {
+            abScore += learnedVec[prefIndex] * 0.8; // Weight each genre match
+            genreMatches++;
+          }
+        }
+        // Average the score by number of matching genres
+        if (genreMatches > 0) {
+          abScore = abScore / genreMatches;
+        }
+      }
+
+      // Add diversity factors
+      const yearFactor = Math.abs(parseInt(item.year) - 2000) / 50; // Prefer variety in eras
+      const sourceBonus = item.sources?.includes('imdbTop') ? 0.3 : 0.1; // Quality bonus
+      const diversityBonus = Math.random() * 0.2; // Small randomization
       
-      // This is the key fix: use cosine similarity with learned vector
-      const preferenceScore = cosine(features, learnedVec);
-      
-      // Add small diversity factors
-      const yearSpread = Math.abs(parseInt(item.year) - 2000) / 50; // 0-0.5 range
-      const genreCount = (item.genres?.length || 1) / 5; // Multi-genre bonus
-      const sourceBonus = item.sources?.includes('imdbTop') ? 0.1 : 0.05;
-      const randomJitter = (Math.random() - 0.5) * 0.1; // Small random element
-      
-      const finalScore = preferenceScore + yearSpread + genreCount + sourceBonus + randomJitter;
+      const finalScore = abScore + yearFactor + sourceBonus + diversityBonus;
 
       return {
         item,
-        preferenceScore,
+        abScore,
         finalScore,
-        title: item.title,
-        explanation: `Score: ${preferenceScore.toFixed(3)} (${preferenceScore > 0.5 ? 'good match' : preferenceScore > 0.3 ? 'okay match' : 'poor match'} based on A/B choices)`
+        genreMatches,
+        title: item.title
       };
     });
 
-    // Sort by preference alignment
-    scored.sort((a, b) => b.finalScore - a.finalScore);
+    // Sort by A/B alignment first, then final score
+    scored.sort((a, b) => {
+      if (Math.abs(a.abScore - b.abScore) > 0.2) {
+        return b.abScore - a.abScore; // Prioritize A/B alignment
+      }
+      return b.finalScore - a.finalScore; // Then diversity
+    });
 
-    console.log('[TrailerPlayer] Top A/B preference matches:',
+    console.log('[TrailerPlayer] Top scored movies for A/B preferences:',
       scored.slice(0, 10).map(s => ({
         title: s.title,
-        prefScore: s.preferenceScore.toFixed(3),
+        abScore: s.abScore.toFixed(3),
+        diversity: (s.finalScore - s.abScore).toFixed(3),
         final: s.finalScore.toFixed(3),
         year: s.item.year,
-        genres: s.item.genres?.slice(0, 3)
+        sources: s.item.sources
       }))
     );
 
-    // Genre mapping for descriptions
+    // Get top user genres for selection strategy
+    const topGenres = learnedVec
+      .map((score, index) => ({ 
+        genre: ['comedy', 'drama', 'action', 'thriller', 'scifi', 'fantasy'][index], 
+        score 
+      }))
+      .filter(g => g.score > 0.5) // Only strong preferences
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    console.log('[TrailerPlayer] Top user genres:', topGenres.map(g => `${g.genre}:${g.score.toFixed(2)}`));
+
+    // Select movies with strong A/B correlation plus diversity
+    const selected: Array<{
+      item: typeof scored[0]['item'],
+      genres: string[],
+      explanation: string
+    }> = [];
+
+    // Genre mapping for display
     const genreMap: Record<number, string> = {
       28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime',
       99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History',
@@ -201,62 +257,88 @@ export default function TrailerPlayer({
       10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
     };
 
-    // Select top 6 with enforced diversity
-    const selected: Array<{
-      item: typeof scored[0]['item'],
-      genres: string[],
-      explanation: string
-    }> = [];
-    
-    const usedGenres = new Set<number>();
-    const usedDecades = new Set<string>();
-    
-    for (let i = 0; i < scored.length && selected.length < 6; i++) {
-      const candidate = scored[i];
-      const item = candidate.item;
-      
-      // Check if this adds genre/decade diversity or is a top match
-      const primaryGenre = item.genres?.[0];
-      const decade = Math.floor(parseInt(item.year) / 10) * 10;
-      
-      const isTopMatch = candidate.preferenceScore > 0.4;
-      const addsGenreDiversity = !primaryGenre || !usedGenres.has(primaryGenre);
-      const addsDecadeDiversity = !usedDecades.has(decade);
-      
-      if (selected.length < 3 || isTopMatch || addsGenreDiversity || addsDecadeDiversity) {
-        const itemGenres = item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-        
-        // Generate explanation based on A/B learning
-        let explanation = `Based on your A/B choices: `;
-        if (candidate.preferenceScore > 0.5) {
-          explanation += `strong match (${(candidate.preferenceScore * 100).toFixed(0)}% alignment)`;
-        } else if (candidate.preferenceScore > 0.3) {
-          explanation += `good match (${(candidate.preferenceScore * 100).toFixed(0)}% alignment)`;
-        } else {
-          explanation += `exploration pick (${(candidate.preferenceScore * 100).toFixed(0)}% alignment)`;
-        }
-        
-        // Add preference reasoning
-        const topPrefs = abAnalysis.preferences.slice(0, 2).map(p => p.label);
-        if (topPrefs.length > 0) {
-          explanation += ` - you showed preference for ${topPrefs.join(' and ')}.`;
-        }
+    // Strategy: Focus on top user preference first, then diversify
+    if (topGenres.length > 0) {
+      const topGenre = topGenres[0].genre;
+      const genreId = Object.keys(genreToIndex).find(id => {
+        const index = genreToIndex[parseInt(id)];
+        return ['comedy', 'drama', 'action', 'thriller', 'scifi', 'fantasy'][index] === topGenre;
+      });
 
-        selected.push({
-          item,
-          genres: itemGenres,
-          explanation
-        });
+      if (genreId) {
+        const topGenreMovies = scored.filter(s => 
+          s.item.genres?.includes(parseInt(genreId)) && s.abScore > 0.3
+        );
         
-        if (primaryGenre) usedGenres.add(primaryGenre);
-        usedDecades.add(decade);
+        console.log(`[TrailerPlayer] Found ${topGenreMovies.length} movies in top genre (${topGenre})`);
         
-        console.log(`[TrailerPlayer] Selected ${selected.length}: "${item.title}" (${item.year}) [${itemGenres.slice(0, 2).join('/')}] - preference score: ${candidate.preferenceScore.toFixed(3)}`);
+        // Add movies with increasing diversity scores
+        let diversityThreshold = 0.5;
+        const usedDecades = new Set<string>();
+        
+        for (const candidate of scored) {
+          if (selected.length >= 6) break;
+          
+          const item = candidate.item;
+          const decade = Math.floor(parseInt(item.year) / 10) * 10;
+          const itemGenres = item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unknown'];
+          
+          // Calculate diversity score based on selected items
+          const diversityScore = selected.length * 0.5 + 
+                               (usedDecades.has(decade.toString()) ? 0 : 1.0) +
+                               (candidate.abScore > 0.5 ? 1.5 : 0);
+          
+          if (candidate.abScore > 0.2 || diversityScore > diversityThreshold) {
+            usedDecades.add(decade.toString());
+            
+            let explanation = `Based on your A/B testing: `;
+            if (candidate.abScore > 0.8) {
+              explanation += `perfect match for your taste`;
+            } else if (candidate.abScore > 0.5) {
+              explanation += `strong alignment with your preferences`;
+            } else if (candidate.abScore > 0.2) {
+              explanation += `good fit based on your choices`;
+            } else {
+              explanation += `interesting exploration pick`;
+            }
+            
+            selected.push({
+              item,
+              genres: itemGenres,
+              explanation
+            });
+            
+            console.log(`[TrailerPlayer] Selected ${selected.length}: "${item.title}" (${item.year}) [${itemGenres.slice(0, 3).join('/')}] from ${item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
+            
+            diversityThreshold += 0.2; // Increase diversity requirement
+          }
+        }
       }
     }
 
+    // Fallback: just take top scored items if strategy above failed
+    if (selected.length === 0) {
+      for (let i = 0; i < Math.min(6, scored.length); i++) {
+        const candidate = scored[i];
+        const itemGenres = candidate.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unknown'];
+        
+        selected.push({
+          item: candidate.item,
+          genres: itemGenres,
+          explanation: `Selected based on A/B preference score: ${candidate.abScore.toFixed(2)}`
+        });
+      }
+    }
+
+    console.log('[TrailerPlayer] Final A/B-driven selection:', selected.map(s => ({
+      title: s.item.title,
+      genres: s.genres,
+      sources: s.item.sources,
+      year: s.item.year
+    })));
+
     return selected;
-  }, [items, learnedVec, recentChosenIds, avoidIds, abAnalysis]);
+  }, [items, learnedVec, recentChosenIds, avoidIds]);
 
   // Fetch trailer embeds when picks change
   useEffect(() => {
