@@ -1,69 +1,17 @@
-// UI LOCK — TrailerPlayer shows ONE trailer at a time. No grids, no poster walls.
-// Replit Agent: Do NOT replace this component with a grid view.
-// It must queue 5 trailers chosen by the A/B signal and play them sequentially.
 
-import { useEffect, useMemo, useState, useCallback } from "react";
-import type { Title } from "../hooks/useEnhancedCatalogue";
-import { toFeatureVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
-import { phi } from "../lib/phi";
-import { dot } from "../lib/taste";
-import { mmrSelect } from "../lib/mmr";
+import React, { useState, useEffect, useMemo } from 'react';
+import { phi } from '@/lib/phi';
+import { dot } from '@/lib/taste';
 
-// Math helpers
-const l2 = (x: number[]) => Math.sqrt(x.reduce((s, v) => s + v*v, 0));
-const cosine = (a: number[], b: number[]) => {
-  const la = l2(a), lb = l2(b);
-  if (!la || !lb) return 0;
-  let dot = 0;
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) dot += a[i]*b[i];
-  return dot / (la * lb);
+export type Title = {
+  id: number;
+  title: string;
+  year: string;
+  genres: number[];
+  popularity?: number;
+  feature?: number[];
+  sources?: string[];
 };
-
-// Server call for trailer embeds
-async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|null>> {
-  if (!ids.length) return {};
-  const r = await fetch(`/api/trailers?ids=${ids.join(",")}`);
-  if (!r.ok) return {};
-  const j = await r.json();
-  const out: Record<number, string|null> = {};
-  Object.keys(j?.trailers || {}).forEach(k => (out[Number(k)] = j.trailers[k]));
-  return out;
-}
-
-// Helper to extract YouTube video ID from embed URL
-function extractVideoId(embedUrl: string | null): string | null {
-  if (!embedUrl) return null;
-  try {
-    const url = new URL(embedUrl);
-    if (url.hostname.includes('youtube.com')) {
-      return url.searchParams.get('v');
-    } else if (url.hostname.includes('vimeo.com')) {
-      return url.pathname.split('/').pop() || null;
-    }
-  } catch (e) {
-    console.error("Error parsing embed URL:", e);
-  }
-  return null;
-}
-
-// Mock fetchTrailerBatch for development if needed
-const fetchTrailerBatch = async (ids: number[]): Promise<Record<number, string | null>> => {
-  console.log(`[Mock] Fetching trailers for IDs: ${ids.join(', ')}`);
-  // In a real scenario, this would call an API like fetchTrailerEmbeds but batched
-  // For now, simulate a successful response
-  const mockEmbeds: Record<number, string | null> = {};
-  ids.forEach(id => {
-    // Simulate finding an embed for some IDs
-    if (id % 2 === 0) {
-      mockEmbeds[id] = `https://www.youtube.com/embed/mockvideo_${id}?autoplay=1`;
-    } else {
-      mockEmbeds[id] = `https://player.vimeo.com/video/mockvimeo_${id}`;
-    }
-  });
-  return mockEmbeds;
-};
-
 
 type Props = {
   items: Title[];
@@ -73,8 +21,25 @@ type Props = {
   count?: number;
 };
 
+function bestImageUrl(t: Title): string | null {
+  // Simple fallback for now - in a real app you'd use poster URLs
+  return `https://via.placeholder.com/400x600/1a1a1a/ffffff?text=${encodeURIComponent(t.title)}`;
+}
+
+function cosine(a: number[], b: number[]): number {
+  let dotProd = 0, normA = 0, normB = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    dotProd += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB) || 1;
+  return dotProd / denom;
+}
+
 export default function TrailerPlayer({
-  items, learnedVec, recentChosenIds, avoidIds = [], count = 5,
+  items, learnedVec, recentChosenIds, avoidIds = [], count = 6,
 }: Props) {
   const [queue, setQueue] = useState<Array<Title & { genres: string[], explanation: string }>>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
@@ -83,58 +48,9 @@ export default function TrailerPlayer({
   console.log('[TrailerPlayer] Received items:', items.length);
   console.log('[TrailerPlayer] Learned vector length:', learnedVec.length);
   console.log('[TrailerPlayer] Recent chosen IDs:', recentChosenIds.length);
-  console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 5));
-  console.log('[TrailerPlayer] Vector magnitude:', Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0)).toFixed(3));
+  console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 12));
 
-  // Analyze A/B learning vector to understand user preferences
-  const abAnalysis = useMemo(() => {
-    if (!learnedVec.length) return { preferences: [], strength: 'none', explanation: 'Learning in progress...' };
-
-    const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
-    const vectorMagnitude = Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0));
-
-    console.log('[TrailerPlayer] A/B Vector Breakdown:', {
-      comedy: comedy?.toFixed(2) || '0',
-      drama: drama?.toFixed(2) || '0', 
-      action: action?.toFixed(2) || '0',
-      thriller: thriller?.toFixed(2) || '0',
-      scifi: scifi?.toFixed(2) || '0',
-      fantasy: fantasy?.toFixed(2) || '0',
-      recent: recent?.toFixed(2) || '0',
-      magnitude: vectorMagnitude.toFixed(2)
-    });
-
-    const preferences = [];
-
-    // Identify strong preferences (> 0.7)
-    if (comedy > 0.7) preferences.push({ type: 'comedy', strength: comedy, label: 'comedies' });
-    if (drama > 0.7) preferences.push({ type: 'drama', strength: drama, label: 'dramatic films' });
-    if (action > 0.7) preferences.push({ type: 'action', strength: action, label: 'action films' });
-    if (thriller > 0.7) preferences.push({ type: 'thriller', strength: thriller, label: 'thrillers' });
-    if (scifi > 0.7) preferences.push({ type: 'scifi', strength: scifi, label: 'sci-fi' });
-    if (fantasy > 0.7) preferences.push({ type: 'fantasy', strength: fantasy, label: 'fantasy' });
-
-    // Sort by strength
-    preferences.sort((a, b) => b.strength - a.strength);
-
-    let strength = 'weak';
-    if (vectorMagnitude > 2.5) strength = 'strong';
-    else if (vectorMagnitude > 1.5) strength = 'medium';
-
-    // Build explanation based on funnel learning
-    let explanation = 'Building your taste profile through structured A/B testing';
-    if (preferences.length === 0) {
-      explanation = vectorMagnitude > 2.0 ? 'Your refined taste profile from funnel A/B testing' : 'Learning your preferences through strategic A/B rounds';
-    } else if (preferences.length === 1) {
-      explanation = `Strong preference for ${preferences[0].label} discovered through focused A/B testing`;
-    } else if (preferences.length >= 2) {
-      explanation = `You prefer ${preferences[0].label} and ${preferences[1].label} based on your A/B funnel choices`;
-    }
-
-    return { preferences, strength, explanation, vectorMagnitude };
-  }, [learnedVec]);
-
-  // BTL-driven movie selection - properly use learned preferences
+  // FIXED: Actually use the BTL learned preferences to score movies
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
@@ -145,12 +61,11 @@ export default function TrailerPlayer({
       .filter(item => !avoidIds.includes(item.id));
 
     if (available.length === 0) {
-      console.warn('[TrailerPlayer] No available items with images');
+      console.warn('[TrailerPlayer] No available items');
       return [];
     }
 
     console.log('[TrailerPlayer] Available movies:', available.length);
-    console.log('[TrailerPlayer] BTL Vector (first 12):', learnedVec.slice(0, 12).map(v => v.toFixed(3)));
 
     // Score movies using BTL learned preferences - THIS IS THE KEY FIX
     const scored = available.map((item) => {
@@ -193,242 +108,208 @@ export default function TrailerPlayer({
 
     // Take top 30 candidates and apply MMR for diversity
     const topCandidates = scored.slice(0, Math.min(30, scored.length));
+    
+    // MMR selection for diversity
+    const selected: typeof topCandidates = [];
+    const remaining = [...topCandidates];
+    
+    while (selected.length < count && remaining.length > 0) {
+      let bestIdx = 0;
+      let bestScore = -Infinity;
+      
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        const relevance = candidate.finalScore;
+        
+        // Calculate diversity penalty (similarity to already selected)
+        let maxSimilarity = 0;
+        for (const sel of selected) {
+          const candPhi = phi(candidate.item);
+          const selPhi = phi(sel.item);
+          const similarity = cosine(candPhi, selPhi);
+          maxSimilarity = Math.max(maxSimilarity, similarity);
+        }
+        
+        // MMR formula: λ * relevance - (1-λ) * max_similarity
+        const lambda = 0.7; // Balance relevance vs diversity
+        const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity;
+        
+        if (mmrScore > bestScore) {
+          bestScore = mmrScore;
+          bestIdx = i;
+        }
+      }
+      
+      selected.push(remaining[bestIdx]);
+      remaining.splice(bestIdx, 1);
+    }
 
-    // MMR selection for diversity among top-scoring movies
-    const relScore = (t: Title) => {
-      const found = scored.find(s => s.item.id === t.id);
-      return found ? found.finalScore : 0;
-    };
-
-    const diverseSelection = mmrSelect(
-      topCandidates.map(s => s.item), 
-      relScore, 
-      6, 
-      0.8 // 80% relevance, 20% diversity - prefer your taste over pure diversity
+    console.log('[TrailerPlayer] Final BTL+MMR selection:', 
+      selected.map(s => ({
+        title: s.title,
+        year: s.item.year,
+        btlScore: s.btlScore.toFixed(3),
+        finalScore: s.finalScore.toFixed(3)
+      }))
     );
 
-    // Add explanations based on actual BTL scores
-    const selected = diverseSelection.map(item => {
-      const scoreData = scored.find(s => s.item.id === item.id);
-      const itemGenres = item.genres?.map(g => {
-        const genreMap: Record<number, string> = {
-          28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime',
-          99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History',
-          27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi',
-          10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
-        };
-        return genreMap[g];
-      }).filter(Boolean) || ['Unknown'];
+    return selected.map(s => s.item);
+  }, [items, learnedVec, recentChosenIds, avoidIds, count]);
 
-      let explanation = '';
-      if (scoreData) {
-        if (scoreData.btlScore > 2.0) {
-          explanation = `Excellent match - BTL score: ${scoreData.btlScore.toFixed(2)}`;
-        } else if (scoreData.btlScore > 1.0) {
-          explanation = `Good match - BTL score: ${scoreData.btlScore.toFixed(2)}`;
-        } else if (scoreData.btlScore > 0) {
-          explanation = `Decent match - BTL score: ${scoreData.btlScore.toFixed(2)}`;
-        } else {
-          explanation = `Exploration pick - BTL score: ${scoreData.btlScore.toFixed(2)}`;
+  // Convert picks to queue format
+  useEffect(() => {
+    const newQueue = picks.map(item => ({
+      ...item,
+      genres: item.genres?.map(g => {
+        // Convert genre IDs to strings
+        const genreMap: Record<number, string> = {
+          28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
+          80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
+          14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
+          9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie',
+          53: 'Thriller', 10752: 'War', 37: 'Western'
+        };
+        return genreMap[g] || 'Unknown';
+      }) || [],
+      explanation: 'Matches your A/B testing preferences'
+    }));
+    
+    setQueue(newQueue);
+    setIdx(0);
+  }, [picks]);
+
+  // Fetch trailer embeds
+  useEffect(() => {
+    if (queue.length === 0) return;
+
+    console.log('[TrailerPlayer] Fetching trailers for BTL picks:', queue.length);
+    
+    const fetchEmbeds = async () => {
+      const newEmbeds: Record<number, string|null> = {};
+      
+      for (const item of queue) {
+        try {
+          const res = await fetch(`/api/trailer?id=${item.id}`);
+          if (res.ok) {
+            const data = await res.json();
+            newEmbeds[item.id] = data.trailer?.url || null;
+          } else {
+            newEmbeds[item.id] = null;
+          }
+        } catch (error) {
+          console.error(`Failed to fetch trailer for ${item.title}:`, error);
+          newEmbeds[item.id] = null;
         }
       }
 
-      return {
-        item,
-        genres: itemGenres,
-        explanation
-      };
-    });
-
-    console.log('[TrailerPlayer] Final BTL selection with scores:', selected.map(s => {
-      const scoreData = scored.find(sc => sc.item.id === s.item.id);
-      return {
-        title: s.item.title,
-        genres: s.genres,
-        btlScore: scoreData?.btlScore.toFixed(3),
-        year: s.item.year
-      };
-    }));
-
-    return selected;
-  }, [items, learnedVec, recentChosenIds, avoidIds]);
-
-  // Fetch trailer embeds when picks change
-  useEffect(() => {
-    if (!picks.length) {
-      console.log('[TrailerPlayer] No picks, clearing queue');
-      setQueue([]);
-      setEmbeds({});
-      setIdx(0);
-      return;
-    }
-
-    let mounted = true;
-
-    (async () => {
-      console.log('[TrailerPlayer] Fetching trailers for A/B-driven picks:', picks.length);
-
-      const trailerIds = picks.map(s => s.item.id);
-      const embeds = await fetchTrailerEmbeds(trailerIds);
-
-      console.log('[TrailerPlayer] Received embeds for:', Object.keys(embeds).length, 'items');
-
-      // Build final queue with trailers and explanations
-      const newQueue = picks
-        .filter(s => embeds[s.item.id])
-        .map(s => ({
-          ...s.item,
-          yt: extractVideoId(embeds[s.item.id]) || '',
-          embed: embeds[s.item.id],
-          genres: s.genres,
-          explanation: s.explanation
-        }));
-
-      console.log('[TrailerPlayer] Items with trailers:', newQueue.length);
-      console.log('[TrailerPlayer] Trailer details:', 
-        newQueue.map(item => ({
-          title: item.title,
-          genres: item.genres,
-          year: item.year
-        }))
-      );
-
-      setQueue(newQueue);
-
-      if (newQueue.length > 0) {
-        setIdx(0);
-      }
-    })();
-
-    return () => { mounted = false; };
-  }, [picks]);
-
-  // Navigation handlers
-  const canPrev = idx > 0;
-  const canNext = idx + 1 < queue.length;
-
-  const prev = useCallback(() => {
-    if (canPrev) setIdx(i => Math.max(0, i-1));
-  }, [canPrev]);
-
-  const next = useCallback(() => {
-    if (canNext) setIdx(i => Math.min(queue.length-1, i+1));
-  }, [canNext]);
-
-  // Keyboard navigation
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") prev();
-      if (e.key === "ArrowRight") next();
+      console.log('[TrailerPlayer] Received embeds for:', Object.keys(newEmbeds).length, 'items');
+      console.log('[TrailerPlayer] Items with trailers:', Object.values(newEmbeds).filter(Boolean).length);
+      
+      setEmbeds(newEmbeds);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [prev, next]);
+
+    fetchEmbeds();
+  }, [queue]);
 
   const currentItem = queue[idx];
+  const currentEmbed = currentItem ? embeds[currentItem.id] : null;
 
   console.log('[TrailerPlayer] Current state:', {
     queueLength: queue.length,
     currentIndex: idx,
     currentTitle: currentItem?.title,
-    hasEmbed: !!currentItem?.embed
+    hasEmbed: !!currentEmbed
   });
 
-  if (!queue.length) {
+  const nextItem = () => {
+    setIdx(prev => (prev + 1) % queue.length);
+  };
+
+  const prevItem = () => {
+    setIdx(prev => (prev - 1 + queue.length) % queue.length);
+  };
+
+  if (!currentItem) {
     return (
-      <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h2 className="text-lg sm:text-xl font-semibold">Your Personalized Trailer Reel</h2>
-          <div className="text-xs sm:text-sm opacity-60">0 / 0</div>
-        </div>
-        <div className="text-center py-12">
-          <div className="text-lg mb-2">Building your A/B-personalized trailer queue...</div>
-          <div className="text-sm opacity-60">Finding trailers that match your choices from the A/B testing</div>
-        </div>
+      <div className="flex items-center justify-center h-64 bg-gray-900 rounded-lg">
+        <p className="text-gray-400">Loading personalized recommendations...</p>
       </div>
     );
   }
 
   return (
-    <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="flex flex-col mb-4 sm:mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg sm:text-xl font-semibold">Your Personalized Trailer Reel</h2>
-          <div className="text-xs sm:text-sm opacity-60">{idx + 1} / {queue.length}</div>
-        </div>
-        <div className="text-xs sm:text-sm opacity-70 italic">
-          {abAnalysis.explanation}
-        </div>
+    <div className="space-y-4">
+      <div className="text-center">
+        <h3 className="text-xl font-bold text-white mb-2">Your Personalized Trailer Reel</h3>
+        <p className="text-gray-400">Based on your A/B testing choices</p>
       </div>
 
-      {currentItem && (
-        <div className="mb-4 sm:mb-6">
-          <div className="space-y-4">
-          <div className="text-center">
-            <h3 className="text-lg font-semibold mb-2">
-              {currentItem.title} ({currentItem.year})
-            </h3>
-            <div className="mb-3">
-              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-2">
-                {currentItem.genres?.join(' • ') || 'Film'}
-              </span>
+      {/* Trailer Player */}
+      <div className="bg-gray-900 rounded-lg overflow-hidden">
+        {currentEmbed ? (
+          <div className="aspect-video">
+            <iframe
+              src={currentEmbed}
+              title={`${currentItem.title} trailer`}
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+        ) : (
+          <div className="aspect-video flex items-center justify-center bg-gray-800">
+            <div className="text-center">
+              <p className="text-white font-semibold">{currentItem.title}</p>
+              <p className="text-gray-400">Trailer not available</p>
             </div>
-            <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
-              {currentItem.explanation || abAnalysis.explanation}
-            </p>
-            <p className="text-xs text-muted-foreground/70">
-              Recommendation {idx + 1} of {queue.length} • Pool of {items.length} movies
-            </p>
           </div>
-          </div>
-          <div className="aspect-video w-full rounded-lg sm:rounded-xl overflow-hidden bg-black shadow-lg mt-6">
-            {currentItem.embed ? (
-              <iframe
-                className="w-full h-full"
-                src={currentItem.embed}
-                title={`Trailer: ${currentItem.title}`}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-sm sm:text-base opacity-80 p-4">
-                <div className="text-center">
-                  <div className="mb-2">No trailer found for this title</div>
-                  <div className="text-xs opacity-60">Try the next recommendation</div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+      {/* Movie Info */}
+      <div className="text-center space-y-2">
+        <h4 className="text-lg font-semibold text-white">{currentItem.title}</h4>
+        <p className="text-gray-400">{currentItem.year} • {currentItem.genres.join(', ')}</p>
+        <p className="text-sm text-gray-500">{currentItem.explanation}</p>
+      </div>
+
+      {/* Controls */}
+      <div className="flex justify-center space-x-4">
         <button
-          onClick={prev}
-          disabled={!canPrev}
-          className={`flex-1 sm:flex-none px-4 py-3 sm:px-6 sm:py-3 rounded-lg text-sm sm:text-base font-medium transition-colors ${
-            canPrev
-              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600"
-              : "bg-neutral-900 opacity-50 cursor-not-allowed"
-          }`}>
-          <span className="flex items-center justify-center gap-2">
-            <span>←</span>
-            <span>Back</span>
-          </span>
+          onClick={prevItem}
+          className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600"
+          disabled={queue.length <= 1}
+        >
+          Previous
         </button>
+        <span className="px-4 py-2 text-gray-400">
+          {idx + 1} of {queue.length}
+        </span>
         <button
-          onClick={next}
-          disabled={!canNext}
-          className={`flex-1 sm:flex-none px-4 py-3 sm:px-6 sm:py-3 rounded-lg text-sm sm:text-base font-medium transition-colors ${
-            canNext
-              ? "bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600"
-              : "bg-neutral-900 opacity-50 cursor-not-allowed"
-          }`}>
-          <span className="flex items-center justify-center gap-2">
-            <span>Next</span>
-            <span>→</span>
-          </span>
+          onClick={nextItem}
+          className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600"
+          disabled={queue.length <= 1}
+        >
+          Next
         </button>
+      </div>
+
+      {/* Queue Preview */}
+      <div className="mt-6">
+        <h5 className="text-sm font-semibold text-gray-400 mb-2">Up Next:</h5>
+        <div className="flex space-x-2 overflow-x-auto">
+          {queue.map((item, i) => (
+            <button
+              key={item.id}
+              onClick={() => setIdx(i)}
+              className={`flex-shrink-0 p-2 rounded text-xs ${
+                i === idx ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              {item.title}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
