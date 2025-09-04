@@ -129,7 +129,7 @@ export default function TrailerPlayer({
         9648: (thriller || 0) * 0.8, // Mystery (related to thriller)
         27: (thriller || 0) * 0.9, // Horror (related to thriller)
         10749: (comedy || 0) * 0.6, // Romance (light comedy overlap)
-        16: (comedy || 0) * 0.2  // Animation (heavily reduced - avoid anime bias)
+        16: 0  // Animation (disabled - avoid anime/cartoon bias in recommendations)
       };
       
       // Calculate genre match score based on A/B learning
@@ -153,7 +153,8 @@ export default function TrailerPlayer({
         }
       }
       
-      // Penalty for movies with genres user actively dislikes
+      // Heavy penalty for animation to avoid anime bias, and genres user dislikes
+      const animationPenalty = item.genres?.includes(16) ? -2.0 : 0; // Block animation recommendations
       const antiPreferencePenalty = item.genres.some(gId => {
         const score = genreScores[gId] || 0;
         return score < -0.3; // User really dislikes this genre
@@ -166,7 +167,7 @@ export default function TrailerPlayer({
       const recentBonus = parseInt(item.year) >= 2015 ? 0.08 : 0;
       const noveltyBonus = recentChosenIds.includes(item.id) ? -2.0 : 0; // Heavy penalty for repeats
       
-      const finalScore = genreScore + sourceBonus + recentBonus + noveltyBonus + antiPreferencePenalty;
+      const finalScore = genreScore + sourceBonus + recentBonus + noveltyBonus + antiPreferencePenalty + animationPenalty;
       
       // Debug logging for top-scoring movies
       if (finalScore > 0.8) {
@@ -231,10 +232,10 @@ export default function TrailerPlayer({
     const correlatedCandidates = brandCapped.filter(item => {
       const userScore = baseRel(item);
       
-      // Require minimum genre correlation from A/B testing
-      if (userScore < 0.8) return false;
+      // Require minimum genre correlation from A/B testing  
+      if (userScore < 0.5) return false;
       
-      // Check if movie has genres user actually prefers
+      // Check if movie has genres user actually prefers from A/B testing
       const hasPreferredGenre = item.genres?.some(gId => {
         const genreScore = {
           35: learnedVec[0] || 0,  // Comedy
@@ -244,7 +245,7 @@ export default function TrailerPlayer({
           878: learnedVec[4] || 0, // Sci-Fi
           14: learnedVec[5] || 0   // Fantasy
         }[gId] || 0;
-        return genreScore > 0.6; // User must have shown strong preference in A/B tests
+        return genreScore > 0.5; // Must be a genre user showed preference for in A/B tests
       });
       
       return hasPreferredGenre;
