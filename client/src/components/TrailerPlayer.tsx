@@ -115,7 +115,8 @@ export default function TrailerPlayer({
       // Extract learned preference strengths (first 6 are main genres)
       const [comedy, drama, action, thriller, scifi, fantasy] = learnedVec;
       
-      // Genre mapping from TMDB IDs to preference scores
+      // CRITICAL: Use A/B test learned preferences to score genres
+      // Higher A/B scores = stronger preference from user choices
       const genreScores = {
         35: comedy || 0,     // Comedy
         18: drama || 0,      // Drama 
@@ -123,20 +124,25 @@ export default function TrailerPlayer({
         53: thriller || 0,   // Thriller
         878: scifi || 0,     // Sci-Fi
         14: fantasy || 0,    // Fantasy
-        12: action * 0.8 || 0, // Adventure (related to action)
-        80: thriller * 0.7 || 0, // Crime (related to thriller)
-        9648: thriller * 0.8 || 0, // Mystery (related to thriller)
-        27: thriller * 0.9 || 0, // Horror (related to thriller)
-        10749: comedy * 0.6 || 0, // Romance (light comedy overlap)
-        16: comedy * 0.8 || 0  // Animation (often comedy)
+        12: (action || 0) * 0.8, // Adventure (related to action)
+        80: (thriller || 0) * 0.7, // Crime (related to thriller)
+        9648: (thriller || 0) * 0.8, // Mystery (related to thriller)
+        27: (thriller || 0) * 0.9, // Horror (related to thriller)
+        10749: (comedy || 0) * 0.6, // Romance (light comedy overlap)
+        16: (comedy || 0) * 0.2  // Animation (heavily reduced - avoid anime bias)
       };
       
-      // Calculate genre match score
+      // Calculate genre match score based on A/B learning
       let genreScore = 0;
       let matchedGenres = [];
+      let totalGenreWeight = 0;
+      
       for (const genreId of item.genres) {
         const score = genreScores[genreId] || 0;
-        if (score > 0.5) {
+        totalGenreWeight += score;
+        
+        // Only count as a "match" if the user showed positive preference (score > 0.2)
+        if (score > 0.2) {
           genreScore += score;
           const genreName = {
             35: 'comedy', 18: 'drama', 28: 'action', 53: 'thriller', 
@@ -147,12 +153,20 @@ export default function TrailerPlayer({
         }
       }
       
-      // Bonus factors
-      const qualityBonus = item.sources?.includes('imdbTop') ? 0.15 : 0;
-      const recentBonus = parseInt(item.year) >= 2010 ? 0.1 : 0;
-      const noveltyBonus = recentChosenIds.includes(item.id) ? -1.0 : 0; // Heavy penalty for repeats
+      // Penalty for movies with genres user actively dislikes
+      const antiPreferencePenalty = item.genres.some(gId => {
+        const score = genreScores[gId] || 0;
+        return score < -0.3; // User really dislikes this genre
+      }) ? -1.0 : 0;
       
-      const finalScore = genreScore + qualityBonus + recentBonus + noveltyBonus;
+      // Bonus factors - ensure trailers come from all provided lists
+      const sourceBonus = item.sources?.includes('imdbTop') ? 0.15 : 
+                         item.sources?.includes('rt2020') ? 0.12 : 
+                         item.sources?.includes('imdbList') ? 0.10 : 0;
+      const recentBonus = parseInt(item.year) >= 2015 ? 0.08 : 0;
+      const noveltyBonus = recentChosenIds.includes(item.id) ? -2.0 : 0; // Heavy penalty for repeats
+      
+      const finalScore = genreScore + sourceBonus + recentBonus + noveltyBonus + antiPreferencePenalty;
       
       // Debug logging for top-scoring movies
       if (finalScore > 0.8) {
@@ -169,9 +183,23 @@ export default function TrailerPlayer({
       .slice(0, 150)
       .map(x => x.item);
 
+    console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 10).map(v => v?.toFixed(2)));
     console.log('[TrailerPlayer] A/B Preferences Summary:');
     console.log(`  - Comedy: ${learnedVec[0]?.toFixed(2)} | Sci-Fi: ${learnedVec[4]?.toFixed(2)} | Fantasy: ${learnedVec[5]?.toFixed(2)}`);
     console.log(`  - Action: ${learnedVec[2]?.toFixed(2)} | Drama: ${learnedVec[1]?.toFixed(2)} | Thriller: ${learnedVec[3]?.toFixed(2)}`);
+    
+    // Find user's actual top preferences from A/B learning
+    const genrePrefs = [
+      { name: 'comedy', score: learnedVec[0] || 0, id: 35 },
+      { name: 'drama', score: learnedVec[1] || 0, id: 18 },
+      { name: 'action', score: learnedVec[2] || 0, id: 28 },
+      { name: 'thriller', score: learnedVec[3] || 0, id: 53 },
+      { name: 'sci-fi', score: learnedVec[4] || 0, id: 878 },
+      { name: 'fantasy', score: learnedVec[5] || 0, id: 14 }
+    ].sort((a, b) => b.score - a.score);
+    
+    const topGenres = genrePrefs.filter(g => g.score > 0.5).slice(0, 3);
+    console.log('[TrailerPlayer] User\'s TOP genres from A/B testing:', topGenres.map(g => `${g.name}:${g.score.toFixed(2)}`));
     
     console.log('[TrailerPlayer] Top preliminary candidates:', 
       prelim.slice(0, 10).map(item => ({
@@ -198,9 +226,38 @@ export default function TrailerPlayer({
       return true;
     });
 
+    // CRITICAL: Filter by A/B test correlation BEFORE final selection
+    // Only show movies that match user's learned preferences  
+    const correlatedCandidates = brandCapped.filter(item => {
+      const userScore = baseRel(item);
+      
+      // Require minimum genre correlation from A/B testing
+      if (userScore < 0.8) return false;
+      
+      // Check if movie has genres user actually prefers
+      const hasPreferredGenre = item.genres?.some(gId => {
+        const genreScore = {
+          35: learnedVec[0] || 0,  // Comedy
+          18: learnedVec[1] || 0,  // Drama
+          28: learnedVec[2] || 0,  // Action  
+          53: learnedVec[3] || 0,  // Thriller
+          878: learnedVec[4] || 0, // Sci-Fi
+          14: learnedVec[5] || 0   // Fantasy
+        }[gId] || 0;
+        return genreScore > 0.6; // User must have shown strong preference in A/B tests
+      });
+      
+      return hasPreferredGenre;
+    });
+    
+    console.log(`[CORRELATION] Filtered from ${brandCapped.length} to ${correlatedCandidates.length} movies matching A/B preferences`);
+    
+    // Use A/B-correlated movies first, fallback to top candidates if none match
+    const candidatePool = correlatedCandidates.length >= count ? correlatedCandidates : brandCapped.slice(0, 50);
+    
     // Final MMR selection for diversity
     const finalPicks = mmrSelect(
-      brandCapped, 
+      candidatePool, 
       count, 
       baseRel, 
       (x) => phi(x), 
