@@ -244,7 +244,7 @@ export default function TrailerPlayer({
 
     // Helper function to generate personalized explanation
     const generateExplanation = (item: typeof scored[0]['item'], matchedPreference?: string) => {
-      const itemGenres = item.genres?.map(g => genreMap[g]).filter(Boolean) || [];
+      const itemGenres = item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
       const year = parseInt(item.year);
       const isRecent = year >= 2015;
       const isClassic = year < 1990;
@@ -271,45 +271,40 @@ export default function TrailerPlayer({
       }
     };
 
-    // Select diverse movies using the strategy - targeting 6 recommendations
-    let selectionIndex = 0;
-    for (let i = 0; i < Math.min(20, scored.length) && selected.length < 6; i++) {
-      const poolKey = strategy[selectionIndex % strategy.length] as keyof typeof pools;
-      const pool = pools[poolKey];
+    // Select top candidates with diversity boost - use 6 movies as requested
+    const selectedMovies: Array<{
+      item: typeof scored[0]['item'],
+      genres: string[],
+      explanation: string
+    }> = [];
+    const usedTitles = new Set<string>();
 
-      // Find best unselected movie from this pool
-      const candidate = pool.find(s => 
-        !selected.some(sel => sel.item.id === s.item.id) &&
-        (!usedSources.has(s.item.sources?.[0] || 'unknown') || selected.length >= 3)
-      );
+    for (const movie of scored) {
+      if (selectedMovies.length >= 6) break;
+      if (usedTitles.has(movie.title)) continue;
 
-      if (candidate) {
-        const itemGenres = candidate.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-        const explanation = generateExplanation(candidate.item, poolKey);
+      selectedMovies.push(movie);
+      usedTitles.add(movie.title);
+    }
 
-        selected.push({
-          item: candidate.item,
-          genres: itemGenres,
-          explanation
-        });
+    // Now, process the selected movies to generate explanations and track diversity
+    selectedMovies.forEach(selected => {
+        const itemGenres = selected.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
+        const explanation = generateExplanation(selected.item);
 
         // Track diversity
-        candidate.item.genres?.forEach(g => usedGenres.add(g));
-        const decade = Math.floor(parseInt(candidate.item.year) / 10) * 10;
+        selected.item.genres?.forEach(g => usedGenres.add(g));
+        const decade = Math.floor(parseInt(selected.item.year) / 10) * 10;
         usedDecades.add(decade.toString());
-        usedSources.add(candidate.item.sources?.[0] || 'unknown');
+        usedSources.add(selected.item.sources?.[0] || 'unknown');
 
         // Calculate and log diversity score
         const diversityScore = (usedGenres.size * 0.4) + (usedDecades.size * 0.3) + (usedSources.size * 0.3);
-
-        console.log(`[TrailerPlayer] Selected ${selected.length}: "${candidate.item.title}" (${candidate.item.year}) [${itemGenres.join('/')}] from ${candidate.item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
-      }
-
-      selectionIndex++;
-    }
+        console.log(`[TrailerPlayer] Selected ${selectedMovies.indexOf(selected) + 1}: "${selected.item.title}" (${selected.item.year}) [${itemGenres.join('/')}] from ${selected.item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
+    });
 
     console.log('[TrailerPlayer] Final A/B-driven selection:', 
-      selected.map(s => ({ 
+      selectedMovies.map(s => ({ 
         title: s.item.title, 
         genres: s.genres,
         sources: s.item.sources,
@@ -317,7 +312,11 @@ export default function TrailerPlayer({
       }))
     );
 
-    return selected;
+    return selectedMovies.map(s => ({
+      item: s.item,
+      genres: s.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'],
+      explanation: generateExplanation(s.item)
+    }));
   }, [items, learnedVec, recentChosenIds, avoidIds, count, abAnalysis]);
 
   // Fetch trailer embeds when picks change
@@ -334,7 +333,7 @@ export default function TrailerPlayer({
 
     (async () => {
       console.log('[TrailerPlayer] Fetching trailers for A/B-driven picks:', picks.length);
-      
+
       const trailerIds = picks.map(s => s.item.id);
       const embeds = await fetchTrailerBatch(trailerIds);
 
