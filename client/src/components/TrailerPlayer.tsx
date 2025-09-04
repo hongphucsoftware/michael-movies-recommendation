@@ -44,6 +44,22 @@ function extractVideoId(embedUrl: string | null): string | null {
   return null;
 }
 
+// Mock fetchTrailerBatch for development if needed
+const fetchTrailerBatch = async (ids: number[]): Promise<Record<number, string | null>> => {
+  console.log(`[Mock] Fetching trailers for IDs: ${ids.join(', ')}`);
+  // In a real scenario, this would call an API like fetchTrailerEmbeds but batched
+  // For now, simulate a successful response
+  const mockEmbeds: Record<number, string | null> = {};
+  ids.forEach(id => {
+    // Simulate finding an embed for some IDs
+    if (id % 2 === 0) {
+      mockEmbeds[id] = `https://www.youtube.com/embed/mockvideo_${id}?autoplay=1`;
+    } else {
+      mockEmbeds[id] = `https://player.vimeo.com/video/mockvimeo_${id}`;
+    }
+  });
+  return mockEmbeds;
+};
 
 
 type Props = {
@@ -57,7 +73,7 @@ type Props = {
 export default function TrailerPlayer({
   items, learnedVec, recentChosenIds, avoidIds = [], count = 5,
 }: Props) {
-  const [queue, setQueue] = useState<Array<Title & { genreLabels: string[], explanation: string }>>([]);
+  const [queue, setQueue] = useState<Array<Title & { genres: string[], explanation: string }>>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
@@ -120,21 +136,17 @@ export default function TrailerPlayer({
     if (!items.length || !learnedVec.length) return [];
 
     // Filter to movies with images and not recently seen
-    const withImages = items.filter(item => bestImageUrl(item));
-    const notRecent = withImages.filter(item => !recentChosenIds.includes(item.id));
-    const available = notRecent.filter(item => !avoidIds.includes(item.id));
-
-    console.log('[TrailerPlayer] Movie filtering:');
-    console.log('  - Total movies:', items.length);
-    console.log('  - With images:', withImages.length);
-    console.log('  - Recent chosen IDs to avoid:', recentChosenIds.length, recentChosenIds.slice(-10));
-    console.log('  - After filtering recent:', notRecent.length);
-    console.log('  - Available for selection:', available.length);
+    const available = items
+      .filter(item => bestImageUrl(item))
+      .filter(item => !recentChosenIds.includes(item.id))
+      .filter(item => !avoidIds.includes(item.id));
 
     if (available.length === 0) {
       console.warn('[TrailerPlayer] No available items with images');
       return [];
     }
+
+    console.log('[TrailerPlayer] Available movies:', available.length);
     console.log('[TrailerPlayer] A/B Analysis:', abAnalysis);
 
     // Score each movie based on A/B learning + diversity factors
@@ -149,7 +161,7 @@ export default function TrailerPlayer({
       // Diversity factors to prevent same movie clustering
       const diversityFactors = {
         // Year diversity bonus/penalty
-        yearDiversity: Math.abs(parseInt(item.year || '2010') - 2010) > 10 ? 0.3 : 0,
+        yearDiversity: Math.abs(parseInt(item.year) - 2010) > 10 ? 0.3 : 0,
 
         // Genre diversity - avoid clustering around single genres
         genreSpread: item.genres && item.genres.length > 2 ? 0.2 : 0,
@@ -210,9 +222,9 @@ export default function TrailerPlayer({
     const usedSources = new Set<string>();
 
     const pools = {
-      recent: scored.filter(s => parseInt(s.item.year || '2010') >= 2015),
-      classic: scored.filter(s => parseInt(s.item.year || '2010') < 2000),
-      middle: scored.filter(s => parseInt(s.item.year || '2010') >= 2000 && parseInt(s.item.year || '2010') < 2015),
+      recent: scored.filter(s => parseInt(s.item.year) >= 2015),
+      classic: scored.filter(s => parseInt(s.item.year) < 2000),
+      middle: scored.filter(s => parseInt(s.item.year) >= 2000 && parseInt(s.item.year) < 2015),
       action: scored.filter(s => s.item.genres?.includes(28)),
       drama: scored.filter(s => s.item.genres?.includes(18)),
       comedy: scored.filter(s => s.item.genres?.includes(35)),
@@ -222,24 +234,16 @@ export default function TrailerPlayer({
       all: scored
     };
 
-    // Enhanced genre filtering based on user's top preferences
-    const [comedy, drama, action, thriller, scifi, fantasy] = learnedVec;
-    const topGenres = [];
-    if (comedy > 0.7) topGenres.push({ type: 'comedy', score: comedy, id: 35 });
-    if (scifi > 0.7) topGenres.push({ type: 'scifi', score: scifi, id: 878 });
-    if (fantasy > 0.7) topGenres.push({ type: 'fantasy', score: fantasy, id: 14 });
-    if (action > 0.7) topGenres.push({ type: 'action', score: action, id: 28 });
-    if (drama > 0.7) topGenres.push({ type: 'drama', score: drama, id: 18 });
-    if (thriller > 0.7) topGenres.push({ type: 'thriller', score: thriller, id: 53 });
-    
-    topGenres.sort((a, b) => b.score - a.score);
-    
-    console.log('[TrailerPlayer] Top user genres:', topGenres.map(g => `${g.type}:${g.score.toFixed(2)}`));
+    // Determine selection strategy based on A/B learning
+    const topPreferences = Object.entries(abAnalysis.preferences).slice(0, 3);
+    const strategy = topPreferences.map(([type]) => type).concat(['all', 'all', 'all']);
+
+    console.log('[TrailerPlayer] Selection strategy based on A/B learning:', strategy);
 
     // Helper function to generate personalized explanation
     const generateExplanation = (item: typeof scored[0]['item'], matchedPreference?: string) => {
       const itemGenres = item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-      const year = parseInt(item.year || '2010');
+      const year = parseInt(item.year);
       const isRecent = year >= 2015;
       const isClassic = year < 1990;
 
@@ -265,100 +269,47 @@ export default function TrailerPlayer({
       }
     };
 
-    // GENRE-FIRST selection: prioritize user's top genres
+    // Select top candidates with diversity boost - use 6 movies as requested
     const usedTitles = new Set<string>();
-    
-    // First, try to get movies from user's top genres
-    if (topGenres.length > 0) {
-      const topGenreId = topGenres[0].id;
-      const topGenreMovies = scored.filter(m => m.item.genres?.includes(topGenreId));
-      
-      console.log(`[TrailerPlayer] Found ${topGenreMovies.length} movies in top genre (${topGenres[0].type})`);
-      
-      // Add movies from top genre first
-      for (const movie of topGenreMovies) {
-        if (selectedMovies.length >= 3) break; // At least half from top genre
-        if (usedTitles.has(movie.title)) continue;
-        
-        const itemGenres = movie.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-        selectedMovies.push({
-          item: movie.item,
-          genres: itemGenres,
-          explanation: generateExplanation(movie.item, topGenres[0].type)
-        });
-        usedTitles.add(movie.title);
-      }
-      
-      // Fill remaining slots from second favorite genre if available
-      if (topGenres.length > 1 && selectedMovies.length < 6) {
-        const secondGenreId = topGenres[1].id;
-        const secondGenreMovies = scored.filter(m => m.item.genres?.includes(secondGenreId));
-        
-        for (const movie of secondGenreMovies) {
-          if (selectedMovies.length >= 5) break;
-          if (usedTitles.has(movie.title)) continue;
-          
-          const itemGenres = movie.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-          selectedMovies.push({
-            item: movie.item,
-            genres: itemGenres,
-            explanation: generateExplanation(movie.item, topGenres[1].type)
-          });
-          usedTitles.add(movie.title);
-        }
-      }
-    }
-    
-    // Fill any remaining slots with top-scored movies
+
     for (const movie of scored) {
       if (selectedMovies.length >= 6) break;
       if (usedTitles.has(movie.title)) continue;
 
-      const itemGenres = movie.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-      selectedMovies.push({
-        item: movie.item,
-        genres: itemGenres,
-        explanation: generateExplanation(movie.item)
-      });
+      selectedMovies.push(movie);
       usedTitles.add(movie.title);
     }
 
-    // Now, process the selected movies to track diversity
+    // Now, process the selected movies to generate explanations and track diversity
     selectedMovies.forEach((selected, index) => {
+        const itemGenres = selected.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
+        const explanation = generateExplanation(selected.item);
+
         // Track diversity
         selected.item.genres?.forEach(g => usedGenres.add(g));
-        const decade = Math.floor(parseInt(selected.item.year || '2010') / 10) * 10;
+        const decade = Math.floor(parseInt(selected.item.year) / 10) * 10;
         usedDecades.add(decade.toString());
         usedSources.add(selected.item.sources?.[0] || 'unknown');
 
         // Calculate and log diversity score
         const diversityScore = (usedGenres.size * 0.4) + (usedDecades.size * 0.3) + (usedSources.size * 0.3);
-        console.log(`[TrailerPlayer] Selected ${index + 1}: "${selected.item.title}" (${selected.item.year || 'Unknown'}) [${selected.genres.join('/')}] from ${selected.item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
+        console.log(`[TrailerPlayer] Selected ${index + 1}: "${selected.item.title}" (${selected.item.year}) [${itemGenres.join('/')}] from ${selected.item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
     });
 
     console.log('[TrailerPlayer] Final A/B-driven selection:', 
       selectedMovies.map(s => ({ 
-        id: s.item.id,
-        title: s.item.title, 
+        title: s.title, 
         genres: s.genres,
         sources: s.item.sources,
-        year: s.item.year,
-        isRecent: recentChosenIds.includes(s.item.id)
+        year: s.item.year
       }))
     );
 
-    // Check for Spider-Man specifically
-    const spiderManInSelection = selectedMovies.find(s => s.item.title.includes('Spider-Man'));
-    if (spiderManInSelection) {
-      console.log('🕷️ [DEBUG] Spider-Man found in selection:', {
-        id: spiderManInSelection.item.id,
-        title: spiderManInSelection.item.title,
-        isInRecentList: recentChosenIds.includes(spiderManInSelection.item.id),
-        recentListSize: recentChosenIds.length
-      });
-    }
-
-    return selectedMovies;
+    return selectedMovies.map(s => ({
+      item: s.item,
+      genres: s.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'],
+      explanation: generateExplanation(s.item)
+    }));
   }, [items, learnedVec, recentChosenIds, avoidIds, count, abAnalysis]);
 
   // Fetch trailer embeds when picks change
@@ -384,29 +335,19 @@ export default function TrailerPlayer({
       // Build final queue with trailers and explanations
       const newQueue = picks
         .filter(s => embeds[s.item.id])
-        .map(s => {
-          let embedUrl = embeds[s.item.id];
-          // Ensure autoplay is enabled for YouTube videos
-          if (embedUrl && embedUrl.includes('youtube.com/embed/')) {
-            const url = new URL(embedUrl);
-            url.searchParams.set('autoplay', '1');
-            url.searchParams.set('rel', '0');
-            embedUrl = url.toString();
-          }
-          return {
-            ...s.item,
-            yt: extractVideoId(embedUrl) || '',
-            embed: embedUrl,
-            genreLabels: s.genres,
-            explanation: s.explanation
-          };
-        });
+        .map(s => ({
+          ...s.item,
+          yt: extractVideoId(embeds[s.item.id]) || '',
+          embed: embeds[s.item.id],
+          genres: s.genres,
+          explanation: s.explanation
+        }));
 
       console.log('[TrailerPlayer] Items with trailers:', newQueue.length);
       console.log('[TrailerPlayer] Trailer details:', 
         newQueue.map(item => ({
           title: item.title,
-          genres: item.genreLabels,
+          genres: item.genres,
           year: item.year
         }))
       );
@@ -488,7 +429,7 @@ export default function TrailerPlayer({
             </h3>
             <div className="mb-3">
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-2">
-                {currentItem.genreLabels?.join(' • ') || 'Film'}
+                {currentItem.genres?.join(' • ') || 'Film'}
               </span>
             </div>
             <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
