@@ -183,8 +183,8 @@ export function useMLLearning(movies: Movie[]) {
 
       let anchorPool: Anchor[];
       if (ANCHOR_MODE === 'hardlist' && serverAnchors.length > 0) {
-        console.log('[FUNNEL] Using server-provided anchors.');
-        // Resolve server anchors to TMDB IDs
+        console.log(`[FUNNEL LOCKED] Using ONLY hardlist anchors for A/B testing: ${serverAnchors.length} movies`);
+        // Resolve server anchors to TMDB IDs - CRITICAL: Only use hardlist movies
         anchorPool = serverAnchors.map((anchor: any) => {
           const matchedMovie = moviesData.find(m => m.name.toLowerCase() === anchor.title.toLowerCase() && m.year === anchor.year);
           if (matchedMovie) {
@@ -194,6 +194,12 @@ export function useMLLearning(movies: Movie[]) {
             return null;
           }
         }).filter((a: Anchor | null) => a !== null) as Anchor[];
+        
+        console.log(`[FUNNEL LOCKED] Final A/B pool: ${anchorPool.length} hardlist movies (NO catalogue spillover)`);
+        // Critical assertion: A/B testing must ONLY use hardlist
+        if (anchorPool.length === 0) {
+          console.error('[FUNNEL ERROR] No hardlist anchors resolved! A/B testing will fail.');
+        }
       } else {
         anchorPool = buildABAnchors(movieTitles, 30);
       }
