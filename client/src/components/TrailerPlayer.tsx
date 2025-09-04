@@ -50,13 +50,45 @@ export default function TrailerPlayer({
   console.log('[TrailerPlayer] Recent chosen IDs:', recentChosenIds.length);
   console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 12));
 
-  // FIXED: Actually use the BTL learned preferences to score movies
+  // MMR helper function for diversity selection
+  function mmrSelect<T>(items: T[], k: number, relevance: (x:T)=>number, vec: (x:T)=>number[], lambda=0.75) {
+    const chosen: T[] = [];
+    const sim = (a:T,b:T) => {
+      const va = vec(a), vb = vec(b);
+      let dot=0, na=0, nb=0; 
+      for (let i=0;i<va.length;i++){ 
+        dot+=va[i]*vb[i]; 
+        na+=va[i]*va[i]; 
+        nb+=vb[i]*vb[i]; 
+      }
+      const la = Math.sqrt(na)||1, lb=Math.sqrt(nb)||1;
+      return dot/(la*lb);
+    };
+    const pool = items.slice();
+    while (chosen.length < k && pool.length) {
+      let bestIdx = 0, bestVal = -1e9;
+      for (let i=0;i<pool.length;i++){
+        const rel = relevance(pool[i]);
+        const div = chosen.length ? Math.max(...chosen.map(c=> sim(pool[i], c))) : 0;
+        const val = lambda*rel - (1-lambda)*div;
+        if (val > bestVal){ bestVal = val; bestIdx = i; }
+      }
+      chosen.push(pool.splice(bestIdx,1)[0]);
+    }
+    return chosen;
+  }
+
+  // Smart trailer selection with proper MMR diversity
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
-    // Filter to movies with images and not recently seen
+    // Filter to movies with trailers and not recently seen
     const available = items
-      .filter(item => bestImageUrl(item))
+      .filter(item => {
+        // Robust: accept either .youtube or .ytKeys[0] for trailer availability
+        const hasTrailer = bestImageUrl(item);
+        return hasTrailer;
+      })
       .filter(item => !recentChosenIds.includes(item.id))
       .filter(item => !avoidIds.includes(item.id));
 
@@ -65,95 +97,78 @@ export default function TrailerPlayer({
       return [];
     }
 
-    console.log('[TrailerPlayer] Available movies:', available.length);
+    console.log('[TrailerPlayer] Available movies with trailers:', available.length);
 
-    // Score movies using BTL learned preferences - THIS IS THE KEY FIX
-    const scored = available.map((item) => {
+    // Base relevance scoring function
+    const baseRel = (item: Title) => {
       const itemPhi = phi(item);
-
+      
       // Ensure vectors are same length
       const w = [...learnedVec];
       while (w.length < itemPhi.length) w.push(0);
       while (itemPhi.length < w.length) itemPhi.push(0);
 
-      // Raw BTL score using dot product of learned weights and movie features
-      const btlScore = dot(w, itemPhi);
-
-      // Small bonuses for quality and recency
+      // BTL score using sigmoid
+      const btlScore = 1/(1+Math.exp(-dot(w, itemPhi)));
+      
+      // Bonuses
       const qualityBonus = item.sources?.includes('imdbTop') ? 0.2 : 0;
-      const recentBonus = parseInt(item.year) >= 2015 ? 0.1 : 0;
+      const recentBonus = parseInt(item.year) >= 2015 ? 0.3 : 0; // Boost recent films
+      const noveltyBonus = recentChosenIds.includes(item.id) ? 0 : 0.08;
 
-      const finalScore = btlScore + qualityBonus + recentBonus;
+      return btlScore + qualityBonus + recentBonus + noveltyBonus;
+    };
 
-      return {
-        item,
-        btlScore,
-        finalScore,
-        title: item.title
-      };
+    // Score top 150 candidates, then MMR-select diverse 5
+    const prelim = available
+      .map(item => ({ item, score: baseRel(item) }))
+      .sort((a,b) => b.score - a.score)
+      .slice(0, 150)
+      .map(x => x.item);
+
+    console.log('[TrailerPlayer] Top preliminary candidates:', 
+      prelim.slice(0, 10).map(item => ({
+        title: item.title,
+        year: item.year,
+        score: baseRel(item).toFixed(3),
+        sources: item.sources
+      }))
+    );
+
+    // Apply brand diversity (one per franchise)
+    const brandSeen = new Set<string>();
+    const brandCapped = prelim.filter(item => {
+      const key = (item.title || "").toLowerCase()
+        .replace(/^the\s+|^a\s+|^an\s+/, "")
+        .replace(/[^a-z0-9]+/g," ")
+        .trim()
+        .split(" ")
+        .slice(0,2)
+        .join(" ");
+      if (brandSeen.has(key)) return false;
+      brandSeen.add(key);
+      return true;
     });
 
-    // Sort by final score (higher = better match to your preferences)
-    scored.sort((a,b) => b.finalScore - a.finalScore);
+    // Final MMR selection for diversity
+    const finalPicks = mmrSelect(
+      brandCapped, 
+      count, 
+      baseRel, 
+      (x) => phi(x), 
+      0.75 // 75% relevance, 25% diversity
+    );
 
-    console.log('[TrailerPlayer] Top BTL scored movies:',
-      scored.slice(0, 15).map(s => ({
-        title: s.title,
-        btlScore: s.btlScore.toFixed(3),
-        finalScore: s.finalScore.toFixed(3),
-        year: s.item.year,
-        genres: s.item.genres
+    console.log('[TrailerPlayer] Final MMR diverse selection:', 
+      finalPicks.map(item => ({
+        title: item.title,
+        year: item.year,
+        score: baseRel(item).toFixed(3),
+        sources: item.sources
       }))
     );
 
-    // Take top 30 candidates and apply MMR for diversity
-    const topCandidates = scored.slice(0, Math.min(30, scored.length));
-    
-    // MMR selection for diversity
-    const selected: typeof topCandidates = [];
-    const remaining = [...topCandidates];
-    
-    while (selected.length < count && remaining.length > 0) {
-      let bestIdx = 0;
-      let bestScore = -Infinity;
-      
-      for (let i = 0; i < remaining.length; i++) {
-        const candidate = remaining[i];
-        const relevance = candidate.finalScore;
-        
-        // Calculate diversity penalty (similarity to already selected)
-        let maxSimilarity = 0;
-        for (const sel of selected) {
-          const candPhi = phi(candidate.item);
-          const selPhi = phi(sel.item);
-          const similarity = cosine(candPhi, selPhi);
-          maxSimilarity = Math.max(maxSimilarity, similarity);
-        }
-        
-        // MMR formula: λ * relevance - (1-λ) * max_similarity
-        const lambda = 0.7; // Balance relevance vs diversity
-        const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity;
-        
-        if (mmrScore > bestScore) {
-          bestScore = mmrScore;
-          bestIdx = i;
-        }
-      }
-      
-      selected.push(remaining[bestIdx]);
-      remaining.splice(bestIdx, 1);
-    }
-
-    console.log('[TrailerPlayer] Final BTL+MMR selection:', 
-      selected.map(s => ({
-        title: s.title,
-        year: s.item.year,
-        btlScore: s.btlScore.toFixed(3),
-        finalScore: s.finalScore.toFixed(3)
-      }))
-    );
-
-    return selected.map(s => s.item);
+    return finalPicks;
   }, [items, learnedVec, recentChosenIds, avoidIds, count]);
 
   // Convert picks to queue format
@@ -260,7 +275,7 @@ export default function TrailerPlayer({
           <div className="aspect-video flex items-center justify-center bg-gray-800">
             <div className="text-center">
               <p className="text-white font-semibold">{currentItem.title}</p>
-              <p className="text-gray-400">Trailer not available</p>
+              <p className="text-gray-400">Loading trailer...</p>
             </div>
           </div>
         )}
