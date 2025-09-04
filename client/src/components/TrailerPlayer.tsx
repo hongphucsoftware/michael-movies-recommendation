@@ -159,7 +159,6 @@ export default function TrailerPlayer({
       }, 0);
 
       // Diversity factors to prevent same movie clustering
-      const titleWords = item.title.toLowerCase().split(/\s+/);
       const diversityFactors = {
         // Year diversity bonus/penalty
         yearDiversity: Math.abs(parseInt(item.year) - 2010) > 10 ? 0.3 : 0,
@@ -172,7 +171,7 @@ export default function TrailerPlayer({
                     item.sources?.includes('rt2020') ? 0.15 : 0.05,
 
         // Title uniqueness - avoid similar titles
-        titleUnique: titleWords.length > 2 ? 0.1 : 0,
+        titleUnique: item.title.toLowerCase().split(/\s+/).length > 2 ? 0.1 : 0,
 
         // Random factor to break ties and ensure variety
         randomFactor: (Math.sin(Date.now() + index * 47) + 1) * 1.0 // ±1.0 random
@@ -213,16 +212,6 @@ export default function TrailerPlayer({
     };
 
     // Advanced selection with genre/theme diversity enforcement
-    const selected: Array<{
-      item: typeof scored[0]['item'],
-      genres: string[],
-      explanation: string
-    }> = [];
-    const usedGenres = new Set<number>();
-    const usedDecades = new Set<string>();
-    const usedSources = new Set<string>();
-
-    // Create selection pools for maximum variety
     const pools = {
       recent: scored.filter(s => parseInt(s.item.year) >= 2015),
       classic: scored.filter(s => parseInt(s.item.year) < 2000),
@@ -305,7 +294,7 @@ export default function TrailerPlayer({
 
     console.log('[TrailerPlayer] Final A/B-driven selection:', 
       selectedMovies.map(s => ({ 
-        title: s.item.title, 
+        title: s.title, 
         genres: s.genres,
         sources: s.item.sources,
         year: s.item.year
