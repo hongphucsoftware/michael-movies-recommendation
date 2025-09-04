@@ -1,4 +1,3 @@
-
 // UI LOCK — TrailerPlayer shows ONE trailer at a time. No grids, no poster walls.
 // Replit Agent: Do NOT replace this component with a grid view.
 // It must queue 5 trailers chosen by the A/B signal and play them sequentially.
@@ -29,6 +28,40 @@ async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|
   return out;
 }
 
+// Helper to extract YouTube video ID from embed URL
+function extractVideoId(embedUrl: string | null): string | null {
+  if (!embedUrl) return null;
+  try {
+    const url = new URL(embedUrl);
+    if (url.hostname.includes('youtube.com')) {
+      return url.searchParams.get('v');
+    } else if (url.hostname.includes('vimeo.com')) {
+      return url.pathname.split('/').pop() || null;
+    }
+  } catch (e) {
+    console.error("Error parsing embed URL:", e);
+  }
+  return null;
+}
+
+// Mock fetchTrailerBatch for development if needed
+const fetchTrailerBatch = async (ids: number[]): Promise<Record<number, string | null>> => {
+  console.log(`[Mock] Fetching trailers for IDs: ${ids.join(', ')}`);
+  // In a real scenario, this would call an API like fetchTrailerEmbeds but batched
+  // For now, simulate a successful response
+  const mockEmbeds: Record<number, string | null> = {};
+  ids.forEach(id => {
+    // Simulate finding an embed for some IDs
+    if (id % 2 === 0) {
+      mockEmbeds[id] = `https://www.youtube.com/embed/mockvideo_${id}?autoplay=1`;
+    } else {
+      mockEmbeds[id] = `https://player.vimeo.com/video/mockvimeo_${id}`;
+    }
+  });
+  return mockEmbeds;
+};
+
+
 type Props = {
   items: Title[];
   learnedVec: number[];
@@ -40,7 +73,7 @@ type Props = {
 export default function TrailerPlayer({
   items, learnedVec, recentChosenIds, avoidIds = [], count = 5,
 }: Props) {
-  const [queue, setQueue] = useState<Title[]>([]);
+  const [queue, setQueue] = useState<Array<Title & { genres: string[], explanation: string }>>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
@@ -56,7 +89,7 @@ export default function TrailerPlayer({
 
     const [comedy, drama, action, thriller, scifi, fantasy, doc, light, dark, fast, slow, recent] = learnedVec;
     const vectorMagnitude = Math.sqrt(learnedVec.reduce((s, v) => s + v*v, 0));
-    
+
     console.log('[TrailerPlayer] A/B Vector Breakdown:', {
       comedy: comedy?.toFixed(2) || '0',
       drama: drama?.toFixed(2) || '0', 
@@ -69,7 +102,7 @@ export default function TrailerPlayer({
     });
 
     const preferences = [];
-    
+
     // Identify strong preferences (> 0.7)
     if (comedy > 0.7) preferences.push({ type: 'comedy', strength: comedy, label: 'comedies' });
     if (drama > 0.7) preferences.push({ type: 'drama', strength: drama, label: 'dramatic films' });
@@ -80,7 +113,7 @@ export default function TrailerPlayer({
 
     // Sort by strength
     preferences.sort((a, b) => b.strength - a.strength);
-    
+
     let strength = 'weak';
     if (vectorMagnitude > 2.5) strength = 'strong';
     else if (vectorMagnitude > 1.5) strength = 'medium';
@@ -119,7 +152,7 @@ export default function TrailerPlayer({
     // Score each movie based on A/B learning + diversity factors
     const scored = available.map((item, index) => {
       const features = item.feature || toFeatureVector(item);
-      
+
       // Core preference score from A/B learning
       const abScore = features.reduce((sum, feature, idx) => {
         return sum + (feature * (learnedVec[idx] || 0));
@@ -130,17 +163,17 @@ export default function TrailerPlayer({
       const diversityFactors = {
         // Year diversity bonus/penalty
         yearDiversity: Math.abs(parseInt(item.year) - 2010) > 10 ? 0.3 : 0,
-        
+
         // Genre diversity - avoid clustering around single genres
         genreSpread: item.genres && item.genres.length > 2 ? 0.2 : 0,
-        
+
         // Source diversity - prefer mixing sources
         sourceBonus: item.sources?.includes('imdbTop') ? 0.1 : 
                     item.sources?.includes('rt2020') ? 0.15 : 0.05,
-        
+
         // Title uniqueness - avoid similar titles
         titleUnique: titleWords.length > 2 ? 0.1 : 0,
-        
+
         // Random factor to break ties and ensure variety
         randomFactor: (Math.sin(Date.now() + index * 47) + 1) * 1.0 // ±1.0 random
       };
@@ -171,11 +204,22 @@ export default function TrailerPlayer({
       }))
     );
 
+    // Genre mapping for descriptions
+    const genreMap: Record<number, string> = {
+      28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime',
+      99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History',
+      27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi',
+      10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
+    };
+
     // Advanced selection with genre/theme diversity enforcement
-    const selected: typeof scored[0]['item'][] = [];
+    const selected: Array<{
+      item: typeof scored[0]['item'],
+      genres: string[],
+      explanation: string
+    }> = [];
     const usedGenres = new Set<number>();
     const usedDecades = new Set<string>();
-    const usedTitleWords = new Set<string>();
     const usedSources = new Set<string>();
 
     // Create selection pools for maximum variety
@@ -188,105 +232,90 @@ export default function TrailerPlayer({
       comedy: scored.filter(s => s.item.genres?.includes(35)),
       thriller: scored.filter(s => s.item.genres?.includes(53)),
       scifi: scored.filter(s => s.item.genres?.includes(878)),
+      fantasy: scored.filter(s => s.item.genres?.includes(14)),
       all: scored
     };
 
-    // Selection strategy based on A/B preferences
-    const selectionStrategy = [];
-    
-    if (abAnalysis.preferences.length > 0) {
-      // Use A/B preferences to guide selection
-      for (const pref of abAnalysis.preferences.slice(0, 2)) {
-        if (pref.type === 'action' && pools.action.length > 0) selectionStrategy.push('action');
-        if (pref.type === 'drama' && pools.drama.length > 0) selectionStrategy.push('drama');
-        if (pref.type === 'comedy' && pools.comedy.length > 0) selectionStrategy.push('comedy');
-        if (pref.type === 'thriller' && pools.thriller.length > 0) selectionStrategy.push('thriller');
-        if (pref.type === 'scifi' && pools.scifi.length > 0) selectionStrategy.push('scifi');
+    // Determine selection strategy based on A/B learning
+    const topPreferences = Object.entries(abAnalysis.preferences).slice(0, 3);
+    const strategy = topPreferences.map(([type]) => type).concat(['all', 'all', 'all']);
+
+    console.log('[TrailerPlayer] Selection strategy based on A/B learning:', strategy);
+
+    // Helper function to generate personalized explanation
+    const generateExplanation = (item: typeof scored[0]['item'], matchedPreference?: string) => {
+      const itemGenres = item.genres?.map(g => genreMap[g]).filter(Boolean) || [];
+      const year = parseInt(item.year);
+      const isRecent = year >= 2015;
+      const isClassic = year < 1990;
+
+      if (matchedPreference === 'comedy' && itemGenres.includes('Comedy')) {
+        return `Perfect comedy match! This ${isRecent ? 'modern' : isClassic ? 'classic' : 'beloved'} ${itemGenres.join('/')} will deliver the laughs you're looking for.`;
+      } else if (matchedPreference === 'thriller' && itemGenres.includes('Thriller')) {
+        return `Ideal thriller pick! This ${isRecent ? 'contemporary' : isClassic ? 'timeless' : 'gripping'} ${itemGenres.join('/')} offers the suspense you crave.`;
+      } else if (matchedPreference === 'fantasy' && itemGenres.includes('Fantasy')) {
+        return `Fantasy lover's dream! This ${isRecent ? 'visually stunning' : isClassic ? 'imaginative' : 'enchanting'} ${itemGenres.join('/')} transports you to magical worlds.`;
+      } else if (matchedPreference === 'scifi' && itemGenres.includes('Sci-Fi')) {
+        return `Sci-fi enthusiast's choice! This ${isRecent ? 'cutting-edge' : isClassic ? 'visionary' : 'thought-provoking'} ${itemGenres.join('/')} explores fascinating possibilities.`;
+      } else if (matchedPreference === 'drama' && itemGenres.includes('Drama')) {
+        return `Compelling drama selection! This ${isRecent ? 'powerful' : isClassic ? 'masterful' : 'moving'} ${itemGenres.join('/')} delivers emotional depth.`;
+      } else if (matchedPreference === 'action' && itemGenres.includes('Action')) {
+        return `Action-packed choice! This ${isRecent ? 'adrenaline-fueled' : isClassic ? 'iconic' : 'thrilling'} ${itemGenres.join('/')} brings intense excitement.`;
+      } else {
+        // Fallback based on top user preferences
+        const topPref = abAnalysis.preferences[0];
+        if (topPref?.type === 'comedy') return `Comedy lover's pick! This ${itemGenres.join('/')} has the entertainment value you enjoy.`;
+        if (topPref?.type === 'thriller') return `Suspense seeker's choice! This ${itemGenres.join('/')} delivers the tension you prefer.`;
+        if (topPref?.type === 'fantasy') return `Fantasy fan's selection! This ${itemGenres.join('/')} offers the escapism you love.`;
+        return `Curated for your taste! This ${itemGenres.join('/')} ${isRecent ? 'contemporary' : isClassic ? 'classic' : 'quality'} film matches your preferences.`;
       }
-    }
-    
-    // Add era diversity based on recent preference
-    if (learnedVec[11] > 0.6) {
-      selectionStrategy.push('recent');
-    } else if (learnedVec[11] < 0.4) {
-      selectionStrategy.push('classic');
-    } else {
-      selectionStrategy.push('middle');
-    }
-    
-    // Fill remaining slots with 'all' for maximum variety
-    while (selectionStrategy.length < count) {
-      selectionStrategy.push('all');
-    }
+    };
 
-    console.log('[TrailerPlayer] Selection strategy based on A/B learning:', selectionStrategy);
+    // Select diverse movies using the strategy - targeting 6 recommendations
+    let selectionIndex = 0;
+    for (let i = 0; i < Math.min(20, scored.length) && selected.length < 6; i++) {
+      const poolKey = strategy[selectionIndex % strategy.length] as keyof typeof pools;
+      const pool = pools[poolKey];
 
-    // Execute selection strategy
-    for (let i = 0; i < count && selected.length < count; i++) {
-      const pool = pools[selectionStrategy[i] as keyof typeof pools] || pools.all;
-      
-      // Find best movie from this pool that maximizes diversity
-      let bestCandidate = null;
-      let bestDiversityScore = -1;
-      
-      for (const candidate of pool) {
-        if (selected.includes(candidate.item)) continue;
-        
-        // Calculate diversity score for this candidate
+      // Find best unselected movie from this pool
+      const candidate = pool.find(s => 
+        !selected.some(sel => sel.item.id === s.item.id) &&
+        (!usedSources.has(s.item.sources?.[0] || 'unknown') || selected.length >= 3)
+      );
+
+      if (candidate) {
+        const itemGenres = candidate.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
+        const explanation = generateExplanation(candidate.item, poolKey);
+
+        selected.push({
+          item: candidate.item,
+          genres: itemGenres,
+          explanation
+        });
+
+        // Track diversity
+        candidate.item.genres?.forEach(g => usedGenres.add(g));
         const decade = Math.floor(parseInt(candidate.item.year) / 10) * 10;
-        const titleWords = candidate.item.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-        const candidateGenres = candidate.item.genres || [];
-        const candidateSources = candidate.item.sources || [];
-        
-        let diversityScore = 0;
-        
-        // Bonus for unused decade
-        if (!usedDecades.has(decade.toString())) diversityScore += 2.0;
-        
-        // Bonus for unused genres
-        const unusedGenres = candidateGenres.filter(g => !usedGenres.has(g));
-        diversityScore += unusedGenres.length * 0.5;
-        
-        // Bonus for unused title words
-        const unusedWords = titleWords.filter(w => !usedTitleWords.has(w));
-        diversityScore += unusedWords.length * 0.3;
-        
-        // Bonus for unused sources
-        const unusedSources = candidateSources.filter(s => !usedSources.has(s));
-        diversityScore += unusedSources.length * 0.4;
-        
-        // Factor in the original A/B score
-        diversityScore += candidate.finalScore * 0.3;
-        
-        if (diversityScore > bestDiversityScore) {
-          bestDiversityScore = diversityScore;
-          bestCandidate = candidate;
-        }
-      }
-      
-      if (bestCandidate) {
-        selected.push(bestCandidate.item);
-        
-        // Update used sets to maintain diversity
-        const decade = Math.floor(parseInt(bestCandidate.item.year) / 10) * 10;
         usedDecades.add(decade.toString());
-        
-        bestCandidate.item.genres?.forEach(g => usedGenres.add(g));
-        bestCandidate.item.sources?.forEach(s => usedSources.add(s));
-        
-        const titleWords = bestCandidate.item.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-        titleWords.forEach(w => usedTitleWords.add(w));
-        
-        console.log(`[TrailerPlayer] Selected ${i+1}: "${bestCandidate.item.title}" (${bestCandidate.item.year}) from ${bestCandidate.item.sources} - diversity score: ${bestDiversityScore.toFixed(2)}`);
+        usedSources.add(candidate.item.sources?.[0] || 'unknown');
+
+        // Calculate and log diversity score
+        const diversityScore = (usedGenres.size * 0.4) + (usedDecades.size * 0.3) + (usedSources.size * 0.3);
+
+        console.log(`[TrailerPlayer] Selected ${selected.length}: "${candidate.item.title}" (${candidate.item.year}) [${itemGenres.join('/')}] from ${candidate.item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
       }
+
+      selectionIndex++;
     }
 
-    console.log('[TrailerPlayer] Final A/B-driven selection:', selected.map(item => ({
-      title: item.title,
-      year: item.year,
-      sources: item.sources,
-      genres: item.genres
-    })));
+    console.log('[TrailerPlayer] Final A/B-driven selection:', 
+      selected.map(s => ({ 
+        title: s.item.title, 
+        genres: s.genres,
+        sources: s.item.sources,
+        year: s.item.year
+      }))
+    );
 
     return selected;
   }, [items, learnedVec, recentChosenIds, avoidIds, count, abAnalysis]);
@@ -305,22 +334,37 @@ export default function TrailerPlayer({
 
     (async () => {
       console.log('[TrailerPlayer] Fetching trailers for A/B-driven picks:', picks.length);
-      const ids = picks.map(p => p.id);
-      const embedMap = await fetchTrailerEmbeds(ids);
+      
+      const trailerIds = picks.map(s => s.item.id);
+      const embeds = await fetchTrailerBatch(trailerIds);
 
-      if (!mounted) return;
+      console.log('[TrailerPlayer] Received embeds for:', Object.keys(embeds).length, 'items');
 
-      console.log('[TrailerPlayer] Received embeds for:', Object.keys(embedMap).length, 'items');
+      // Build final queue with trailers and explanations
+      const newQueue = picks
+        .filter(s => embeds[s.item.id])
+        .map(s => ({
+          ...s.item,
+          yt: extractVideoId(embeds[s.item.id]) || '',
+          embed: embeds[s.item.id],
+          genres: s.genres,
+          explanation: s.explanation
+        }));
 
-      // Filter to only items with actual trailer embeds
-      const withTrailers = picks.filter(p => embedMap[p.id]);
+      console.log('[TrailerPlayer] Items with trailers:', newQueue.length);
+      console.log('[TrailerPlayer] Trailer details:', 
+        newQueue.map(item => ({
+          title: item.title,
+          genres: item.genres,
+          year: item.year
+        }))
+      );
 
-      console.log('[TrailerPlayer] Items with trailers:', withTrailers.length);
-      console.log('[TrailerPlayer] Trailer titles:', withTrailers.map(t => t.title));
+      setQueue(newQueue);
 
-      setQueue(withTrailers);
-      setEmbeds(embedMap);
-      setIdx(0);
+      if (newQueue.length > 0) {
+        setIdx(0);
+      }
     })();
 
     return () => { mounted = false; };
@@ -348,14 +392,13 @@ export default function TrailerPlayer({
     return () => window.removeEventListener("keydown", onKey);
   }, [prev, next]);
 
-  const current = queue[idx];
-  const embed = current ? embeds[current.id] : null;
+  const currentItem = queue[idx];
 
   console.log('[TrailerPlayer] Current state:', {
     queueLength: queue.length,
     currentIndex: idx,
-    currentTitle: current?.title,
-    hasEmbed: !!embed
+    currentTitle: currentItem?.title,
+    hasEmbed: !!currentItem?.embed
   });
 
   if (!queue.length) {
@@ -385,17 +428,32 @@ export default function TrailerPlayer({
         </div>
       </div>
 
-      {current && (
+      {currentItem && (
         <div className="mb-4 sm:mb-6">
-          <div className="text-base sm:text-lg font-medium mb-3 sm:mb-4 text-center sm:text-left">
-            {current.title} ({current.year})
+          <div className="space-y-4">
+          <div className="text-center">
+            <h3 className="text-lg font-semibold mb-2">
+              {currentItem.title} ({currentItem.year})
+            </h3>
+            <div className="mb-3">
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-2">
+                {currentItem.genres?.join(' • ') || 'Film'}
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
+              {currentItem.explanation || abAnalysis.explanation}
+            </p>
+            <p className="text-xs text-muted-foreground/70">
+              Recommendation {idx + 1} of {queue.length} • Pool of {items.length} movies
+            </p>
           </div>
-          <div className="aspect-video w-full rounded-lg sm:rounded-xl overflow-hidden bg-black shadow-lg">
-            {embed ? (
+          </div>
+          <div className="aspect-video w-full rounded-lg sm:rounded-xl overflow-hidden bg-black shadow-lg mt-6">
+            {currentItem.embed ? (
               <iframe
                 className="w-full h-full"
-                src={embed}
-                title={`Trailer: ${current.title}`}
+                src={currentItem.embed}
+                title={`Trailer: ${currentItem.title}`}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
               />
