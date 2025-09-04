@@ -120,17 +120,21 @@ export default function TrailerPlayer({
     if (!items.length || !learnedVec.length) return [];
 
     // Filter to movies with images and not recently seen
-    const available = items
-      .filter(item => bestImageUrl(item))
-      .filter(item => !recentChosenIds.includes(item.id))
-      .filter(item => !avoidIds.includes(item.id));
+    const withImages = items.filter(item => bestImageUrl(item));
+    const notRecent = withImages.filter(item => !recentChosenIds.includes(item.id));
+    const available = notRecent.filter(item => !avoidIds.includes(item.id));
+
+    console.log('[TrailerPlayer] Movie filtering:');
+    console.log('  - Total movies:', items.length);
+    console.log('  - With images:', withImages.length);
+    console.log('  - Recent chosen IDs to avoid:', recentChosenIds.length, recentChosenIds.slice(-10));
+    console.log('  - After filtering recent:', notRecent.length);
+    console.log('  - Available for selection:', available.length);
 
     if (available.length === 0) {
       console.warn('[TrailerPlayer] No available items with images');
       return [];
     }
-
-    console.log('[TrailerPlayer] Available movies:', available.length);
     console.log('[TrailerPlayer] A/B Analysis:', abAnalysis);
 
     // Score each movie based on A/B learning + diversity factors
@@ -334,12 +338,25 @@ export default function TrailerPlayer({
 
     console.log('[TrailerPlayer] Final A/B-driven selection:', 
       selectedMovies.map(s => ({ 
+        id: s.item.id,
         title: s.item.title, 
         genres: s.genres,
         sources: s.item.sources,
-        year: s.item.year
+        year: s.item.year,
+        isRecent: recentChosenIds.includes(s.item.id)
       }))
     );
+
+    // Check for Spider-Man specifically
+    const spiderManInSelection = selectedMovies.find(s => s.item.title.includes('Spider-Man'));
+    if (spiderManInSelection) {
+      console.log('🕷️ [DEBUG] Spider-Man found in selection:', {
+        id: spiderManInSelection.item.id,
+        title: spiderManInSelection.item.title,
+        isInRecentList: recentChosenIds.includes(spiderManInSelection.item.id),
+        recentListSize: recentChosenIds.length
+      });
+    }
 
     return selectedMovies;
   }, [items, learnedVec, recentChosenIds, avoidIds, count, abAnalysis]);
