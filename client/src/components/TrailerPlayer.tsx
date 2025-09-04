@@ -108,24 +108,58 @@ export default function TrailerPlayer({
       console.log(`  - "${sm.title}" (ID: ${sm.id}) - In recent list: ${isFiltered}`);
     });
 
-    // Base relevance scoring function
+    // Direct genre-based scoring using A/B learned preferences
     const baseRel = (item: Title) => {
-      const itemPhi = phi(item);
+      if (!item.genres?.length) return 0.1; // Minimal score for ungenred movies
       
-      // Ensure vectors are same length
-      const w = [...learnedVec];
-      while (w.length < itemPhi.length) w.push(0);
-      while (itemPhi.length < w.length) itemPhi.push(0);
-
-      // BTL score using sigmoid
-      const btlScore = 1/(1+Math.exp(-dot(w, itemPhi)));
+      // Extract learned preference strengths (first 6 are main genres)
+      const [comedy, drama, action, thriller, scifi, fantasy] = learnedVec;
       
-      // Bonuses
-      const qualityBonus = item.sources?.includes('imdbTop') ? 0.2 : 0;
-      const recentBonus = parseInt(item.year) >= 2015 ? 0.3 : 0; // Boost recent films
-      const noveltyBonus = recentChosenIds.includes(item.id) ? -0.5 : 0.08;
-
-      return btlScore + qualityBonus + recentBonus + noveltyBonus;
+      // Genre mapping from TMDB IDs to preference scores
+      const genreScores = {
+        35: comedy || 0,     // Comedy
+        18: drama || 0,      // Drama 
+        28: action || 0,     // Action
+        53: thriller || 0,   // Thriller
+        878: scifi || 0,     // Sci-Fi
+        14: fantasy || 0,    // Fantasy
+        12: action * 0.8 || 0, // Adventure (related to action)
+        80: thriller * 0.7 || 0, // Crime (related to thriller)
+        9648: thriller * 0.8 || 0, // Mystery (related to thriller)
+        27: thriller * 0.9 || 0, // Horror (related to thriller)
+        10749: comedy * 0.6 || 0, // Romance (light comedy overlap)
+        16: comedy * 0.8 || 0  // Animation (often comedy)
+      };
+      
+      // Calculate genre match score
+      let genreScore = 0;
+      let matchedGenres = [];
+      for (const genreId of item.genres) {
+        const score = genreScores[genreId] || 0;
+        if (score > 0.5) {
+          genreScore += score;
+          const genreName = {
+            35: 'comedy', 18: 'drama', 28: 'action', 53: 'thriller', 
+            878: 'sci-fi', 14: 'fantasy', 12: 'adventure', 80: 'crime',
+            9648: 'mystery', 27: 'horror', 10749: 'romance', 16: 'animation'
+          }[genreId] || 'other';
+          matchedGenres.push(genreName);
+        }
+      }
+      
+      // Bonus factors
+      const qualityBonus = item.sources?.includes('imdbTop') ? 0.15 : 0;
+      const recentBonus = parseInt(item.year) >= 2010 ? 0.1 : 0;
+      const noveltyBonus = recentChosenIds.includes(item.id) ? -1.0 : 0; // Heavy penalty for repeats
+      
+      const finalScore = genreScore + qualityBonus + recentBonus + noveltyBonus;
+      
+      // Debug logging for top-scoring movies
+      if (finalScore > 0.8) {
+        console.log(`[SCORING] "${item.title}" = ${finalScore.toFixed(3)} (genres: ${matchedGenres.join('/')} | matched: ${genreScore.toFixed(2)})`);
+      }
+      
+      return Math.max(0.01, finalScore); // Ensure positive scores
     };
 
     // Score top 150 candidates, then MMR-select diverse 5
@@ -135,12 +169,17 @@ export default function TrailerPlayer({
       .slice(0, 150)
       .map(x => x.item);
 
+    console.log('[TrailerPlayer] A/B Preferences Summary:');
+    console.log(`  - Comedy: ${learnedVec[0]?.toFixed(2)} | Sci-Fi: ${learnedVec[4]?.toFixed(2)} | Fantasy: ${learnedVec[5]?.toFixed(2)}`);
+    console.log(`  - Action: ${learnedVec[2]?.toFixed(2)} | Drama: ${learnedVec[1]?.toFixed(2)} | Thriller: ${learnedVec[3]?.toFixed(2)}`);
+    
     console.log('[TrailerPlayer] Top preliminary candidates:', 
       prelim.slice(0, 10).map(item => ({
         title: item.title,
         year: item.year,
         score: baseRel(item).toFixed(3),
-        sources: item.sources
+        sources: item.sources,
+        genres: item.genres
       }))
     );
 
