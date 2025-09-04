@@ -12,10 +12,10 @@ interface TrailerPlayerProps {
   items: Movie[];
   learnedVec: number[];
   recentChosenIds: number[];
-  avoidIds: number[];
+  count?: number;
 }
 
-export function TrailerPlayer({ items, learnedVec, recentChosenIds, avoidIds }: TrailerPlayerProps) {
+export function TrailerPlayer({ items, learnedVec, recentChosenIds, count = 5 }: TrailerPlayerProps) {
   const [currentQueue, setCurrentQueue] = useState<Array<{
     item: Movie;
     embed: string;
@@ -223,11 +223,10 @@ export function TrailerPlayer({ items, learnedVec, recentChosenIds, avoidIds }: 
 
     console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 6));
 
-    // Filter to available movies (not recently seen, not avoided)
+    // Filter to available movies (not recently seen)
     const available = items
       .filter(item => item.title && item.title !== 'Unknown Title')
-      .filter(item => !recentChosenIds.includes(parseInt(item.id)))
-      .filter(item => !avoidIds.includes(parseInt(item.id)))
+      .filter(item => !recentChosenIds.includes(parseInt(String(item.id))))
       .filter(item => item.year && parseInt(item.year) > 1960); // Filter out very old movies
 
     console.log('[TrailerPlayer] Available movies after filtering:', available.length);
@@ -268,7 +267,7 @@ export function TrailerPlayer({ items, learnedVec, recentChosenIds, avoidIds }: 
     })));
 
     return finalSelection;
-  }, [items, learnedVec, recentChosenIds, avoidIds, genreMap, selectABDrivenTrailers, selectGenreBasedTrailers]);
+  }, [items, learnedVec, recentChosenIds, genreMap, selectABDrivenTrailers, selectGenreBasedTrailers]);
 
   // Fetch trailers for selected movies
   useEffect(() => {

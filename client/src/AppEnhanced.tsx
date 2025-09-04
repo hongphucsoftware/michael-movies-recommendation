@@ -194,12 +194,12 @@ function AppEnhanced() {
 
               <TrailerPlayer
                 items={(() => {
-                  console.log('[AppEnhanced] Mapping finalMovies for TrailerPlayer:', comprehensiveMovies.length); // Use comprehensiveMovies here
-                  const mapped = comprehensiveMovies.map(m => { // Use comprehensiveMovies here
+                  console.log('[AppEnhanced] Mapping comprehensiveMovies for TrailerPlayer:', comprehensiveMovies.length);
+                  const mapped = comprehensiveMovies.map(m => {
                     const mappedMovie = {
-                      id: typeof m.id === 'string' ? parseInt(m.id.replace(/\D/g, '')) : m.id,
-                      title: m.name || m.title,
-                      year: m.year,
+                      id: typeof m.id === 'string' ? m.id : String(m.id),
+                      title: m.name || m.title || 'Unknown Title',
+                      year: String(m.year || ''),
                       genres: m.genreIds || m.genre_ids || [],
                       popularity: m.popularity || 0,
                       feature: m.feature || m.features || [],
