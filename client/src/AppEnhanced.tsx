@@ -1,7 +1,6 @@
 import { useMLLearning } from "./hooks/useMLLearning";
 import { useEnhancedCatalogueNew } from "./hooks/useEnhancedCatalogueNew";
 import { useEnhancedCatalogue } from "./hooks/useEnhancedCatalogue";
-import { useComprehensiveCatalogue } from "./hooks/useComprehensiveCatalogue"; // Import the new hook
 import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
 import TrailerPlayer from "./components/TrailerPlayer";
@@ -12,7 +11,7 @@ import { Badge } from "./components/ui/badge";
 function AppEnhanced() {
   // New enhanced catalogue with proper poster handling
   const { items: movies, loading } = useEnhancedCatalogueNew();
-
+  
   // Temporary fallback to old hook while transitioning
   const {
     isLoading: oldLoading,
@@ -27,15 +26,13 @@ function AppEnhanced() {
     getWatchlistMovies,
     resetAll
   } = useEnhancedCatalogue();
-
-  // Load comprehensive catalogue for TrailerPlayer (all 669 movies)
-  const { movies: comprehensiveMovies, loading: catalogueLoading } = useComprehensiveCatalogue();
-
-  // Use new movies if available and valid, otherwise fall back to old
+  
+  // Use new movies if available and valid, otherwise fall back to old hook
   const finalMovies = (movies && movies.length > 0) ? movies : [];
-
-  // Only show loading if we have no movies at all AND catalogue is still loading
-  const isLoading = finalMovies.length === 0 && catalogueLoading;
+  
+  // Use new loading state if available, fallback to old
+  // Only show loading if both systems are loading AND no movies are available
+  const isLoading = (loading || oldLoading) && finalMovies.length === 0;
 
   const {
     preferences,
@@ -47,7 +44,7 @@ function AppEnhanced() {
     reset: resetML,
     getAdventurousnessLabel
   } = useMLLearning(finalMovies);
-
+  
   console.log('App states:', { 
     newMovies: movies?.length || 0, 
     finalMovies: finalMovies.length,
@@ -193,12 +190,12 @@ function AppEnhanced() {
 
               <TrailerPlayer
                 items={(() => {
-                  console.log('[AppEnhanced] Mapping comprehensiveMovies for TrailerPlayer:', comprehensiveMovies.length);
-                  const mapped = comprehensiveMovies.map(m => {
+                  console.log('[AppEnhanced] Mapping finalMovies for TrailerPlayer:', finalMovies.length);
+                  const mapped = finalMovies.map(m => {
                     const mappedMovie = {
-                      id: typeof m.id === 'string' ? m.id : String(m.id),
-                      title: m.name || m.title || 'Unknown Title',
-                      year: String(m.year || ''),
+                      id: typeof m.id === 'string' ? parseInt(m.id.replace(/\D/g, '')) : m.id,
+                      title: m.name || m.title,
+                      year: m.year,
                       genres: m.genreIds || m.genre_ids || [],
                       popularity: m.popularity || 0,
                       feature: m.feature || m.features || [],

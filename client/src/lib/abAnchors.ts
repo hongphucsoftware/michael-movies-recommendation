@@ -1,204 +1,207 @@
+
 import type { Title } from "../hooks/useEnhancedCatalogue";
 
-// Curated A/B testing pairs with clear genre/style contrasts
-const AB_TEST_PAIRS = [
-  // Round 1-4: Broad genre exploration
-  {
-    round: 1,
-    optionA: { title: "The Dark Knight", genres: [28, 80, 18], year: 2008, type: "action" },
-    optionB: { title: "The Grand Budapest Hotel", genres: [35, 18], year: 2014, type: "comedy" }
-  },
-  {
-    round: 2,
-    optionA: { title: "Blade Runner 2049", genres: [878, 18, 53], year: 2017, type: "scifi" },
-    optionB: { title: "The Shawshank Redemption", genres: [18, 80], year: 1994, type: "drama" }
-  },
-  {
-    round: 3,
-    optionA: { title: "Mad Max: Fury Road", genres: [28, 12, 878], year: 2015, type: "action" },
-    optionB: { title: "Her", genres: [18, 10749, 878], year: 2013, type: "romance" }
-  },
-  {
-    round: 4,
-    optionA: { title: "Get Out", genres: [27, 53, 9648], year: 2017, type: "horror" },
-    optionB: { title: "La La Land", genres: [35, 18, 10749], year: 2016, type: "musical" }
-  },
-  // Round 5-8: Style/era contrasts within preferred genres
-  {
-    round: 5,
-    optionA: { title: "Terminator 2: Judgment Day", genres: [28, 878, 53], year: 1991, type: "classic_action" },
-    optionB: { title: "John Wick", genres: [28, 80, 53], year: 2014, type: "modern_action" }
-  },
-  {
-    round: 6,
-    optionA: { title: "Goodfellas", genres: [18, 80], year: 1990, type: "classic_drama" },
-    optionB: { title: "Parasite", genres: [18, 53, 35], year: 2019, type: "modern_drama" }
-  },
-  {
-    round: 7,
-    optionA: { title: "Alien", genres: [27, 878, 53], year: 1979, type: "classic_horror" },
-    optionB: { title: "Hereditary", genres: [27, 18, 9648], year: 2018, type: "modern_horror" }
-  },
-  {
-    round: 8,
-    optionA: { title: "Some Like It Hot", genres: [35, 80, 10749], year: 1959, type: "classic_comedy" },
-    optionB: { title: "Knives Out", genres: [35, 80, 9648], year: 2019, type: "modern_comedy" }
-  },
-  // Round 9-12: Fine-tuning within top genres
-  {
-    round: 9,
-    optionA: { title: "Heat", genres: [28, 80, 18], year: 1995, type: "crime_action" },
-    optionB: { title: "Mission: Impossible - Fallout", genres: [28, 12, 53], year: 2018, type: "spy_action" }
-  },
-  {
-    round: 10,
-    optionA: { title: "There Will Be Blood", genres: [18], year: 2007, type: "intense_drama" },
-    optionB: { title: "Lost in Translation", genres: [18, 35], year: 2003, type: "quiet_drama" }
-  },
-  {
-    round: 11,
-    optionA: { title: "The Matrix", genres: [28, 878], year: 1999, type: "philosophical_scifi" },
-    optionB: { title: "Interstellar", genres: [878, 18, 12], year: 2014, type: "emotional_scifi" }
-  },
-  {
-    round: 12,
-    optionA: { title: "Pulp Fiction", genres: [80, 18], year: 1994, type: "nonlinear_crime" },
-    optionB: { title: "Casino", genres: [80, 18], year: 1995, type: "epic_crime" }
+const CLUSTERS: Record<string, number[]> = {
+  Action: [28, 12, 53], // Action, Adventure, Thriller
+  ComedyRomance: [35, 10749], // Comedy, Romance  
+  Drama: [18], // Drama
+  Horror: [27, 53], // Horror, Thriller
+  AnimationFamily: [16, 10751], // Animation, Family
+  ScifiFantasy: [878, 14], // Sci-Fi, Fantasy
+  CrimeMystery: [80, 9648], // Crime, Mystery
+};
+
+function clusterOf(t: Title) {
+  const gs = t.genres || [];
+  let best = "Drama", bestOverlap = -1;
+  for (const [name, ids] of Object.entries(CLUSTERS)) {
+    const overlap = gs.filter(g => ids.includes(g)).length;
+    if (overlap > bestOverlap) { 
+      best = name; 
+      bestOverlap = overlap; 
+    }
   }
-];
+  return best;
+}
 
-// Map movie titles to their metadata for easier lookups
-const MOVIE_METADATA = new Map(
-  AB_TEST_PAIRS.flatMap(pair => [
-    [pair.optionA.title.toLowerCase(), pair.optionA],
-    [pair.optionB.title.toLowerCase(), pair.optionB]
-  ])
-);
+function yearOf(t: Title) {
+  const y = (t as any).year || (t as any).release_date || (t as any).releaseDate || "";
+  return typeof y === "string" ? Number(y.slice(0,4)) || null : (typeof y === "number" ? y : null);
+}
 
-// Genre ID mappings
-const GENRE_IDS = {
-  Action: 28, Adventure: 12, Animation: 16, Comedy: 35, Crime: 80,
-  Documentary: 99, Drama: 18, Family: 10751, Fantasy: 14, History: 36,
-  Horror: 27, Music: 10402, Mystery: 9648, Romance: 10749,
-  SciFi: 878, Thriller: 53, War: 10752, Western: 37
+// "Knownness": IMDb Top 250 gets a boost; popularity & vote_count help
+function knownness(t: Title) {
+  const src = t.sources || [];
+  const imdbTop = src.includes("imdbTop") ? 1.5 : 0;
+  const imdbList = src.includes("imdbList") ? 0.5 : 0;
+  const pop = Math.min(60, Math.max(0, Number(t.popularity || 0))) / 60; // 0..1
+  const votes = Math.min(1, (t.vote_count || 0) / 20000);
+  return imdbTop + imdbList + 0.8 * pop + 0.5 * votes;
+}
+
+// Keep A/B anchors English-first (reduces confusion)
+function isEnglishish(t: Title) {
+  const lang = (t as any).original_language || (t as any).originalLanguage || "en";
+  return lang === "en";
+}
+
+export type Anchor = Title & { 
+  cluster: string; 
+  knownness: number; 
+  decade: number;
 };
 
-export type Anchor = {
-  id: number;
-  title: string;
-  year: number;
-  genres: number[];
-  type: string;
-  round?: number;
-  isOptionA?: boolean;
-};
+export function buildABAnchors(full: Title[], maxPerCluster = 30): Anchor[] {
+  // 1) Prefilter: recognizable + English + has poster
+  const pool = full.filter(t => 
+    knownness(t) >= 0.6 && 
+    isEnglishish(t) && 
+    (t.poster || t.image || (t as any).poster_path)
+  );
 
-export function buildABAnchors(catalogue: Title[]): Anchor[] {
-  console.log('[AB ANCHORS] Building curated A/B test pairs from catalogue');
+  console.log(`[AB ANCHORS] Filtered to ${pool.length} recognizable English movies from ${full.length} total`);
 
+  // 2) Rank by "knownness" inside cluster
+  const byCluster: Record<string, Anchor[]> = {};
+  for (const t of pool) {
+    const c = clusterOf(t);
+    const y = yearOf(t) || 2000;
+    const decade = Math.floor(y / 10) * 10; // 1970, 1980, etc
+    const k = knownness(t);
+    
+    (byCluster[c] ||= []).push({
+      ...t,
+      cluster: c,
+      knownness: k,
+      decade
+    });
+  }
+
+  // Sort each cluster by knownness
+  for (const c of Object.keys(byCluster)) {
+    byCluster[c].sort((a, b) => b.knownness - a.knownness);
+  }
+
+  // 3) Enforce decade spread per cluster (1970s-2020s if available)
+  const decades = [1970, 1980, 1990, 2000, 2010, 2020];
   const anchors: Anchor[] = [];
+  
+  for (const c of Object.keys(byCluster)) {
+    const arr = byCluster[c];
+    const taken: Anchor[] = [];
 
-  // Find movies in catalogue that match our curated list
-  for (const pair of AB_TEST_PAIRS) {
-    for (const option of [pair.optionA, pair.optionB]) {
-      const found = catalogue.find(movie =>
-        movie.title.toLowerCase().includes(option.title.toLowerCase()) ||
-        option.title.toLowerCase().includes(movie.title.toLowerCase())
-      );
+    console.log(`[AB ANCHORS] ${c}: ${arr.length} candidates`);
 
-      if (found) {
-        anchors.push({
-          id: found.id,
-          title: found.title,
-          year: option.year,
-          genres: option.genres,
-          type: option.type,
-          round: pair.round,
-          isOptionA: option === pair.optionA
-        });
-        console.log(`[AB ANCHORS] Found "${found.title}" for round ${pair.round}`);
-      } else {
-        console.warn(`[AB ANCHORS] Missing "${option.title}" in catalogue`);
+    // Pick up to 5 per decade first pass for variety
+    for (const d of decades) {
+      let decadeCount = 0;
+      for (const t of arr) {
+        if (taken.length >= maxPerCluster) break;
+        if (Math.floor((t.decade || 2000) / 10) * 10 === d && 
+            !taken.find(x => x.id === t.id)) {
+          taken.push(t);
+          decadeCount++;
+          if (decadeCount >= 5) break; // Max 5 per decade
+        }
       }
     }
-  }
 
-  console.log(`[AB ANCHORS] Built ${anchors.length} curated anchors for A/B testing`);
-  return anchors;
-}
-
-export function getABPairForRound(anchors: Anchor[], round: number): [Anchor | null, Anchor | null] {
-  const roundAnchors = anchors.filter(a => a.round === round);
-  const optionA = roundAnchors.find(a => a.isOptionA) || null;
-  const optionB = roundAnchors.find(a => !a.isOptionA) || null;
-
-  console.log(`[AB PAIR] Round ${round}: "${optionA?.title}" vs "${optionB?.title}"`);
-  return [optionA, optionB];
-}
-
-// Analyze user preferences from A/B choices
-export function analyzeABPreferences(choices: number[]): {
-  topGenres: Array<{ genre: string, strength: number }>;
-  preferredEras: Array<{ era: string, strength: number }>;
-  stylePreferences: Record<string, number>;
-} {
-  const genreScores: Record<number, number> = {};
-  const eraScores: Record<string, number> = {};
-  const styleScores: Record<string, number> = {};
-
-  // Process each choice
-  choices.forEach((chosenId, index) => {
-    const round = index + 1;
-    const pair = AB_TEST_PAIRS.find(p => p.round === round);
-    if (!pair) return;
-
-    // Determine which option was chosen based on title length (a proxy for id if id is not available)
-    // In a real scenario, 'chosenId' would likely be the movie's actual ID.
-    // For demonstration, we'll assume 'chosenId' refers to the index of the chosen option in the pair.
-    // If `chosenId` is a movie ID, we need to find which movie it is.
-    // A more robust approach would be to pass the chosen movie's ID.
-    // For now, let's assume `choices` contains the `id` of the chosen movie.
-    const chosenMovieId = chosenId;
-    const chosenOption = (chosenMovieId === pair.optionA.title.length) // This logic needs to be revisited if choices are actual IDs
-      ? pair.optionA
-      : (chosenMovieId === pair.optionB.title.length) // This logic needs to be revisited if choices are actual IDs
-        ? pair.optionB
-        : undefined; // Fallback if no match
-
-    if (!chosenOption) {
-      // If the above proxy logic fails, we might need to iterate through the catalogue
-      // to find the movie matching `chosenId` and then determine its role in the pair.
-      // For simplicity here, we'll skip if we can't identify the choice.
-      // In a real implementation, `choices` should be an array of movie IDs.
-      console.warn(`Could not identify chosen movie for round ${round} with choice identifier: ${chosenId}`);
-      return;
+    // Top up to quota with highest knownness
+    for (const t of arr) {
+      if (taken.length >= maxPerCluster) break;
+      if (!taken.find(x => x.id === t.id)) {
+        taken.push(t);
+      }
     }
 
+    console.log(`[AB ANCHORS] ${c}: Selected ${taken.length} anchors`);
+    anchors.push(...taken.slice(0, maxPerCluster));
+  }
 
-    // Score genres
-    chosenOption.genres.forEach(genreId => {
-      genreScores[genreId] = (genreScores[genreId] || 0) + 1;
-    });
+  // 4) Brand diversity: avoid multiple entries from same franchise
+  const brandSeen = new Set<string>();
+  const out: Anchor[] = [];
+  
+  for (const t of anchors) {
+    const title = t.title || "";
+    // Simple brand detection - first 2 words after removing articles
+    const brand = title.toLowerCase()
+      .replace(/^the\s+|^a\s+|^an\s+/, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(" ")
+      .slice(0, 2)
+      .join(" ");
+    
+    if (brandSeen.has(brand)) continue;
+    brandSeen.add(brand);
+    out.push(t);
+  }
 
-    // Score eras
-    const era = chosenOption.year >= 2010 ? 'modern' : chosenOption.year >= 1990 ? 'recent' : 'classic';
-    eraScores[era] = (eraScores[era] || 0) + 1;
+  console.log(`[AB ANCHORS] Final anchor pool: ${out.length} movies across ${Object.keys(byCluster).length} clusters`);
+  console.log(`[AB ANCHORS] Cluster breakdown:`, 
+    Object.keys(byCluster).map(c => `${c}:${out.filter(t => t.cluster === c).length}`).join(', ')
+  );
 
-    // Score styles
-    styleScores[chosenOption.type] = (styleScores[chosenOption.type] || 0) + 1;
-  });
+  return out;
+}
 
-  // Convert to sorted arrays
-  const topGenres = Object.entries(genreScores)
-    .map(([genreId, score]) => ({
-      genre: Object.keys(GENRE_IDS).find(k => GENRE_IDS[k] === parseInt(genreId)) || 'Unknown',
-      strength: score / choices.length
-    }))
-    .sort((a, b) => b.strength - a.strength);
-
-  const preferredEras = Object.entries(eraScores)
-    .map(([era, score]) => ({ era, strength: score / choices.length }))
-    .sort((a, b) => b.strength - a.strength);
-
-  return { topGenres, preferredEras, stylePreferences: styleScores };
+// Get anchors for specific A/B testing phases
+export function getAnchorsForPhase(anchors: Anchor[], phase: 'broad' | 'focused' | 'precise', topGenres?: string[]) {
+  switch (phase) {
+    case 'broad':
+      // Return variety across all clusters for broad exploration
+      const clusters = ['Action', 'ComedyRomance', 'Drama', 'ScifiFantasy', 'Horror', 'AnimationFamily', 'CrimeMystery'];
+      return clusters.map(cluster => 
+        anchors.filter(a => a.cluster === cluster).slice(0, 8)
+      ).flat();
+      
+    case 'focused':
+      // Focus on top 2-3 user-preferred clusters
+      if (!topGenres || topGenres.length === 0) return anchors.slice(0, 40);
+      
+      const focusedClusters = topGenres.map(genre => {
+        // Map A/B vector indices to clusters
+        switch (genre) {
+          case 'comedy': return 'ComedyRomance';
+          case 'drama': return 'Drama';
+          case 'action': return 'Action';
+          case 'thriller': return 'Horror'; // Horror cluster includes thrillers
+          case 'scifi': return 'ScifiFantasy';
+          case 'fantasy': return 'ScifiFantasy';
+          default: return 'Drama';
+        }
+      });
+      
+      return focusedClusters.map(cluster =>
+        anchors.filter(a => a.cluster === cluster).slice(0, 15)
+      ).flat();
+      
+    case 'precise':
+      // Use highest-rated movies from user's preferred clusters
+      if (!topGenres || topGenres.length === 0) {
+        return anchors.sort((a, b) => b.knownness - a.knownness).slice(0, 30);
+      }
+      
+      const preciseClusters = topGenres.slice(0, 2).map(genre => {
+        switch (genre) {
+          case 'comedy': return 'ComedyRomance';
+          case 'drama': return 'Drama';
+          case 'action': return 'Action';
+          case 'thriller': return 'Horror';
+          case 'scifi': return 'ScifiFantasy';
+          case 'fantasy': return 'ScifiFantasy';
+          default: return 'Drama';
+        }
+      });
+      
+      return preciseClusters.map(cluster =>
+        anchors.filter(a => a.cluster === cluster)
+          .sort((a, b) => b.knownness - a.knownness)
+          .slice(0, 15)
+      ).flat();
+      
+    default:
+      return anchors;
+  }
 }
