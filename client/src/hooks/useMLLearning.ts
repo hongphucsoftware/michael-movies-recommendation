@@ -73,8 +73,11 @@ export function useMLLearning(movies: Movie[]) {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   
   const [state, setState] = useState<MLState>(() => {
-    const STORAGE_KEY = 'ts_preferences_funnel_v1';
-    const storedPrefs = localStorage.getItem(STORAGE_KEY);
+    // Clear all stored data on every app load to treat each reload as a new user
+    ['ts_preferences_funnel_v1', 'pf_ab_chosen_v1', 'pf_ab_seen_v1'].forEach(key => {
+      localStorage.removeItem(key);
+    });
+    
     const defaultPrefs: UserPreferences = {
       w: zeros(DIMENSION),
       explored: new Set<string>(),
@@ -84,28 +87,11 @@ export function useMLLearning(movies: Movie[]) {
       eps: EPS_DEFAULT
     };
 
-    let preferences = defaultPrefs;
-    if (storedPrefs) {
-      try {
-        const parsed = JSON.parse(storedPrefs);
-        preferences = {
-          w: parsed.w || zeros(DIMENSION),
-          explored: new Set(parsed.explored || []),
-          hidden: new Set(parsed.hidden || []),
-          likes: new Set(parsed.likes || []),
-          choices: parsed.choices || 0,
-          eps: parsed.eps || EPS_DEFAULT
-        };
-      } catch (e) {
-        console.error('Failed to parse stored preferences:', e);
-      }
-    }
-
     return {
-      preferences,
+      preferences: defaultPrefs,
       queue: [],
       currentPair: null,
-      onboardingComplete: preferences.choices >= TARGET_CHOICES
+      onboardingComplete: false
     };
   });
 
