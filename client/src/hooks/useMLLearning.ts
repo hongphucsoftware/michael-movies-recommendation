@@ -256,32 +256,45 @@ export function useMLLearning(movies: Movie[]) {
 
   // Informative pair selection that asks strategic questions
   const nextPair = useCallback((): [Movie, Movie] => {
-    // Determine the candidate pool based on ANCHOR_MODE
+    // Force use of hardlist anchors during A/B testing if available
     let candidatePool: Movie[];
-    if (ANCHOR_MODE === 'hardlist' && anchors.length > 0) {
-      console.log('[FUNNEL] Selecting from hardlist anchors.');
-      candidatePool = moviesData.filter(m => anchors.some(a => a.id === m.id));
+    if (ANCHOR_MODE === 'hardlist' && serverAnchors.length > 0) {
+      console.log('[FUNNEL] Using hardlist anchors for A/B testing. Server anchors:', serverAnchors.length);
+      // Match server anchors to movie data by title and year
+      candidatePool = moviesData.filter(movie => {
+        return serverAnchors.some(anchor => {
+          const titleMatch = movie.name.toLowerCase().trim() === anchor.title.toLowerCase().trim();
+          const yearMatch = movie.year === String(anchor.year);
+          return titleMatch && yearMatch;
+        });
+      });
+      console.log('[FUNNEL] Filtered to', candidatePool.length, 'hardlist movies from', moviesData.length, 'total movies');
     } else {
+      console.log('[FUNNEL] Using full catalogue for A/B testing');
       candidatePool = moviesData;
     }
 
     if (candidatePool.length < 2) {
-      return [
-        { id: 'loading1', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
-        { id: 'loading2', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
-      ];
+      console.warn('[FUNNEL] Not enough hardlist candidates, falling back to full catalogue');
+      candidatePool = moviesData;
+      if (candidatePool.length < 2) {
+        return [
+          { id: 'loading1', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
+          { id: 'loading2', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
+        ];
+      }
     }
 
     // build candidate pool (hide hidden; downweight very recent repeats)
     const hidden = new Set(state.preferences.hidden);
-    const recentChoices = state.choices.slice(-6).map(c => c.choice);
+    const recentChoices = state.preferences.choices > 0 ? Array.from(state.preferences.explored).slice(-6) : [];
     const recentSet = new Set(recentChoices);
 
     const candidates = candidatePool.filter(m => !hidden.has(m.id));
     if (candidates.length < 2) return [candidatePool[0], candidatePool[1]];
 
-    return pickInformativePair(candidates, state.weights, recentSet);
-  }, [moviesData, anchors, state]);
+    return pickInformativePairLocal(candidates, state.preferences.w, recentSet);
+  }, [moviesData, serverAnchors, state.preferences]);
 
   // Update currentPair when movies are loaded
   useEffect(() => {
@@ -296,6 +309,14 @@ export function useMLLearning(movies: Movie[]) {
 
   const learnChoice = useCallback((winner: Movie, loser: Movie) => {
     setState(prev => {
+      // Log which movies are being chosen to verify hardlist usage
+      console.log(`[FUNNEL A/B] Choice ${prev.preferences.choices + 1}: "${winner.name}" (${winner.year}) beat "${loser.name}" (${loser.year})`);
+      if (ANCHOR_MODE === 'hardlist') {
+        const winnerInHardlist = serverAnchors.some(a => a.title.toLowerCase() === winner.name.toLowerCase() && a.year === parseInt(winner.year));
+        const loserInHardlist = serverAnchors.some(a => a.title.toLowerCase() === loser.name.toLowerCase() && a.year === parseInt(loser.year));
+        console.log(`[FUNNEL A/B] Winner in hardlist: ${winnerInHardlist}, Loser in hardlist: ${loserInHardlist}`);
+      }
+
       // Convert movies to proper Title format for phi function
       const winnerTitle = {
         id: typeof winner.id === 'string' ? parseInt(winner.id) : winner.id,
