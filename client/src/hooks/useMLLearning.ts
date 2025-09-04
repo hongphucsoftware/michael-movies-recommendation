@@ -12,6 +12,7 @@ import {
   TARGET_CHOICES, 
   EPS_DEFAULT 
 } from "@/lib/mlUtils";
+import { buildABAnchors, getAnchorsForPhase, type Anchor } from "@/lib/abAnchors";
 
 const DIMENSION = 12;
 
@@ -66,6 +67,8 @@ const ANCHOR_MOVIES = {
 };
 
 export function useMLLearning(movies: Movie[]) {
+  const [anchors, setAnchors] = useState<Anchor[]>([]);
+  
   const [state, setState] = useState<MLState>(() => {
     const STORAGE_KEY = 'ts_preferences_funnel_v1';
     const storedPrefs = localStorage.getItem(STORAGE_KEY);
@@ -102,6 +105,46 @@ export function useMLLearning(movies: Movie[]) {
       onboardingComplete: preferences.choices >= TARGET_CHOICES
     };
   });
+
+  // Initialize anchors when movies are loaded
+  useEffect(() => {
+    if (movies.length > 0 && anchors.length === 0) {
+      console.log('[FUNNEL] Building A/B anchor pool from', movies.length, 'movies');
+      const movieTitles = movies.map(m => ({
+        id: m.id,
+        title: m.name,
+        year: m.year,
+        genres: m.tags.map(tag => {
+          // Map string tags to genre IDs for clustering
+          switch (tag.toLowerCase()) {
+            case 'action': return 28;
+            case 'adventure': return 12;
+            case 'comedy': return 35;
+            case 'drama': return 18;
+            case 'horror': return 27;
+            case 'thriller': return 53;
+            case 'sci-fi': case 'science fiction': return 878;
+            case 'fantasy': return 14;
+            case 'romance': return 10749;
+            case 'crime': return 80;
+            case 'mystery': return 9648;
+            case 'animation': return 16;
+            case 'family': return 10751;
+            default: return 18; // Default to drama
+          }
+        }),
+        sources: [m.category || 'unknown'],
+        popularity: 50, // Default popularity
+        vote_count: 1000, // Default vote count
+        poster: m.poster,
+        original_language: 'en' // Assume English for now
+      }));
+      
+      const newAnchors = buildABAnchors(movieTitles, 30);
+      setAnchors(newAnchors);
+      console.log('[FUNNEL] Built anchor pool with', newAnchors.length, 'movies');
+    }
+  }, [movies, anchors.length]);
 
   // Persist to localStorage
   useEffect(() => {
@@ -157,9 +200,9 @@ export function useMLLearning(movies: Movie[]) {
     return found || null;
   }, [movies]);
 
-  // Funnel-based pair selection
+  // Funnel-based pair selection using anchors
   const nextPair = useCallback((): [Movie, Movie] => {
-    if (movies.length < 2) {
+    if (movies.length < 2 || anchors.length === 0) {
       return [
         { id: 'loading1', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) },
         { id: 'loading2', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) }
@@ -168,92 +211,110 @@ export function useMLLearning(movies: Movie[]) {
 
     const phase = getCurrentPhase();
     const choice = state.preferences.choices + 1;
+    const prefs = analyzePreferences();
 
     console.log(`[FUNNEL] Round ${choice}/12 - Phase: ${phase}`);
 
     if (phase === 'broad') {
-      // Rounds 1-4: Broad genre exploration with anchors
-      const roundIndex = (choice - 1) % ANCHOR_MOVIES.broad.length;
-      const pair = ANCHOR_MOVIES.broad[roundIndex];
-      const genres = Object.keys(pair);
+      // Rounds 1-4: Broad genre exploration using anchor pool
+      const phaseAnchors = getAnchorsForPhase(anchors, 'broad');
+      console.log(`[FUNNEL BROAD] Using ${phaseAnchors.length} broad anchors`);
       
-      // Try to find these specific movies
-      const genreA = genres[0];
-      const genreB = genres[1];
-      const optionsA = pair[genreA as keyof typeof pair];
-      const optionsB = pair[genreB as keyof typeof pair];
+      // Create contrasting clusters for each round
+      const clusterPairs = [
+        ['Action', 'ComedyRomance'], // Action vs Comedy
+        ['Drama', 'ScifiFantasy'],   // Drama vs Sci-Fi
+        ['Horror', 'AnimationFamily'], // Horror vs Animation  
+        ['CrimeMystery', 'Action']   // Crime vs Action
+      ];
       
-      let movieA = null, movieB = null;
+      const pairIndex = (choice - 1) % clusterPairs.length;
+      const [clusterA, clusterB] = clusterPairs[pairIndex];
       
-      // Try to find anchor movies, fallback to genre-based selection
-      for (const title of optionsA) {
-        movieA = findMovieByTitle(title);
-        if (movieA) break;
-      }
+      const optionsA = phaseAnchors.filter(a => a.cluster === clusterA);
+      const optionsB = phaseAnchors.filter(a => a.cluster === clusterB);
       
-      for (const title of optionsB) {
-        movieB = findMovieByTitle(title);
-        if (movieB) break;
-      }
+      const anchorA = optionsA[Math.floor(Math.random() * optionsA.length)];
+      const anchorB = optionsB[Math.floor(Math.random() * optionsB.length)];
       
-      // Fallback: filter by genre features
-      if (!movieA) {
-        const genreIndex = genreA === 'comedy' ? 0 : genreA === 'drama' ? 1 : genreA === 'action' ? 2 : genreA === 'thriller' ? 3 : genreA === 'scifi' ? 4 : 5;
-        const candidates = movies.filter(m => m.features[genreIndex] > 0.6);
-        movieA = candidates[Math.floor(Math.random() * candidates.length)] || movies[0];
-      }
+      // Convert anchors back to Movie format
+      const movieA = findMovieByTitle(anchorA?.title || '') || movies[0];
+      const movieB = findMovieByTitle(anchorB?.title || '') || movies[1];
       
-      if (!movieB) {
-        const genreIndex = genreB === 'comedy' ? 0 : genreB === 'drama' ? 1 : genreB === 'action' ? 2 : genreB === 'thriller' ? 3 : genreB === 'scifi' ? 4 : 5;
-        const candidates = movies.filter(m => m.features[genreIndex] > 0.6);
-        movieB = candidates[Math.floor(Math.random() * candidates.length)] || movies[1];
-      }
-      
-      console.log(`[FUNNEL BROAD] ${genreA} vs ${genreB}: "${movieA.name}" vs "${movieB.name}"`);
+      console.log(`[FUNNEL BROAD] ${clusterA} vs ${clusterB}: "${movieA.name}" vs "${movieB.name}"`);
       return [movieA, movieB];
     }
 
     if (phase === 'focused') {
-      // Rounds 5-8: Focus on top 2 preferred genres
-      const prefs = analyzePreferences();
+      // Rounds 5-8: Focus on top 2 preferred genres using anchors
+      const topGenres = [prefs.top, prefs.second];
+      const phaseAnchors = getAnchorsForPhase(anchors, 'focused', topGenres);
+      
+      console.log(`[FUNNEL FOCUSED] Focusing on ${prefs.top}, ${prefs.second} with ${phaseAnchors.length} anchors`);
+      
+      // Create decade/style contrasts within preferred genres
       const focusGenre = choice <= 6 ? prefs.top : prefs.second;
+      const clusterName = focusGenre === 'comedy' ? 'ComedyRomance' : 
+                         focusGenre === 'drama' ? 'Drama' :
+                         focusGenre === 'action' ? 'Action' :
+                         focusGenre === 'thriller' ? 'Horror' :
+                         focusGenre === 'scifi' ? 'ScifiFantasy' :
+                         focusGenre === 'fantasy' ? 'ScifiFantasy' : 'Drama';
       
-      console.log(`[FUNNEL FOCUSED] Focusing on ${focusGenre}, strengths:`, prefs.strengths);
+      const clusterAnchors = phaseAnchors.filter(a => a.cluster === clusterName);
       
-      // Get contrasting pairs within this genre
-      const genrePairs = ANCHOR_MOVIES.focused[focusGenre as keyof typeof ANCHOR_MOVIES.focused];
-      if (genrePairs && genrePairs.length > 0) {
-        const pairIndex = (choice - 5) % genrePairs.length;
-        const contrastPair = genrePairs[pairIndex];
-        const styles = Object.keys(contrastPair);
+      if (clusterAnchors.length >= 2) {
+        // Create vintage vs modern contrast
+        const vintage = clusterAnchors.filter(a => a.decade <= 1990);
+        const modern = clusterAnchors.filter(a => a.decade >= 2000);
         
-        let movieA = null, movieB = null;
+        const anchorA = vintage.length > 0 ? vintage[Math.floor(Math.random() * vintage.length)] : clusterAnchors[0];
+        const anchorB = modern.length > 0 ? modern[Math.floor(Math.random() * modern.length)] : clusterAnchors[1];
         
-        // Try to find specific anchor movies
-        for (const title of contrastPair[styles[0] as keyof typeof contrastPair]) {
-          movieA = findMovieByTitle(title);
-          if (movieA) break;
-        }
+        const movieA = findMovieByTitle(anchorA.title) || movies[0];
+        const movieB = findMovieByTitle(anchorB.title) || movies[1];
         
-        for (const title of contrastPair[styles[1] as keyof typeof contrastPair]) {
-          movieB = findMovieByTitle(title);
-          if (movieB) break;
-        }
-        
-        // Fallback to genre filtering
-        if (!movieA || !movieB) {
-          const genreIndex = focusGenre === 'comedy' ? 0 : focusGenre === 'drama' ? 1 : focusGenre === 'action' ? 2 : focusGenre === 'thriller' ? 3 : focusGenre === 'scifi' ? 4 : 5;
-          const candidates = movies.filter(m => m.features[genreIndex] > 0.5);
-          movieA = movieA || candidates[Math.floor(Math.random() * candidates.length)] || movies[0];
-          movieB = movieB || candidates[Math.floor(Math.random() * candidates.length)] || movies[1];
-        }
-        
-        console.log(`[FUNNEL FOCUSED] ${styles[0]} vs ${styles[1]} in ${focusGenre}: "${movieA.name}" vs "${movieB.name}"`);
+        console.log(`[FUNNEL FOCUSED] ${anchorA.decade}s vs ${anchorB.decade}s in ${focusGenre}: "${movieA.name}" vs "${movieB.name}"`);
         return [movieA, movieB];
       }
     }
 
-    // Phase 3: Precise (rounds 9-12) - Use learned preferences for boundary testing
+    // Phase 3: Precise (rounds 9-12) - Use learned preferences for boundary testing with anchors
+    const topGenres = [prefs.top, prefs.second];
+    const phaseAnchors = getAnchorsForPhase(anchors, 'precise', topGenres);
+    
+    console.log(`[FUNNEL PRECISE] Using ${phaseAnchors.length} precise anchors for boundary testing`);
+    
+    if (phaseAnchors.length >= 2) {
+      // Score anchors using current preferences
+      const w = state.preferences.w;
+      const scoredAnchors = phaseAnchors.map(anchor => {
+        const movie = findMovieByTitle(anchor.title);
+        if (!movie) return null;
+        return {
+          anchor,
+          movie,
+          score: logistic(dot(w, movie.features))
+        };
+      }).filter(Boolean);
+      
+      scoredAnchors.sort((a, b) => b!.score - a!.score);
+      
+      // Pick one high-scoring (aligned) and one boundary case
+      const topTier = scoredAnchors.slice(0, Math.floor(scoredAnchors.length * 0.3));
+      const midTier = scoredAnchors.slice(Math.floor(scoredAnchors.length * 0.4), Math.floor(scoredAnchors.length * 0.8));
+      
+      const high = topTier[Math.floor(Math.random() * topTier.length)];
+      const boundary = midTier[Math.floor(Math.random() * midTier.length)];
+      
+      const movieA = high?.movie || movies[0];
+      const movieB = boundary?.movie || movies[1];
+      
+      console.log(`[FUNNEL PRECISE] High vs Boundary: "${movieA.name}" (${high?.score.toFixed(3)}) vs "${movieB.name}" (${boundary?.score.toFixed(3)})`);
+      return [movieA, movieB];
+    }
+    
+    // Fallback to original movie selection
     const w = state.preferences.w;
     const scored = movies.map(movie => ({
       movie,
@@ -261,17 +322,11 @@ export function useMLLearning(movies: Movie[]) {
     }));
     
     scored.sort((a, b) => b.score - a.score);
+    const movieA = scored[0]?.movie || movies[0];
+    const movieB = scored[Math.floor(scored.length * 0.5)]?.movie || movies[1];
     
-    // Pick one high-scoring (aligned with preferences) and one boundary case
-    const topTier = scored.slice(0, Math.floor(scored.length * 0.2));
-    const midTier = scored.slice(Math.floor(scored.length * 0.4), Math.floor(scored.length * 0.7));
-    
-    const movieA = topTier[Math.floor(Math.random() * topTier.length)]?.movie || movies[0];
-    const movieB = midTier[Math.floor(Math.random() * midTier.length)]?.movie || movies[1];
-    
-    console.log(`[FUNNEL PRECISE] High vs Boundary: "${movieA.name}" (${scored.find(s => s.movie.id === movieA.id)?.score.toFixed(3)}) vs "${movieB.name}" (${scored.find(s => s.movie.id === movieB.id)?.score.toFixed(3)})`);
     return [movieA, movieB];
-  }, [movies, getCurrentPhase, state.preferences.choices, state.preferences.w, analyzePreferences, findMovieByTitle]);
+  }, [movies, anchors, getCurrentPhase, state.preferences.choices, state.preferences.w, analyzePreferences, findMovieByTitle]);
 
   // Update currentPair when movies are loaded
   useEffect(() => {
@@ -486,6 +541,7 @@ export function useMLLearning(movies: Movie[]) {
 
   return {
     ...state,
+    anchors,
     learnChoice,
     adjustAdventurousness,
     skipPair,
@@ -507,7 +563,8 @@ export function useMLLearning(movies: Movie[]) {
       round: state.preferences.choices + 1,
       description: state.preferences.choices < 4 ? "Exploring broad preferences" : 
                   state.preferences.choices < 8 ? "Refining genre preferences" : 
-                  "Fine-tuning your taste profile"
+                  "Fine-tuning your taste profile",
+      anchorsLoaded: anchors.length > 0
     })
   };
 }
