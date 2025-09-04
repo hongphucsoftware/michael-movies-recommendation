@@ -120,7 +120,7 @@ export default function PosterPair() {
             </div>
           </div>
 
-          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={5} />
+          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={[...chosenIds, ...seenIds]} avoidIds={seenIds} count={5} />
         </div>
       )}
     </div>

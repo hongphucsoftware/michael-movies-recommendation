@@ -21,6 +21,11 @@ export interface UserPreferences {
   likes: Set<string>;
   choices: number;
   eps: number; // exploration parameter
+  chosenIds?: string[]; // Track all chosen movie IDs to prevent repeats
+  btlState?: {
+    theta: Record<string, number>;
+    info: Record<string, number>;
+  };
 }
 
 export interface MLState {

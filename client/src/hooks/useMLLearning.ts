@@ -15,10 +15,13 @@ import { buildABAnchors, getAnchorsForPhase, type Anchor } from "@/lib/abAnchors
 import { updateBTL } from "@/lib/taste";
 import { phi } from "@/lib/phi";
 import { pickInformativePair } from "@/lib/abNext";
+import { updateBTL as btlUpdate, uncertainty, type BTLState } from "@/utils/btl";
+import { pickNextPair } from "@/utils/pair-picker";
+import { mmrSelect } from "@/utils/mmr";
 
 const DIMENSION = 12;
 const MAX_ROUNDS = 12;
-const ANCHOR_MODE = process.env.NODE_ENV === 'development' ? 'hardlist' : 'auto';
+const ANCHOR_MODE = 'hardlist'; // Lock to hardlist only to prevent random spillover
 
 // Informative pair selection helpers
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
@@ -391,6 +394,14 @@ export function useMLLearning(movies: Movie[]) {
       const newExplored = new Set(prev.preferences.explored);
       newExplored.add(winner.id);
       newExplored.add(loser.id);
+      
+      // Track chosen IDs to prevent repeats
+      const newChosenIds = [...(prev.preferences as any).chosenIds || []];
+      newChosenIds.push(winner.id, loser.id);
+      // Keep only last 50 to prevent memory bloat
+      if (newChosenIds.length > 50) {
+        newChosenIds.splice(0, newChosenIds.length - 50);
+      }
 
       const onboardingComplete = choice >= TARGET_CHOICES;
 
@@ -400,7 +411,8 @@ export function useMLLearning(movies: Movie[]) {
           ...prev.preferences,
           w: newW,
           explored: newExplored,
-          choices: choice
+          choices: choice,
+          chosenIds: newChosenIds
         },
         onboardingComplete,
         currentPair: onboardingComplete ? null : nextPair()
@@ -548,7 +560,8 @@ export function useMLLearning(movies: Movie[]) {
         hidden: new Set<string>(),
         likes: new Set<string>(),
         choices: 0,
-        eps: EPS_DEFAULT
+        eps: EPS_DEFAULT,
+        chosenIds: []
       },
       queue: [],
       currentPair: null,
