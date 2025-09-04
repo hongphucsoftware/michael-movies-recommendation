@@ -98,6 +98,15 @@ export default function TrailerPlayer({
     }
 
     console.log('[TrailerPlayer] Available movies with trailers:', available.length);
+    
+    // Debug Spider-Man filtering
+    const spiderManInItems = items.filter(item => item.title.includes('Spider-Man'));
+    const spiderManAvailable = available.filter(item => item.title.includes('Spider-Man'));
+    console.log(`[DEBUG] Spider-Man movies: ${spiderManInItems.length} in pool, ${spiderManAvailable.length} available after filtering`);
+    spiderManInItems.forEach(sm => {
+      const isFiltered = recentChosenIds.includes(sm.id);
+      console.log(`  - "${sm.title}" (ID: ${sm.id}) - In recent list: ${isFiltered}`);
+    });
 
     // Base relevance scoring function
     const baseRel = (item: Title) => {
@@ -114,7 +123,7 @@ export default function TrailerPlayer({
       // Bonuses
       const qualityBonus = item.sources?.includes('imdbTop') ? 0.2 : 0;
       const recentBonus = parseInt(item.year) >= 2015 ? 0.3 : 0; // Boost recent films
-      const noveltyBonus = recentChosenIds.includes(item.id) ? 0 : 0.08;
+      const noveltyBonus = recentChosenIds.includes(item.id) ? -0.5 : 0.08;
 
       return btlScore + qualityBonus + recentBonus + noveltyBonus;
     };
