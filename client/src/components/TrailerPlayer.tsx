@@ -135,9 +135,12 @@ export default function TrailerPlayer({
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
-    // Filter to movies with images and not recently seen
+    console.log('[TrailerPlayer] Working with items:', items.length);
+    console.log('[TrailerPlayer] Sample item structure:', items[0]);
+
+    // Filter to movies with valid data and not recently seen
     const available = items
-      .filter(item => bestImageUrl(item))
+      .filter(item => item.title && item.title !== 'Unknown Title')
       .filter(item => !recentChosenIds.includes(item.id))
       .filter(item => !avoidIds.includes(item.id));
 
