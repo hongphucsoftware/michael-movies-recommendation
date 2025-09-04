@@ -134,7 +134,7 @@ export default function TrailerPlayer({
     return { preferences, strength, explanation, vectorMagnitude };
   }, [learnedVec]);
 
-  // BTL-driven movie selection with MMR diversity
+  // BTL-driven movie selection - properly use learned preferences
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
@@ -150,25 +150,25 @@ export default function TrailerPlayer({
     }
 
     console.log('[TrailerPlayer] Available movies:', available.length);
-    console.log('[TrailerPlayer] BTL Vector (first 10):', learnedVec.slice(0, 10).map(v => v.toFixed(3)));
+    console.log('[TrailerPlayer] BTL Vector (first 12):', learnedVec.slice(0, 12).map(v => v.toFixed(3)));
 
-    // Score movies using BTL learned preferences
+    // Score movies using BTL learned preferences - THIS IS THE KEY FIX
     const scored = available.map((item) => {
       const itemPhi = phi(item);
-      
+
       // Ensure vectors are same length
       const w = [...learnedVec];
       while (w.length < itemPhi.length) w.push(0);
       while (itemPhi.length < w.length) itemPhi.push(0);
-      
+
+      // Raw BTL score using dot product of learned weights and movie features
       const btlScore = dot(w, itemPhi);
-      const sigmoid = 1 / (1 + Math.exp(-btlScore));
-      
-      // Add small quality and recency bonuses
-      const qualityBonus = item.sources?.includes('imdbTop') ? 0.1 : 0;
-      const recentBonus = parseInt(item.year) >= 2010 ? 0.05 : 0;
-      
-      const finalScore = sigmoid + qualityBonus + recentBonus;
+
+      // Small bonuses for quality and recency
+      const qualityBonus = item.sources?.includes('imdbTop') ? 0.2 : 0;
+      const recentBonus = parseInt(item.year) >= 2015 ? 0.1 : 0;
+
+      const finalScore = btlScore + qualityBonus + recentBonus;
 
       return {
         item,
@@ -178,36 +178,36 @@ export default function TrailerPlayer({
       };
     });
 
-    // Sort by BTL score
-    scored.sort((a, b) => b.finalScore - a.finalScore);
+    // Sort by final score (higher = better match to your preferences)
+    scored.sort((a,b) => b.finalScore - a.finalScore);
 
     console.log('[TrailerPlayer] Top BTL scored movies:',
-      scored.slice(0, 10).map(s => ({
+      scored.slice(0, 15).map(s => ({
         title: s.title,
         btlScore: s.btlScore.toFixed(3),
         finalScore: s.finalScore.toFixed(3),
         year: s.item.year,
-        sources: s.item.sources
+        genres: s.item.genres
       }))
     );
 
-    // Take top candidates for MMR diversity selection
-    const topCandidates = scored.slice(0, Math.min(150, scored.length));
-    
-    // Use MMR to select diverse final set
+    // Take top 30 candidates and apply MMR for diversity
+    const topCandidates = scored.slice(0, Math.min(30, scored.length));
+
+    // MMR selection for diversity among top-scoring movies
     const relScore = (t: Title) => {
       const found = scored.find(s => s.item.id === t.id);
       return found ? found.finalScore : 0;
     };
-    
+
     const diverseSelection = mmrSelect(
       topCandidates.map(s => s.item), 
       relScore, 
       6, 
-      0.7 // 70% relevance, 30% diversity
+      0.8 // 80% relevance, 20% diversity - prefer your taste over pure diversity
     );
 
-    // Add explanations
+    // Add explanations based on actual BTL scores
     const selected = diverseSelection.map(item => {
       const scoreData = scored.find(s => s.item.id === item.id);
       const itemGenres = item.genres?.map(g => {
@@ -219,20 +219,20 @@ export default function TrailerPlayer({
         };
         return genreMap[g];
       }).filter(Boolean) || ['Unknown'];
-      
-      let explanation = `Personalized BTL score: `;
+
+      let explanation = '';
       if (scoreData) {
-        if (scoreData.btlScore > 1.0) {
-          explanation += `strong match for your preferences`;
-        } else if (scoreData.btlScore > 0.3) {
-          explanation += `good alignment with your choices`;
+        if (scoreData.btlScore > 2.0) {
+          explanation = `Excellent match - BTL score: ${scoreData.btlScore.toFixed(2)}`;
+        } else if (scoreData.btlScore > 1.0) {
+          explanation = `Good match - BTL score: ${scoreData.btlScore.toFixed(2)}`;
         } else if (scoreData.btlScore > 0) {
-          explanation += `mild preference match`;
+          explanation = `Decent match - BTL score: ${scoreData.btlScore.toFixed(2)}`;
         } else {
-          explanation += `exploration recommendation`;
+          explanation = `Exploration pick - BTL score: ${scoreData.btlScore.toFixed(2)}`;
         }
       }
-      
+
       return {
         item,
         genres: itemGenres,
@@ -240,12 +240,15 @@ export default function TrailerPlayer({
       };
     });
 
-    console.log('[TrailerPlayer] Final BTL+MMR selection:', selected.map(s => ({
-      title: s.item.title,
-      genres: s.genres,
-      sources: s.item.sources,
-      year: s.item.year
-    })));
+    console.log('[TrailerPlayer] Final BTL selection with scores:', selected.map(s => {
+      const scoreData = scored.find(sc => sc.item.id === s.item.id);
+      return {
+        title: s.item.title,
+        genres: s.genres,
+        btlScore: scoreData?.btlScore.toFixed(3),
+        year: s.item.year
+      };
+    }));
 
     return selected;
   }, [items, learnedVec, recentChosenIds, avoidIds]);
