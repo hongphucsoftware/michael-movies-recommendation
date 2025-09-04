@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback } from "react";
 import { Movie, UserPreferences, MLState } from "@/types/movie";
 import { 
@@ -18,6 +17,8 @@ import { phi } from "@/lib/phi";
 import { pickInformativePair } from "@/lib/abNext";
 
 const DIMENSION = 12;
+const MAX_ROUNDS = 12;
+const ANCHOR_MODE = process.env.NODE_ENV === 'development' ? 'hardlist' : 'auto';
 
 // Informative pair selection helpers
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
@@ -72,7 +73,7 @@ const ANCHOR_MOVIES = {
     // Animation vs Crime
     { animation: ["Spirited Away", "Toy Story", "WALL-E"], crime: ["Pulp Fiction", "Goodfellas", "The Departed"] }
   ],
-  
+
   // Phase 2: Genre-focused with decade/style contrasts
   focused: {
     action: [
@@ -103,14 +104,29 @@ const ANCHOR_MOVIES = {
 };
 
 export function useMLLearning(movies: Movie[]) {
+  const [moviesData] = useMovieData();
   const [anchors, setAnchors] = useState<Anchor[]>([]);
-  
+  const [serverAnchors, setServerAnchors] = useState<any[]>([]);
+
+  // Fetch anchors from the server if ANCHOR_MODE is 'hardlist'
+  useEffect(() => {
+    if (ANCHOR_MODE === 'hardlist') {
+      fetch('/config/paf_anchor_hardlist.json')
+        .then(res => res.json())
+        .then(data => {
+          setServerAnchors(data);
+          console.log('[FUNNEL] Loaded anchors from server:', data.length);
+        })
+        .catch(error => console.error('[FUNNEL] Failed to load anchors:', error));
+    }
+  }, []);
+
   const [state, setState] = useState<MLState>(() => {
     // Clear all stored data on every app load to treat each reload as a new user
     ['ts_preferences_funnel_v1', 'pf_ab_chosen_v1', 'pf_ab_seen_v1'].forEach(key => {
       localStorage.removeItem(key);
     });
-    
+
     const defaultPrefs: UserPreferences = {
       w: zeros(DIMENSION),
       explored: new Set<string>(),
@@ -128,11 +144,11 @@ export function useMLLearning(movies: Movie[]) {
     };
   });
 
-  // Initialize anchors when movies are loaded
+  // Initialize anchors when movies are loaded or server anchors are available
   useEffect(() => {
-    if (movies.length > 0 && anchors.length === 0) {
-      console.log('[FUNNEL] Building A/B anchor pool from', movies.length, 'movies');
-      const movieTitles = movies.map(m => ({
+    if (moviesData.length > 0 && anchors.length === 0) {
+      console.log('[FUNNEL] Building A/B anchor pool from', moviesData.length, 'movies');
+      const movieTitles = moviesData.map(m => ({
         id: m.id,
         title: m.name,
         year: m.year,
@@ -161,12 +177,28 @@ export function useMLLearning(movies: Movie[]) {
         poster: m.poster,
         original_language: 'en' // Assume English for now
       }));
+
+      let anchorPool: Anchor[];
+      if (ANCHOR_MODE === 'hardlist' && serverAnchors.length > 0) {
+        console.log('[FUNNEL] Using server-provided anchors.');
+        // Resolve server anchors to TMDB IDs
+        anchorPool = serverAnchors.map((anchor: any) => {
+          const matchedMovie = moviesData.find(m => m.name.toLowerCase() === anchor.title.toLowerCase() && m.year === anchor.year);
+          if (matchedMovie) {
+            return { ...anchor, id: matchedMovie.id };
+          } else {
+            console.warn(`[FUNNEL] Could not resolve anchor: ${anchor.title} (${anchor.year})`);
+            return null;
+          }
+        }).filter((a: Anchor | null) => a !== null) as Anchor[];
+      } else {
+        anchorPool = buildABAnchors(movieTitles, 30);
+      }
       
-      const newAnchors = buildABAnchors(movieTitles, 30);
-      setAnchors(newAnchors);
-      console.log('[FUNNEL] Built anchor pool with', newAnchors.length, 'movies');
+      setAnchors(anchorPool);
+      console.log('[FUNNEL] Built anchor pool with', anchorPool.length, 'movies');
     }
-  }, [movies, anchors.length]);
+  }, [moviesData, anchors.length, serverAnchors]);
 
   // Persist to localStorage
   useEffect(() => {
@@ -215,60 +247,52 @@ export function useMLLearning(movies: Movie[]) {
 
   // Find movie by title in catalogue
   const findMovieByTitle = useCallback((title: string): Movie | null => {
-    const found = movies.find(m => 
+    const found = moviesData.find(m => 
       m.name.toLowerCase().includes(title.toLowerCase()) ||
       title.toLowerCase().includes(m.name.toLowerCase())
     );
     return found || null;
-  }, [movies]);
+  }, [moviesData]);
 
   // Informative pair selection that asks strategic questions
   const nextPair = useCallback((): [Movie, Movie] => {
-    if (movies.length < 2) {
+    // Determine the candidate pool based on ANCHOR_MODE
+    let candidatePool: Movie[];
+    if (ANCHOR_MODE === 'hardlist' && anchors.length > 0) {
+      console.log('[FUNNEL] Selecting from hardlist anchors.');
+      candidatePool = moviesData.filter(m => anchors.some(a => a.id === m.id));
+    } else {
+      candidatePool = moviesData;
+    }
+
+    if (candidatePool.length < 2) {
       return [
         { id: 'loading1', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
         { id: 'loading2', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
       ];
     }
 
-    // Build candidate pool (hide hidden; downweight very recent repeats)
+    // build candidate pool (hide hidden; downweight very recent repeats)
     const hidden = new Set(state.preferences.hidden);
-    const explored = new Set(state.preferences.explored);
-    const recentIds = new Set<string>(JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]').slice(-20));
+    const recentChoices = state.choices.slice(-6).map(c => c.choice);
+    const recentSet = new Set(recentChoices);
 
-    // Use whole curated catalogue but avoid hidden; keep broad choice space
-    const available = movies.filter(m => !hidden.has(m.id));
+    const candidates = candidatePool.filter(m => !hidden.has(m.id));
+    if (candidates.length < 2) return [candidatePool[0], candidatePool[1]];
 
-    // Prefer items not shown in the last few pairs
-    const sorted = available.sort((a,b) => {
-      const ra = recentIds.has(a.id) ? 1 : 0;
-      const rb = recentIds.has(b.id) ? 1 : 0;
-      return ra - rb; // non-recent first
-    });
-
-    const [A, B] = pickInformativePairLocal(sorted, state.preferences.w, hidden);
-
-    // Record for cooldown
-    const recentList: string[] = JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]');
-    recentList.push(A.id, B.id);
-    localStorage.setItem('ts_recent_pairs', JSON.stringify(recentList.slice(-20)));
-
-    const choice = state.preferences.choices + 1;
-    console.log(`[INFORMATIVE A/B] Round ${choice}/12: "${A.name}" vs "${B.name}" (high-info pair)`);
-
-    return [A, B];
-  }, [movies, state.preferences.w, state.preferences.hidden]);
+    return pickInformativePair(candidates, state.weights, recentSet);
+  }, [moviesData, anchors, state]);
 
   // Update currentPair when movies are loaded
   useEffect(() => {
-    if (movies.length >= 2 && !state.onboardingComplete && 
+    if (moviesData.length >= 2 && !state.onboardingComplete && 
         (!state.currentPair || state.currentPair[0].id === 'loading1')) {
       setState(prev => ({
         ...prev,
         currentPair: nextPair()
       }));
     }
-  }, [movies, state.onboardingComplete, state.currentPair, nextPair]);
+  }, [moviesData, state.onboardingComplete, state.currentPair, nextPair]);
 
   const learnChoice = useCallback((winner: Movie, loser: Movie) => {
     setState(prev => {
@@ -327,19 +351,19 @@ export function useMLLearning(movies: Movie[]) {
       const newW = [...prev.preferences.w];
       const winPhi = phi(winnerTitle);
       const losePhi = phi(loserTitle);
-      
+
       // Ensure vectors are same length
       while (newW.length < Math.max(winPhi.length, losePhi.length)) {
         newW.push(0);
       }
       while (winPhi.length < newW.length) winPhi.push(0);
       while (losePhi.length < newW.length) losePhi.push(0);
-      
+
       updateBTL(newW, winPhi, losePhi);
-      
+
       const choice = prev.preferences.choices + 1;
       const phase = choice <= 4 ? 'BROAD' : choice <= 8 ? 'FOCUSED' : 'PRECISE';
-      
+
       console.log(`[FUNNEL LEARN BTL] Round ${choice} (${phase}): "${winner.name}" beat "${loser.name}"`);
       console.log(`[FUNNEL VECTOR BTL] Updated weights:`, newW.slice(0, 10).map(w => w.toFixed(3)));
 
@@ -374,11 +398,11 @@ export function useMLLearning(movies: Movie[]) {
   }, [state.preferences.explored]);
 
   const rankQueue = useCallback((): Movie[] => {
-    if (movies.length === 0) {
+    if (moviesData.length === 0) {
       return [];
     }
-    
-    const candidates = movies.filter(movie => !state.preferences.hidden.has(movie.id));
+
+    const candidates = moviesData.filter(movie => !state.preferences.hidden.has(movie.id));
     const scored = candidates
       .map(movie => ({
         movie,
@@ -395,7 +419,7 @@ export function useMLLearning(movies: Movie[]) {
     }
 
     return scored.map(item => item.movie);
-  }, [movies, state.preferences.hidden, state.preferences.eps, baseScore, noveltyBoost]);
+  }, [moviesData, state.preferences.hidden, state.preferences.eps, baseScore, noveltyBoost]);
 
   const updateQueue = useCallback(() => {
     setState(prev => ({
@@ -478,9 +502,9 @@ export function useMLLearning(movies: Movie[]) {
         eps: Math.min(0.45, prev.preferences.eps + 0.10)
       }
     }));
-    
+
     updateQueue();
-    
+
     // Reset after a delay
     setTimeout(() => {
       setState(prev => ({
@@ -495,7 +519,7 @@ export function useMLLearning(movies: Movie[]) {
 
   const reset = useCallback(() => {
     ['ts_preferences_funnel_v1', 'pf_ab_chosen_v1', 'pf_ab_seen_v1'].forEach(key => localStorage.removeItem(key));
-    
+
     setState({
       preferences: {
         w: zeros(DIMENSION),
@@ -545,7 +569,7 @@ export function useMLLearning(movies: Movie[]) {
       if (state.preferences.eps <= 0.16) return "Balanced";
       return "Wild";
     },
-    getWatchlist: () => movies.filter(movie => state.preferences.likes.has(movie.id)),
+    getWatchlist: () => moviesData.filter(movie => state.preferences.likes.has(movie.id)),
     getCurrentPhase,
     getFunnelProgress: () => ({
       phase: getCurrentPhase(),

@@ -31,6 +31,82 @@ const BACKDROP_SIZE = "w780";
 const TTL = 1000 * 60 * 60 * 6; // 6h
 const CONCURRENCY = 8;
 
+// Anchor hardlist support
+let ANCHOR_HARDLIST: any[] = [];
+let RESOLVED_ANCHORS: Item[] = [];
+
+// Load anchor hardlist at startup
+async function loadAnchorHardlist() {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    
+    const hardlistPath = path.join(process.cwd(), 'config', 'paf_anchor_hardlist.json');
+    
+    if (fs.existsSync(hardlistPath)) {
+      const rawData = fs.readFileSync(hardlistPath, 'utf8');
+      ANCHOR_HARDLIST = JSON.parse(rawData);
+      console.log(`[ANCHORS] Loaded ${ANCHOR_HARDLIST.length} anchor titles from hardlist`);
+    } else {
+      console.log('[ANCHORS] No hardlist found at config/paf_anchor_hardlist.json');
+    }
+  } catch (error) {
+    console.error('[ANCHORS] Failed to load hardlist:', error);
+  }
+}
+
+// Resolve anchor titles to TMDb items
+async function resolveAnchors(catalogue: Item[]) {
+  if (ANCHOR_HARDLIST.length === 0) return;
+  
+  const resolved: Item[] = [];
+  const misses: any[] = [];
+  
+  console.log(`[ANCHORS] Resolving ${ANCHOR_HARDLIST.length} hardlist titles...`);
+  
+  for (const anchor of ANCHOR_HARDLIST) {
+    const { title, year } = anchor;
+    const normTitle = norm(title);
+    
+    // Find exact matches by normalized title and year
+    const matches = catalogue.filter(item => {
+      const itemNorm = norm(item.title);
+      const itemYear = item.releaseDate ? parseInt(item.releaseDate.slice(0, 4)) : null;
+      
+      return itemNorm === normTitle && 
+             itemYear && 
+             Math.abs(itemYear - year) <= 1; // Allow 1 year difference
+    });
+    
+    if (matches.length > 0) {
+      resolved.push(matches[0]); // Take first match
+    } else {
+      // Try fuzzy matching without year constraint
+      const fuzzyMatches = catalogue.filter(item => {
+        const itemNorm = norm(item.title);
+        return itemNorm === normTitle;
+      });
+      
+      if (fuzzyMatches.length > 0) {
+        resolved.push(fuzzyMatches[0]);
+        console.log(`[ANCHORS] Fuzzy match: "${title}" (${year}) -> "${fuzzyMatches[0].title}" (${fuzzyMatches[0].releaseDate?.slice(0, 4)})`);
+      } else {
+        misses.push(anchor);
+      }
+    }
+  }
+  
+  RESOLVED_ANCHORS = resolved;
+  
+  console.log(`[ANCHORS] Resolved ${resolved.length}/${ANCHOR_HARDLIST.length} anchors`);
+  if (misses.length > 0) {
+    console.log(`[ANCHORS] Missed titles:`, misses.slice(0, 10).map(m => `"${m.title}" (${m.year})`));
+  }
+}
+
+// Initialize anchors on startup
+loadAnchorHardlist();
+
 // Utility function for concurrency limiting
 async function pLimit<T>(limit: number, tasks: (() => Promise<T>)[]): Promise<T[]> {
   const results: T[] = [];
@@ -578,6 +654,10 @@ async function buildAll(): Promise<Item[]> {
   cache.misses = misses;
 
   console.log(`[COMPLETE] Final catalogue: ${items.length} movies with ${items.filter(i => i.posterUrl).length} posters`);
+  
+  // Resolve anchors from hardlist
+  await resolveAnchors(items);
+  
   return items;
 }
 
@@ -943,6 +1023,21 @@ function scoreVideos(vids: any[]) {
 }
 
 // Health check
+// Get resolved anchor movies for A/B testing
+api.get("/anchors", (_req, res) => {
+  res.json({
+    ok: true,
+    anchors: RESOLVED_ANCHORS.map(item => ({
+      ...item,
+      image: item.posterUrl || item.backdropUrl || null
+    })),
+    total: RESOLVED_ANCHORS.length,
+    hardlistSize: ANCHOR_HARDLIST.length,
+    resolvedPercentage: ANCHOR_HARDLIST.length > 0 ? 
+      Math.round((RESOLVED_ANCHORS.length / ANCHOR_HARDLIST.length) * 100) : 0
+  });
+});
+
 api.get("/health", (_req, res) => {
   const stats = cache.stats || {};
   const enforcementWarnings = [];
