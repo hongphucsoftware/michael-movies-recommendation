@@ -15,7 +15,7 @@ interface TrailerPlayerProps {
   count?: number;
 }
 
-export function TrailerPlayer({ items, learnedVec, recentChosenIds, count = 5 }: TrailerPlayerProps) {
+export default function TrailerPlayer({ items, learnedVec, recentChosenIds, count = 5 }: TrailerPlayerProps) {
   const [currentQueue, setCurrentQueue] = useState<Array<{
     item: Movie;
     embed: string;
