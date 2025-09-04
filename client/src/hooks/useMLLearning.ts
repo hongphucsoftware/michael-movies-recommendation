@@ -13,6 +13,9 @@ import {
   EPS_DEFAULT 
 } from "@/lib/mlUtils";
 import { buildABAnchors, getAnchorsForPhase, type Anchor } from "@/lib/abAnchors";
+import { updateBTL } from "@/lib/taste";
+import { phi } from "@/lib/phi";
+import { pickInformativePair } from "@/lib/abNext";
 
 const DIMENSION = 12;
 
@@ -341,18 +344,76 @@ export function useMLLearning(movies: Movie[]) {
 
   const learnChoice = useCallback((winner: Movie, loser: Movie) => {
     setState(prev => {
-      const diff = subtract(winner.features, loser.features);
-      const p = logistic(dot(prev.preferences.w, diff));
-      const gradScale = 1 - p;
-      
+      // Convert movies to proper Title format for phi function
+      const winnerTitle = {
+        id: typeof winner.id === 'string' ? parseInt(winner.id) : winner.id,
+        title: winner.name,
+        year: winner.year,
+        genres: winner.tags.map(tag => {
+          switch (tag.toLowerCase()) {
+            case 'action': return 28;
+            case 'adventure': return 12;
+            case 'comedy': return 35;
+            case 'drama': return 18;
+            case 'horror': return 27;
+            case 'thriller': return 53;
+            case 'sci-fi': case 'science fiction': return 878;
+            case 'fantasy': return 14;
+            case 'romance': return 10749;
+            case 'crime': return 80;
+            case 'mystery': return 9648;
+            case 'animation': return 16;
+            case 'family': return 10751;
+            default: return 18;
+          }
+        }),
+        popularity: 50
+      };
+
+      const loserTitle = {
+        id: typeof loser.id === 'string' ? parseInt(loser.id) : loser.id,
+        title: loser.name,
+        year: loser.year,
+        genres: loser.tags.map(tag => {
+          switch (tag.toLowerCase()) {
+            case 'action': return 28;
+            case 'adventure': return 12;
+            case 'comedy': return 35;
+            case 'drama': return 18;
+            case 'horror': return 27;
+            case 'thriller': return 53;
+            case 'sci-fi': case 'science fiction': return 878;
+            case 'fantasy': return 14;
+            case 'romance': return 10749;
+            case 'crime': return 80;
+            case 'mystery': return 9648;
+            case 'animation': return 16;
+            case 'family': return 10751;
+            default: return 18;
+          }
+        }),
+        popularity: 50
+      };
+
+      // Use BTL pairwise learning
       const newW = [...prev.preferences.w];
-      addInPlace(newW, diff, LEARNING_RATE * gradScale);
+      const winPhi = phi(winnerTitle);
+      const losePhi = phi(loserTitle);
+      
+      // Ensure vectors are same length
+      while (newW.length < Math.max(winPhi.length, losePhi.length)) {
+        newW.push(0);
+      }
+      while (winPhi.length < newW.length) winPhi.push(0);
+      while (losePhi.length < newW.length) losePhi.push(0);
+      
+      updateBTL(newW, winPhi, losePhi);
       
       const choice = prev.preferences.choices + 1;
       const phase = choice <= 4 ? 'BROAD' : choice <= 8 ? 'FOCUSED' : 'PRECISE';
       
-      console.log(`[FUNNEL LEARN] Round ${choice} (${phase}): "${winner.name}" beat "${loser.name}"`);
-      console.log(`[FUNNEL VECTOR] Updated weights:`, newW.map(w => w.toFixed(2)));
+      console.log(`[FUNNEL LEARN BTL] Round ${choice} (${phase}): "${winner.name}" beat "${loser.name}"`);
+      console.log(`[FUNNEL VECTOR BTL] Updated weights:`, newW.slice(0, 10).map(w => w.toFixed(3)));
 
       const newExplored = new Set(prev.preferences.explored);
       newExplored.add(winner.id);
