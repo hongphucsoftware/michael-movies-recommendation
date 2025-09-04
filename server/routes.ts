@@ -26,6 +26,31 @@ const BACKDROP_SIZE = "w780";
 const TTL = 1000 * 60 * 60 * 6; // 6h
 const CONCURRENCY = 8;
 
+// Utility function for concurrency limiting
+async function pLimit<T>(limit: number, tasks: (() => Promise<T>)[]): Promise<T[]> {
+  const results: T[] = [];
+  const executing: Promise<void>[] = [];
+
+  for (const task of tasks) {
+    const promise = task().then(result => {
+      results.push(result);
+    });
+
+    const wrappedPromise = promise.then(() => {
+      executing.splice(executing.indexOf(wrappedPromise), 1);
+    });
+
+    executing.push(wrappedPromise);
+
+    if (executing.length >= limit) {
+      await Promise.race(executing);
+    }
+  }
+
+  await Promise.all(executing);
+  return results;
+}
+
 type RawTitle = { title: string; year?: number; src: string };
 type TMDbMovie = {
   id: number; title?: string; original_title?: string; overview?: string;
@@ -85,6 +110,37 @@ async function tmdb(path: string, params: Record<string, any> = {}) {
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`TMDb ${path} ${res.status}`);
   return res.json();
+}
+
+async function searchStrict(title: string, normTitle: string, year?: number): Promise<TMDbMovie | null> {
+  const params = { query: title, include_adult: "false", language: "en-US" };
+  if (year) params.year = String(year);
+  
+  const s = await tmdb("/search/movie", params);
+  const cands: TMDbMovie[] = (s.results || []).filter((x: any) => x && !x.adult);
+
+  if (!cands.length) return null;
+
+  // Find best match by normalized title
+  const titleMatches = cands.filter(c => {
+    const candNorm = norm(c.title || c.original_title || "");
+    return candNorm === normTitle;
+  });
+
+  if (titleMatches.length > 0) {
+    // If we have exact title matches, pick the one with closest year
+    if (year) {
+      const withYear = titleMatches.filter(c => {
+        const releaseYear = parseYear(c.release_date || "");
+        return releaseYear && Math.abs(releaseYear - year) <= 1;
+      });
+      if (withYear.length > 0) return withYear[0];
+    }
+    return titleMatches[0];
+  }
+
+  // Fallback to first candidate if no exact match
+  return cands[0];
 }
 
 function toItem(m: TMDbMovie, sources: string[], ext?: { rtUrl?: string; imdbUrl?: string }): Item {
