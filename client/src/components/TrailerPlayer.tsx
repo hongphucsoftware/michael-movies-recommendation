@@ -118,20 +118,20 @@ export default function TrailerPlayer({
     if (vectorMagnitude > 2.5) strength = 'strong';
     else if (vectorMagnitude > 1.5) strength = 'medium';
 
-    // Build explanation
-    let explanation = 'Building your taste profile from A/B testing';
+    // Build explanation based on funnel learning
+    let explanation = 'Building your taste profile through structured A/B testing';
     if (preferences.length === 0) {
-      explanation = vectorMagnitude > 1.0 ? 'Your diverse taste profile from A/B choices' : 'Learning your preferences through A/B testing';
+      explanation = vectorMagnitude > 2.0 ? 'Your refined taste profile from funnel A/B testing' : 'Learning your preferences through strategic A/B rounds';
     } else if (preferences.length === 1) {
-      explanation = `Your clear preference for ${preferences[0].label} from A/B testing`;
+      explanation = `Strong preference for ${preferences[0].label} discovered through focused A/B testing`;
     } else if (preferences.length >= 2) {
-      explanation = `You like ${preferences[0].label} and ${preferences[1].label} from A/B choices`;
+      explanation = `You prefer ${preferences[0].label} and ${preferences[1].label} based on your A/B funnel choices`;
     }
 
     return { preferences, strength, explanation, vectorMagnitude };
   }, [learnedVec]);
 
-  // Advanced A/B-driven movie selection with maximum diversity
+  // Funnel-based A/B-driven movie selection with strategic diversity
   const picks = useMemo(() => {
     if (!items.length || !learnedVec.length) return [];
 
@@ -147,7 +147,7 @@ export default function TrailerPlayer({
     }
 
     console.log('[TrailerPlayer] Available movies:', available.length);
-    console.log('[TrailerPlayer] A/B Analysis:', abAnalysis);
+    console.log('[TrailerPlayer] Funnel A/B Analysis:', abAnalysis);
 
     // Score each movie based on A/B learning + diversity factors
     const scored = available.map((item, index) => {
@@ -269,15 +269,56 @@ export default function TrailerPlayer({
       }
     };
 
-    // Select top candidates with diversity boost - use 6 movies as requested
+    // Strategic 6-movie selection based on funnel A/B learning:
+    // 2 Recognizable (top preferences, well-known)
+    // 2 Hidden Gems (aligned but less obvious)
+    // 1 Wildcard (exploration)
+    // 1 Bridge (connects user's top 2 genres)
+
     const usedTitles = new Set<string>();
+    const recognizable = scored.filter(s => 
+      parseInt(s.item.year) >= 1990 && // More likely to be known
+      s.abScore > (abAnalysis.vectorMagnitude * 0.8) // High alignment
+    ).slice(0, 10);
 
-    for (const movie of scored) {
-      if (selectedMovies.length >= 6) break;
-      if (usedTitles.has(movie.title)) continue;
+    const hiddenGems = scored.filter(s => 
+      !recognizable.includes(s) && 
+      s.abScore > (abAnalysis.vectorMagnitude * 0.6) && // Good alignment
+      (parseInt(s.item.year) < 1990 || (s.item.sources || []).includes('imdbList'))
+    ).slice(0, 8);
 
-      selectedMovies.push(movie);
-      usedTitles.add(movie.title);
+    const wildcards = scored.filter(s => 
+      !recognizable.includes(s) && !hiddenGems.includes(s)
+    ).slice(0, 5);
+
+    // Strategic selection
+    const strategies = [
+      { pool: recognizable, count: 2, label: 'recognizable' },
+      { pool: hiddenGems, count: 2, label: 'hidden gems' },
+      { pool: wildcards, count: 2, label: 'wildcard & bridge' }
+    ];
+
+    strategies.forEach(({ pool, count, label }) => {
+      for (let i = 0; i < count && selectedMovies.length < 6 && pool.length > 0; i++) {
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        const selected = pool[randomIndex];
+        
+        if (!usedTitles.has(selected.title)) {
+          selectedMovies.push(selected);
+          usedTitles.add(selected.title);
+          console.log(`[TrailerPlayer] Selected ${label}: "${selected.title}" (${selected.item.year})`);
+        }
+        pool.splice(randomIndex, 1); // Remove to avoid duplicates
+      }
+    });
+
+    // Fill remaining slots if needed
+    while (selectedMovies.length < 6 && scored.length > selectedMovies.length) {
+      const remaining = scored.find(s => !usedTitles.has(s.title));
+      if (remaining) {
+        selectedMovies.push(remaining);
+        usedTitles.add(remaining.title);
+      } else break;
     }
 
     // Now, process the selected movies to generate explanations and track diversity
