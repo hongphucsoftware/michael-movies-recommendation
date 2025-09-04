@@ -34,9 +34,8 @@ function AppEnhanced() {
   // Use new movies if available and valid, otherwise fall back to old
   const finalMovies = (movies && movies.length > 0) ? movies : [];
 
-  // Use new loading state if available, fallback to old
-  // Only show loading if both systems are loading AND no movies are available
-  const isLoading = (loading || oldLoading) && finalMovies.length === 0;
+  // Only show loading if we have no movies at all AND catalogue is still loading
+  const isLoading = finalMovies.length === 0 && catalogueLoading;
 
   const {
     preferences,
@@ -66,7 +65,7 @@ function AppEnhanced() {
   };
 
   // Show loading screen while fetching data
-  if (isLoading || catalogueLoading) { // Update to include catalogueLoading
+  if (isLoading) {
     return (
       <div className="bg-netflix-black text-white min-h-screen">
         <div className="fixed inset-0 opacity-5">
