@@ -44,22 +44,6 @@ function extractVideoId(embedUrl: string | null): string | null {
   return null;
 }
 
-// Mock fetchTrailerBatch for development if needed
-const fetchTrailerBatch = async (ids: number[]): Promise<Record<number, string | null>> => {
-  console.log(`[Mock] Fetching trailers for IDs: ${ids.join(', ')}`);
-  // In a real scenario, this would call an API like fetchTrailerEmbeds but batched
-  // For now, simulate a successful response
-  const mockEmbeds: Record<number, string | null> = {};
-  ids.forEach(id => {
-    // Simulate finding an embed for some IDs
-    if (id % 2 === 0) {
-      mockEmbeds[id] = `https://www.youtube.com/embed/mockvideo_${id}?autoplay=1`;
-    } else {
-      mockEmbeds[id] = `https://player.vimeo.com/video/mockvimeo_${id}`;
-    }
-  });
-  return mockEmbeds;
-};
 
 
 type Props = {
@@ -73,7 +57,7 @@ type Props = {
 export default function TrailerPlayer({
   items, learnedVec, recentChosenIds, avoidIds = [], count = 5,
 }: Props) {
-  const [queue, setQueue] = useState<Array<Title & { genres: string[], explanation: string }>>([]);
+  const [queue, setQueue] = useState<Array<Title & { genreLabels: string[], explanation: string }>>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
@@ -161,7 +145,7 @@ export default function TrailerPlayer({
       // Diversity factors to prevent same movie clustering
       const diversityFactors = {
         // Year diversity bonus/penalty
-        yearDiversity: Math.abs(parseInt(item.year) - 2010) > 10 ? 0.3 : 0,
+        yearDiversity: Math.abs(parseInt(item.year || '2010') - 2010) > 10 ? 0.3 : 0,
 
         // Genre diversity - avoid clustering around single genres
         genreSpread: item.genres && item.genres.length > 2 ? 0.2 : 0,
@@ -222,9 +206,9 @@ export default function TrailerPlayer({
     const usedSources = new Set<string>();
 
     const pools = {
-      recent: scored.filter(s => parseInt(s.item.year) >= 2015),
-      classic: scored.filter(s => parseInt(s.item.year) < 2000),
-      middle: scored.filter(s => parseInt(s.item.year) >= 2000 && parseInt(s.item.year) < 2015),
+      recent: scored.filter(s => parseInt(s.item.year || '2010') >= 2015),
+      classic: scored.filter(s => parseInt(s.item.year || '2010') < 2000),
+      middle: scored.filter(s => parseInt(s.item.year || '2010') >= 2000 && parseInt(s.item.year || '2010') < 2015),
       action: scored.filter(s => s.item.genres?.includes(28)),
       drama: scored.filter(s => s.item.genres?.includes(18)),
       comedy: scored.filter(s => s.item.genres?.includes(35)),
@@ -243,7 +227,7 @@ export default function TrailerPlayer({
     // Helper function to generate personalized explanation
     const generateExplanation = (item: typeof scored[0]['item'], matchedPreference?: string) => {
       const itemGenres = item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-      const year = parseInt(item.year);
+      const year = parseInt(item.year || '2010');
       const isRecent = year >= 2015;
       const isClassic = year < 1990;
 
@@ -276,40 +260,38 @@ export default function TrailerPlayer({
       if (selectedMovies.length >= 6) break;
       if (usedTitles.has(movie.title)) continue;
 
-      selectedMovies.push(movie);
+      const itemGenres = movie.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
+      selectedMovies.push({
+        item: movie.item,
+        genres: itemGenres,
+        explanation: generateExplanation(movie.item)
+      });
       usedTitles.add(movie.title);
     }
 
-    // Now, process the selected movies to generate explanations and track diversity
-    selectedMovies.forEach(selected => {
-        const itemGenres = selected.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
-        const explanation = generateExplanation(selected.item);
-
+    // Now, process the selected movies to track diversity
+    selectedMovies.forEach((selected, index) => {
         // Track diversity
         selected.item.genres?.forEach(g => usedGenres.add(g));
-        const decade = Math.floor(parseInt(selected.item.year) / 10) * 10;
+        const decade = Math.floor(parseInt(selected.item.year || '2010') / 10) * 10;
         usedDecades.add(decade.toString());
         usedSources.add(selected.item.sources?.[0] || 'unknown');
 
         // Calculate and log diversity score
         const diversityScore = (usedGenres.size * 0.4) + (usedDecades.size * 0.3) + (usedSources.size * 0.3);
-        console.log(`[TrailerPlayer] Selected ${selectedMovies.indexOf(selected) + 1}: "${selected.item.title}" (${selected.item.year}) [${itemGenres.join('/')}] from ${selected.item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
+        console.log(`[TrailerPlayer] Selected ${index + 1}: "${selected.item.title}" (${selected.item.year || 'Unknown'}) [${selected.genres.join('/')}] from ${selected.item.sources?.[0]} - diversity score: ${diversityScore.toFixed(2)}`);
     });
 
     console.log('[TrailerPlayer] Final A/B-driven selection:', 
       selectedMovies.map(s => ({ 
-        title: s.title, 
+        title: s.item.title, 
         genres: s.genres,
         sources: s.item.sources,
         year: s.item.year
       }))
     );
 
-    return selectedMovies.map(s => ({
-      item: s.item,
-      genres: s.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'],
-      explanation: generateExplanation(s.item)
-    }));
+    return selectedMovies;
   }, [items, learnedVec, recentChosenIds, avoidIds, count, abAnalysis]);
 
   // Fetch trailer embeds when picks change
@@ -328,7 +310,7 @@ export default function TrailerPlayer({
       console.log('[TrailerPlayer] Fetching trailers for A/B-driven picks:', picks.length);
 
       const trailerIds = picks.map(s => s.item.id);
-      const embeds = await fetchTrailerBatch(trailerIds);
+      const embeds = await fetchTrailerEmbeds(trailerIds);
 
       console.log('[TrailerPlayer] Received embeds for:', Object.keys(embeds).length, 'items');
 
@@ -339,7 +321,7 @@ export default function TrailerPlayer({
           ...s.item,
           yt: extractVideoId(embeds[s.item.id]) || '',
           embed: embeds[s.item.id],
-          genres: s.genres,
+          genreLabels: s.genres,
           explanation: s.explanation
         }));
 
@@ -347,7 +329,7 @@ export default function TrailerPlayer({
       console.log('[TrailerPlayer] Trailer details:', 
         newQueue.map(item => ({
           title: item.title,
-          genres: item.genres,
+          genres: item.genreLabels,
           year: item.year
         }))
       );
@@ -429,7 +411,7 @@ export default function TrailerPlayer({
             </h3>
             <div className="mb-3">
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-2">
-                {currentItem.genres?.join(' • ') || 'Film'}
+                {currentItem.genreLabels?.join(' • ') || 'Film'}
               </span>
             </div>
             <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">

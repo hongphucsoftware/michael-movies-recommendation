@@ -11,8 +11,13 @@ export type Title = {
   voteCount: number;
   posterUrl: string | null;
   backdropUrl: string | null;
+  sources: string[];
   image?: string | null;
   feature?: number[];
+  // Helper computed properties
+  year?: string;
+  embed?: string | null;
+  yt?: string;
 };
 
 type CatalogueResponse = {
@@ -62,7 +67,8 @@ export function useEnhancedCatalogue() {
         const enriched = (json.items || []).map((t) => {
           const image = bestImageUrl(t);
           const feature = toFeatureVector(t);
-          return { ...t, image, feature };
+          const year = t.releaseDate ? t.releaseDate.slice(0, 4) : '';
+          return { ...t, image, feature, year };
         });
 
         setItems(enriched);
