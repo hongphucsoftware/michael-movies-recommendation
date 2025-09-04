@@ -219,6 +219,7 @@ export default function TrailerPlayer({
     };
 
     // Enhanced genre filtering based on user's top preferences
+    const [comedy, drama, action, thriller, scifi, fantasy] = learnedVec;
     const topGenres = [];
     if (comedy > 0.7) topGenres.push({ type: 'comedy', score: comedy, id: 35 });
     if (scifi > 0.7) topGenres.push({ type: 'scifi', score: scifi, id: 878 });
