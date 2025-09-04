@@ -6,23 +6,18 @@ import React, { useState } from "react";
 import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 import { useQuickPicks } from "../hooks/useQuickPicks";
 import { useABHistory } from "../hooks/useABHistory";
-import { useMLLearning } from "../hooks/useMLLearning";
 import TrailerPlayer from "./TrailerPlayer";
 
 export default function PosterPair() {
-  const { items: catalogueItems, total, loading, error, stats } = useEnhancedCatalogue();
-  const { anchors } = useMLLearning(catalogueItems);
+  const { items, total, loading, error, stats } = useEnhancedCatalogue();
   const { learned, like, skip, resetLearning } = useLearnedVector(12);
-  // CRITICAL: Use anchors for A/B testing, not full catalogue
-  const { pair, choose, done, progress, reset } = useQuickPicks(anchors, 12);
+  const { pair, choose, done, progress, reset } = useQuickPicks(items, 12);
   const { chosen: chosenIds, seen: seenIds, record, reset: resetAB } = useABHistory();
   const [rebuilding, setRebuilding] = useState(false);
 
   if (loading) return <div className="opacity-80">Loading catalogue…</div>;
   if (error) return <div className="text-red-400">Error: {error}</div>;
-  if (!anchors.length) return <div>Loading hardlist anchors for A/B testing…</div>;
-  
-  console.log(`[A/B TESTING] Using ${anchors.length} hardlist anchor movies ONLY`);
+  if (!items.length) return <div>No titles found.</div>;
 
   function pick(side: "left" | "right") {
     const result = choose(side);
@@ -125,7 +120,7 @@ export default function PosterPair() {
             </div>
           </div>
 
-          <TrailerPlayer items={catalogueItems} learnedVec={learned} recentChosenIds={[...chosenIds, ...seenIds]} avoidIds={seenIds} count={5} />
+          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={[...chosenIds, ...seenIds]} avoidIds={seenIds} count={5} />
         </div>
       )}
     </div>
