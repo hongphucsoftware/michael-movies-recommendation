@@ -218,11 +218,18 @@ export default function TrailerPlayer({
       all: scored
     };
 
-    // Determine selection strategy based on A/B learning
-    const topPreferences = Object.entries(abAnalysis.preferences).slice(0, 3);
-    const strategy = topPreferences.map(([type]) => type).concat(['all', 'all', 'all']);
-
-    console.log('[TrailerPlayer] Selection strategy based on A/B learning:', strategy);
+    // Enhanced genre filtering based on user's top preferences
+    const topGenres = [];
+    if (comedy > 0.7) topGenres.push({ type: 'comedy', score: comedy, id: 35 });
+    if (scifi > 0.7) topGenres.push({ type: 'scifi', score: scifi, id: 878 });
+    if (fantasy > 0.7) topGenres.push({ type: 'fantasy', score: fantasy, id: 14 });
+    if (action > 0.7) topGenres.push({ type: 'action', score: action, id: 28 });
+    if (drama > 0.7) topGenres.push({ type: 'drama', score: drama, id: 18 });
+    if (thriller > 0.7) topGenres.push({ type: 'thriller', score: thriller, id: 53 });
+    
+    topGenres.sort((a, b) => b.score - a.score);
+    
+    console.log('[TrailerPlayer] Top user genres:', topGenres.map(g => `${g.type}:${g.score.toFixed(2)}`));
 
     // Helper function to generate personalized explanation
     const generateExplanation = (item: typeof scored[0]['item'], matchedPreference?: string) => {
@@ -253,9 +260,51 @@ export default function TrailerPlayer({
       }
     };
 
-    // Select top candidates with diversity boost - use 6 movies as requested
+    // GENRE-FIRST selection: prioritize user's top genres
     const usedTitles = new Set<string>();
-
+    
+    // First, try to get movies from user's top genres
+    if (topGenres.length > 0) {
+      const topGenreId = topGenres[0].id;
+      const topGenreMovies = scored.filter(m => m.item.genres?.includes(topGenreId));
+      
+      console.log(`[TrailerPlayer] Found ${topGenreMovies.length} movies in top genre (${topGenres[0].type})`);
+      
+      // Add movies from top genre first
+      for (const movie of topGenreMovies) {
+        if (selectedMovies.length >= 3) break; // At least half from top genre
+        if (usedTitles.has(movie.title)) continue;
+        
+        const itemGenres = movie.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
+        selectedMovies.push({
+          item: movie.item,
+          genres: itemGenres,
+          explanation: generateExplanation(movie.item, topGenres[0].type)
+        });
+        usedTitles.add(movie.title);
+      }
+      
+      // Fill remaining slots from second favorite genre if available
+      if (topGenres.length > 1 && selectedMovies.length < 6) {
+        const secondGenreId = topGenres[1].id;
+        const secondGenreMovies = scored.filter(m => m.item.genres?.includes(secondGenreId));
+        
+        for (const movie of secondGenreMovies) {
+          if (selectedMovies.length >= 5) break;
+          if (usedTitles.has(movie.title)) continue;
+          
+          const itemGenres = movie.item.genres?.map(g => genreMap[g]).filter(Boolean) || ['Unclassified'];
+          selectedMovies.push({
+            item: movie.item,
+            genres: itemGenres,
+            explanation: generateExplanation(movie.item, topGenres[1].type)
+          });
+          usedTitles.add(movie.title);
+        }
+      }
+    }
+    
+    // Fill any remaining slots with top-scored movies
     for (const movie of scored) {
       if (selectedMovies.length >= 6) break;
       if (usedTitles.has(movie.title)) continue;
@@ -317,13 +366,23 @@ export default function TrailerPlayer({
       // Build final queue with trailers and explanations
       const newQueue = picks
         .filter(s => embeds[s.item.id])
-        .map(s => ({
-          ...s.item,
-          yt: extractVideoId(embeds[s.item.id]) || '',
-          embed: embeds[s.item.id],
-          genreLabels: s.genres,
-          explanation: s.explanation
-        }));
+        .map(s => {
+          let embedUrl = embeds[s.item.id];
+          // Ensure autoplay is enabled for YouTube videos
+          if (embedUrl && embedUrl.includes('youtube.com/embed/')) {
+            const url = new URL(embedUrl);
+            url.searchParams.set('autoplay', '1');
+            url.searchParams.set('rel', '0');
+            embedUrl = url.toString();
+          }
+          return {
+            ...s.item,
+            yt: extractVideoId(embedUrl) || '',
+            embed: embedUrl,
+            genreLabels: s.genres,
+            explanation: s.explanation
+          };
+        });
 
       console.log('[TrailerPlayer] Items with trailers:', newQueue.length);
       console.log('[TrailerPlayer] Trailer details:', 
