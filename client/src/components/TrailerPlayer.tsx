@@ -212,6 +212,15 @@ export default function TrailerPlayer({
     };
 
     // Advanced selection with genre/theme diversity enforcement
+    const selectedMovies: Array<{
+      item: typeof scored[0]['item'],
+      genres: string[],
+      explanation: string
+    }> = [];
+    const usedGenres = new Set<number>();
+    const usedDecades = new Set<string>();
+    const usedSources = new Set<string>();
+
     const pools = {
       recent: scored.filter(s => parseInt(s.item.year) >= 2015),
       classic: scored.filter(s => parseInt(s.item.year) < 2000),
@@ -261,11 +270,6 @@ export default function TrailerPlayer({
     };
 
     // Select top candidates with diversity boost - use 6 movies as requested
-    const selectedMovies: Array<{
-      item: typeof scored[0]['item'],
-      genres: string[],
-      explanation: string
-    }> = [];
     const usedTitles = new Set<string>();
 
     for (const movie of scored) {
