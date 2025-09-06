@@ -17,6 +17,7 @@ const IMG = "https://image.tmdb.org/t/p";
 const POSTER = "w500", BACKDROP = "w780";
 
 /* ====================== Types ====================== */
+type Weights = Record<string, number>;
 type Raw = { title: string; year?: number; srcList: string };
 type Item = {
   id: number;
@@ -531,11 +532,8 @@ api.get("/ab/next", async (req:Request, res:Response) => {
 // Record a vote (left vs right) and update profile
 api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
   noStore(res);
-  const schema = z.object({
-    leftId: z.number(), rightId: z.number(), chosenId: z.number()
-  });
-  const { leftId, rightId, chosenId } = schema.parse(req.body);
-
+  const { leftId, rightId, chosenId } = req.body as { leftId: number; rightId: number; chosenId: number };
+  
   const left = CATALOGUE.find(i=>i.id===leftId);
   const right= CATALOGUE.find(i=>i.id===rightId);
   if (!left || !right || !AB_SET.has(left.id) || !AB_SET.has(right.id)) {
@@ -547,15 +545,7 @@ api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
   console.log(`[A/B VOTE] Session ${req.headers["x-session-id"] || req.query.sid || "anon"}: ${left.title} vs ${right.title} → chose ${chosenId === left.id ? left.title : right.title} (Round ${p.rounds})`);
   console.log(`[VOTE] Rounds: ${p.rounds}, Features learned: ${Object.keys(p.w).length}`);
   
-  // Return fresh recommendations immediately
-  const recs = recommend(p, 20).map(t => ({
-    id: t.id, title: t.title, year: t.year,
-    image: t.posterUrl || t.backdropUrl,
-    posterUrl: t.posterUrl, backdropUrl: t.backdropUrl,
-    genres: t.genres
-  }));
-  
-  res.json({ ok:true, rounds:p.rounds, recs });
+  res.json({ ok:true, rounds:p.rounds, w: p.w as Weights });
 });
 
 // Recommendations ranked for the current user
@@ -586,6 +576,48 @@ api.get("/recs", async (req:Request, res:Response) => {
     // quick rationale: top 3 positive weights
     likes: Object.entries(p.w).sort((a,b)=>b[1]-a[1]).slice(0,6)
   });
+});
+
+// POST recs endpoint that accepts client weights
+api.post("/recs", express.json(), async (req:Request, res:Response) => {
+  noStore(res);
+  await buildAll();
+  
+  // if client sends its own weights, use them; else fall back to session profile
+  const top: number = Number(req.body?.top ?? 20);
+  const roundHint: number | undefined = req.body?.rounds;
+  const wOverride: Weights | undefined = req.body?.w;
+  
+  const prof = sess(req);
+  const w: Weights = wOverride ?? prof.w;
+  const rounds = roundHint ?? prof.rounds;
+  
+  // preference/prior blend — make preferences dominate quickly
+  const prefWeight = rounds >= 5 ? 0.9 : rounds >= 2 ? 0.8 : 0.7;
+  const priorWeight = 1 - prefWeight;
+  
+  const scored = CATALOGUE
+    .filter(x => !AB_SET.has(x.id)) // rec pool only
+    .map(it => {
+      const pref = dot(w, feats(it));
+      const prior = (it.voteAverage || 0) * Math.log(1 + (it.voteCount || 1));
+      return { it, s: prefWeight * pref + priorWeight * (prior / 20) };
+    })
+    .sort((a, b) => b.s - a.s)
+    .slice(0, top)
+    .map(({ it }) => ({
+      id: it.id,
+      title: it.title,
+      year: it.year,
+      image: it.posterUrl || it.backdropUrl,
+      posterUrl: it.posterUrl,
+      backdropUrl: it.backdropUrl,
+      genres: it.genres,
+    }));
+    
+  console.log(`[RECS POST] Using ${Object.keys(w).length} features, ${rounds} rounds. Top 3:`, scored.slice(0,3).map(s => s.title));
+  
+  return res.json({ ok: true, rounds, items: scored });
 });
 
 // Trailers unchanged (TMDb→YouTube)

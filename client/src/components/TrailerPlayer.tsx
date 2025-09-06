@@ -101,8 +101,21 @@ export default function TrailerPlayer({
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
-        const { apiGet } = await import('../lib/api');
-        const data = await apiGet(`/api/recs?top=60`);
+        const { loadW, loadRounds } = await import('../lib/userModel');
+        const { getSID } = await import('../lib/session');
+        
+        const body = { top: 60, w: loadW(), rounds: loadRounds() };
+        const data = await fetch("/api/recs", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json", 
+            "Cache-Control": "no-store",
+            "x-session-id": getSID()
+          },
+          cache: "no-store",
+          body: JSON.stringify(body),
+        }).then(r => r.json());
+
         if (data.ok && data.items) {
           // Convert API format to Title format
           const recs: Title[] = data.items.map((item: any) => ({
@@ -112,14 +125,12 @@ export default function TrailerPlayer({
             genres: item.genres || [],
             popularity: 50, // Default
             feature: [], // Not used
-            sources: item.sources || [],
+            sources: [],
           }));
 
-          console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations from Bradley-Terry model`);
+          console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations using client weights`);
           console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
-          if (data.likes?.length > 0) {
-            console.log(`[TrailerPlayer] User preferences:`, data.likes.slice(0, 3));
-          }
+          console.log(`[TrailerPlayer] Client weights keys:`, Object.keys(loadW()).length);
 
           setRecommendations(recs);
         }

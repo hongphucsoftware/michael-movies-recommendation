@@ -28,16 +28,27 @@ export default function PosterPair() {
 
     // Record the vote in the Bradley-Terry system
     try {
-      // The original code had a direct fetch call here.
-      // It's been replaced with a call to apiPost and firePrefsUpdated
-      // as per the instructions in the changes snippet.
-      await apiPost("/api/ab/vote", {
-        leftId: side === "left" ? (chosen as any).id : (other as any).id,
-        rightId: side === "left" ? (other as any).id : (chosen as any).id,
-        chosenId: (chosen as any).id
-      });
-      console.log(`[A/B VOTE] Recorded vote for "${(chosen as any).title}" over "${(other as any).title}"`);
-      firePrefsUpdated(); // Trigger recommendations refresh
+      const { saveW, saveRounds } = await import("../lib/userModel");
+      
+      const resp = await fetch("/api/ab/vote", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-session-id": (await import("../lib/session")).getSID()
+        },
+        body: JSON.stringify({
+          leftId: side === "left" ? (chosen as any).id : (other as any).id,
+          rightId: side === "left" ? (other as any).id : (chosen as any).id,
+          chosenId: (chosen as any).id
+        }),
+      }).then(r => r.json());
+
+      if (resp?.ok) {
+        saveW(resp.w || {});
+        saveRounds(resp.rounds || 0);
+        console.log(`[A/B VOTE] Recorded vote for "${(chosen as any).title}" over "${(other as any).title}" - Round ${resp.rounds}`);
+        firePrefsUpdated(); // Trigger recommendations refresh
+      }
     } catch (error) {
       console.error("[A/B VOTE] Failed to record vote:", error);
     }
