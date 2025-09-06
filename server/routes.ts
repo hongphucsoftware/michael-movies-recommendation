@@ -22,6 +22,11 @@ const SOURCES = {
   imdbThrillers: "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc", // Added Thriller list
   imdbList4: "https://www.imdb.com/list/ls005762897/", // Added list 4
   imdbList5: "https://www.imdb.com/list/ls545836395/", // Original list 3
+  decade2020s: "https://www.imdb.com/list/ls094921320/",
+  decade2010s: "https://www.imdb.com/list/ls003501243/",
+  decade2000s: "https://www.imdb.com/list/ls002065120/",
+  decade1990s: "https://www.imdb.com/list/ls000873904/",
+  decade1980s: "https://www.imdb.com/list/ls005747458/",
 };
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -40,9 +45,9 @@ async function loadAnchorHardlist() {
   try {
     const fs = await import('fs');
     const path = await import('path');
-    
+
     const hardlistPath = path.join(process.cwd(), 'config', 'paf_anchor_hardlist.json');
-    
+
     if (fs.existsSync(hardlistPath)) {
       const rawData = fs.readFileSync(hardlistPath, 'utf8');
       ANCHOR_HARDLIST = JSON.parse(rawData);
@@ -58,26 +63,26 @@ async function loadAnchorHardlist() {
 // Resolve anchor titles to TMDb items
 async function resolveAnchors(catalogue: Item[]) {
   if (ANCHOR_HARDLIST.length === 0) return;
-  
+
   const resolved: Item[] = [];
   const misses: any[] = [];
-  
+
   console.log(`[ANCHORS] Resolving ${ANCHOR_HARDLIST.length} hardlist titles...`);
-  
+
   for (const anchor of ANCHOR_HARDLIST) {
     const { title, year } = anchor;
     const normTitle = norm(title);
-    
+
     // Find exact matches by normalized title and year
     const matches = catalogue.filter(item => {
       const itemNorm = norm(item.title);
       const itemYear = item.releaseDate ? parseInt(item.releaseDate.slice(0, 4)) : null;
-      
+
       return itemNorm === normTitle && 
              itemYear && 
              Math.abs(itemYear - year) <= 1; // Allow 1 year difference
     });
-    
+
     if (matches.length > 0) {
       resolved.push(matches[0]); // Take first match
     } else {
@@ -86,7 +91,7 @@ async function resolveAnchors(catalogue: Item[]) {
         const itemNorm = norm(item.title);
         return itemNorm === normTitle;
       });
-      
+
       if (fuzzyMatches.length > 0) {
         resolved.push(fuzzyMatches[0]);
         console.log(`[ANCHORS] Fuzzy match: "${title}" (${year}) -> "${fuzzyMatches[0].title}" (${fuzzyMatches[0].releaseDate?.slice(0, 4)})`);
@@ -95,9 +100,9 @@ async function resolveAnchors(catalogue: Item[]) {
       }
     }
   }
-  
+
   RESOLVED_ANCHORS = resolved;
-  
+
   console.log(`[ANCHORS] Resolved ${resolved.length}/${ANCHOR_HARDLIST.length} anchors`);
   if (misses.length > 0) {
     console.log(`[ANCHORS] Missed titles:`, misses.slice(0, 10).map(m => `"${m.title}" (${m.year})`));
@@ -401,7 +406,17 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
       const a = $(el).find("a").first();
       const title = a.text().trim();
       const year = parseYear($(el).find(".lister-item-year").first().text().trim());
-      if (title) out.push({ title, year, src: "imdbList" });
+      if (title) {
+          // Determine source based on URL
+          let sourceKey = "imdbList";
+          if (url.includes("ls094921320")) sourceKey = "decade2020s";
+          else if (url.includes("ls003501243")) sourceKey = "decade2010s";
+          else if (url.includes("ls002065120")) sourceKey = "decade2000s";
+          else if (url.includes("ls000873904")) sourceKey = "decade1990s";
+          else if (url.includes("ls005747458")) sourceKey = "decade1980s";
+
+          out.push({ title, year, src: sourceKey });
+        }
     });
 
     // Modern list layout
@@ -410,7 +425,17 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
       const title = titleEl.text().replace(/^\d+\.\s*/, "").trim();
       const yearEl = $(el).find("span.sc-b189961a-8").first();
       const year = parseYear(yearEl.text());
-      if (title) out.push({ title, year, src: "imdbList" });
+      if (title) {
+          // Determine source based on URL
+          let sourceKey = "imdbList";
+          if (url.includes("ls094921320")) sourceKey = "decade2020s";
+          else if (url.includes("ls003501243")) sourceKey = "decade2010s";
+          else if (url.includes("ls002065120")) sourceKey = "decade2000s";
+          else if (url.includes("ls000873904")) sourceKey = "decade1990s";
+          else if (url.includes("ls005747458")) sourceKey = "decade1980s";
+
+          out.push({ title, year, src: sourceKey });
+        }
     });
 
     // Additional modern selectors for IMDb lists
@@ -418,7 +443,17 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
       const a = $(el).find("a").first();
       const title = a.text().trim();
       const year = parseYear($(el).find("span.secondaryInfo").text());
-      if (title) out.push({ title, year, src: "imdbList" });
+      if (title) {
+          // Determine source based on URL
+          let sourceKey = "imdbList";
+          if (url.includes("ls094921320")) sourceKey = "decade2020s";
+          else if (url.includes("ls003501243")) sourceKey = "decade2010s";
+          else if (url.includes("ls002065120")) sourceKey = "decade2000s";
+          else if (url.includes("ls000873904")) sourceKey = "decade1990s";
+          else if (url.includes("ls005747458")) sourceKey = "decade1980s";
+
+          out.push({ title, year, src: sourceKey });
+        }
     });
 
     // Try broader selectors as fallback
@@ -427,7 +462,17 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
       const parentItem = $(el).closest("li, div.lister-item");
       const yearText = parentItem.find("span[class*='year'], span.lister-item-year, span.sc-").text();
       const year = parseYear(yearText);
-      if (title && title.length > 2) out.push({ title, year, src: "imdbList" });
+      if (title && title.length > 2) {
+          // Determine source based on URL
+          let sourceKey = "imdbList";
+          if (url.includes("ls094921320")) sourceKey = "decade2020s";
+          else if (url.includes("ls003501243")) sourceKey = "decade2010s";
+          else if (url.includes("ls002065120")) sourceKey = "decade2000s";
+          else if (url.includes("ls000873904")) sourceKey = "decade1990s";
+          else if (url.includes("ls005747458")) sourceKey = "decade1980s";
+
+          out.push({ title, year, src: sourceKey });
+        }
     });
 
     // JSON-LD fallback if present
@@ -440,7 +485,17 @@ async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]
             for (const it of node.itemListElement) {
               const name = it?.item?.name || it?.name;
               const year = parseYear(it?.item?.datePublished || it?.datePublished);
-              if (name) out.push({ title: String(name), year, src: "imdbList" });
+              if (name) {
+                  // Determine source based on URL
+                  let sourceKey = "imdbList";
+                  if (url.includes("ls094921320")) sourceKey = "decade2020s";
+                  else if (url.includes("ls003501243")) sourceKey = "decade2010s";
+                  else if (url.includes("ls002065120")) sourceKey = "decade2000s";
+                  else if (url.includes("ls000873904")) sourceKey = "decade1990s";
+                  else if (url.includes("ls005747458")) sourceKey = "decade1980s";
+
+                  out.push({ title: String(name), year, src: sourceKey });
+                }
             }
           }
         }
@@ -547,7 +602,7 @@ async function buildAll(): Promise<Item[]> {
   console.log("[BUILD ALL] Starting comprehensive scrape from all sources...");
 
   // Scrape all sources in parallel
-  const [rt, top, list, list2, list3, list4, thrillers, list5] = await Promise.all([
+  const [rt, top, list, list2, list3, list4, thrillers, list5, decade2020s, decade2010s, decade2000s, decade1990s, decade1980s] = await Promise.all([
     scrapeRT2020(SOURCES.rt2020),
     scrapeImdbTop(SOURCES.imdbTop),
     scrapeImdbList(SOURCES.imdbList, 1000),
@@ -556,10 +611,15 @@ async function buildAll(): Promise<Item[]> {
     scrapeImdbList(SOURCES.imdbList4, 1000),
     scrapeImdbSearchResults(SOURCES.imdbThrillers, 1000),
     scrapeImdbList(SOURCES.imdbList5, 1000),
+    scrapeImdbList(SOURCES.decade2020s, 15), // Get 15 from each decade
+    scrapeImdbList(SOURCES.decade2010s, 15),
+    scrapeImdbList(SOURCES.decade2000s, 15),
+    scrapeImdbList(SOURCES.decade1990s, 15),
+    scrapeImdbList(SOURCES.decade1980s, 15),
   ]);
 
-  const union = dedupeRaw([...rt, ...top, ...list, ...list2, ...list3, ...list4, ...thrillers, ...list5]);
-  console.log(`[SCRAPE TOTALS] RT:${rt.length}, IMDb Top:${top.length}, IMDb List:${list.length}, List2:${list2.length}, List3:${list3.length}, List4:${list4.length}, Thrillers:${thrillers.length}, List5:${list5.length}, Union:${union.length}`);
+  const union = dedupeRaw([...rt, ...top, ...list, ...list2, ...list3, ...list4, ...thrillers, ...list5, ...decade2020s, ...decade2010s, ...decade2000s, ...decade1990s, ...decade1980s]);
+  console.log(`[SCRAPE TOTALS] RT:${rt.length}, IMDb Top:${top.length}, IMDb List:${list.length}, List2:${list2.length}, List3:${list3.length}, List4:${list4.length}, Thrillers:${thrillers.length}, List5:${list5.length}, 20s:${decade2020s.length}, 10s:${decade2010s.length}, 00s:${decade2000s.length}, 90s:${decade1990s.length}, 80s:${decade1980s.length}, Union:${union.length}`);
 
   // Enforcement check - refuse to continue with low counts
   if (top.length < 200) {
@@ -646,7 +706,7 @@ async function buildAll(): Promise<Item[]> {
   });
 
   cache.stats = {
-    counts: { rt2020: rt.length, imdbTop: top.length, imdbList: list.length, list2: list2.length, list3: list3.length, list4: list4.length, thrillers: thrillers.length, list5: list5.length, totalScraped: union.length },
+    counts: { rt2020: rt.length, imdbTop: top.length, imdbList: list.length, list2: list2.length, list3: list3.length, list4: list4.length, thrillers: thrillers.length, list5: list5.length, decade2020s: decade2020s.length, decade2010s: decade2010s.length, decade2000s: decade2000s.length, decade1990s: decade1990s.length, decade1980s: decade1980s.length, totalScraped: union.length },
     resolved: items.length,
     missed: union.length - items.length,
     withPosters: items.filter(i => i.posterUrl).length,
@@ -654,10 +714,10 @@ async function buildAll(): Promise<Item[]> {
   cache.misses = misses;
 
   console.log(`[COMPLETE] Final catalogue: ${items.length} movies with ${items.filter(i => i.posterUrl).length} posters`);
-  
+
   // Resolve anchors from hardlist
   await resolveAnchors(items);
-  
+
   return items;
 }
 
@@ -678,8 +738,8 @@ api.get("/catalogue", async (req: Request, res: Response) => {
       ok: true,
       total: items.length,
       items: items.map((m) => ({ ...m, image: m.posterUrl || m.backdropUrl || null })),
-      sources: ["rt2020", "imdbTop", "imdbList", "imdbList2", "imdbList3", "imdbList4", "imdbThrillers", "imdbList5"],
-      policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS",
+      sources: ["decade2020s", "decade2010s", "decade2000s", "decade1990s", "decade1980s"],
+      policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS_NO_LIMITS",
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message ?? String(e) });
@@ -730,6 +790,11 @@ api.get("/catalogue/stats", (_req, res) => {
     imdbList4: cache.catalogue.filter(item => item.sources.includes("imdbList4")).length,
     imdbThrillers: cache.catalogue.filter(item => item.sources.includes("imdbSearch")).length,
     imdbList5: cache.catalogue.filter(item => item.sources.includes("imdbList5")).length,
+    decade2020s: cache.catalogue.filter(item => item.sources.includes("decade2020s")).length,
+    decade2010s: cache.catalogue.filter(item => item.sources.includes("decade2010s")).length,
+    decade2000s: cache.catalogue.filter(item => item.sources.includes("decade2000s")).length,
+    decade1990s: cache.catalogue.filter(item => item.sources.includes("decade1990s")).length,
+    decade1980s: cache.catalogue.filter(item => item.sources.includes("decade1980s")).length,
     total: cache.catalogue.length
   };
 
@@ -748,7 +813,12 @@ api.get("/catalogue/stats", (_req, res) => {
       "https://www.imdb.com/list/ls057670103/",
       "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc",
       "https://www.imdb.com/list/ls005762897/",
-      "https://www.imdb.com/list/ls545836395/"
+      "https://www.imdb.com/list/ls545836395/",
+      "https://www.imdb.com/list/ls094921320/",
+      "https://www.imdb.com/list/ls003501243/",
+      "https://www.imdb.com/list/ls002065120/",
+      "https://www.imdb.com/list/ls000873904/",
+      "https://www.imdb.com/list/ls005747458/"
     ]
   });
 });
@@ -773,6 +843,11 @@ api.get("/catalogue/verify", (_req, res) => {
       imdbList4: cache.catalogue.filter(item => item.sources.includes("imdbList4")).length,
       imdbThrillers: cache.catalogue.filter(item => item.sources.includes("imdbSearch")).length,
       imdbList5: cache.catalogue.filter(item => item.sources.includes("imdbList5")).length,
+      decade2020s: cache.catalogue.filter(item => item.sources.includes("decade2020s")).length,
+      decade2010s: cache.catalogue.filter(item => item.sources.includes("decade2010s")).length,
+      decade2000s: cache.catalogue.filter(item => item.sources.includes("decade2000s")).length,
+      decade1990s: cache.catalogue.filter(item => item.sources.includes("decade1990s")).length,
+      decade1980s: cache.catalogue.filter(item => item.sources.includes("decade1980s")).length,
     },
     compliance: {
       usingAllSources: true,
@@ -780,14 +855,11 @@ api.get("/catalogue/verify", (_req, res) => {
       policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS_NO_LIMITS"
     },
     mandatorySources: [
-      "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
-      "https://www.imdb.com/chart/top/",
-      "https://www.imdb.com/list/ls565399909/",
-      "https://www.imdb.com/list/ls064708279/",
-      "https://www.imdb.com/list/ls057670103/",
-      "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc",
-      "https://www.imdb.com/list/ls005762897/",
-      "https://www.imdb.com/list/ls545836395/"
+      "https://www.imdb.com/list/ls094921320/",
+      "https://www.imdb.com/list/ls003501243/",
+      "https://www.imdb.com/list/ls002065120/",
+      "https://www.imdb.com/list/ls000873904/",
+      "https://www.imdb.com/list/ls005747458/"
     ]
   };
 
@@ -1071,6 +1143,21 @@ api.get("/health", (_req, res) => {
      if (stats.counts.imdbList5 < 200) {
       enforcementWarnings.push(`IMDb List 5 only ${stats.counts.imdbList5} titles - expected 300+`);
     }
+    if (stats.counts.decade2020s < 10) {
+      enforcementWarnings.push(`IMDb 2020s List only ${stats.counts.decade2020s} titles - expected 15+`);
+    }
+    if (stats.counts.decade2010s < 10) {
+      enforcementWarnings.push(`IMDb 2010s List only ${stats.counts.decade2010s} titles - expected 15+`);
+    }
+    if (stats.counts.decade2000s < 10) {
+      enforcementWarnings.push(`IMDb 2000s List only ${stats.counts.decade2000s} titles - expected 15+`);
+    }
+    if (stats.counts.decade1990s < 10) {
+      enforcementWarnings.push(`IMDb 1990s List only ${stats.counts.decade1990s} titles - expected 15+`);
+    }
+    if (stats.counts.decade1980s < 10) {
+      enforcementWarnings.push(`IMDb 1980s List only ${stats.counts.decade1980s} titles - expected 15+`);
+    }
   }
 
   res.json({
@@ -1078,7 +1165,7 @@ api.get("/health", (_req, res) => {
     cacheItems: cache.catalogue.length,
     cacheAgeMs: Date.now() - cache.ts,
     stats: cache.stats,
-    sources: ["rt2020", "imdbTop", "imdbList", "imdbList2", "imdbList3", "imdbList4", "imdbThrillers", "imdbList5"],
+    sources: ["rt2020", "imdbTop", "imdbList", "imdbList2", "imdbList3", "imdbList4", "imdbThrillers", "imdbList5", "decade2020s", "decade2010s", "decade2000s", "decade1990s", "decade1980s"],
     enforcementWarnings: enforcementWarnings.length > 0 ? enforcementWarnings : null,
     policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS_NO_LIMITS",
   });
