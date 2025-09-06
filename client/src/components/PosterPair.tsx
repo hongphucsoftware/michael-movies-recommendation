@@ -6,6 +6,7 @@ import React, { useState } from "react";
 import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 import { useQuickPicks } from "../hooks/useQuickPicks";
 import { useABHistory } from "../hooks/useABHistory";
+import { firePrefsUpdated } from "../lib/events";
 import TrailerPlayer from "./TrailerPlayer";
 
 export default function PosterPair() {
@@ -26,6 +27,9 @@ export default function PosterPair() {
     like(chosen as any);
     skip(other as any);
     record((chosen as any).id, (other as any).id);  // Track A/B history for personalized reel
+    
+    // Notify other components that preferences have been updated
+    firePrefsUpdated();
   }
 
   async function doRebuild() {

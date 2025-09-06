@@ -1,4 +1,3 @@
-
 import express, { Request, Response } from "express";
 import * as cheerio from "cheerio";
 import { z } from "zod";
@@ -72,7 +71,7 @@ const decadeOf = (y?:number)=> y ? Math.floor(y/10)*10 : undefined;
 async function fetchTop250(): Promise<Raw[]> {
   const url = "https://www.imdb.com/chart/top/";
   const out: Raw[] = [];
-  
+
   try {
     const html = await fetch(url, {
       headers: {
@@ -80,28 +79,28 @@ async function fetchTop250(): Promise<Raw[]> {
         "accept-language":"en-US,en;q=0.9"
       }
     }).then(r=>r.text());
-    
+
     const $ = cheerio.load(html);
-    
+
     // New IMDb Top 250 layout
     $("li[data-testid='cvitem-top-chartmeter-titlecard']").each((_i, el) => {
       const titleLink = $(el).find("h3.ipc-title__text").first();
       let title = titleLink.text().trim();
-      
+
       // Remove ranking number like "1. The Shawshank Redemption"
       title = title.replace(/^\d+\.\s*/, "");
-      
+
       // Get year from metadata
       const yearText = $(el).find("span[data-testid='title-card-metadata'] span").first().text();
       const yearMatch = yearText.match(/(19|20)\d{2}/);
       const year = yearMatch ? Number(yearMatch[0]) : undefined;
-      
+
       if (title) {
         out.push({ title, year, srcList: "imdbTop250" });
         console.log(`[IMDB] Top 250: "${title}" (${year || 'no year'})`);
       }
     });
-    
+
     // Fallback for older layout
     if (out.length < 50) {
       $("td.titleColumn").each((_i, el) => {
@@ -110,18 +109,18 @@ async function fetchTop250(): Promise<Raw[]> {
         const yearText = $(el).find("span.secondaryInfo").text();
         const yearMatch = yearText.match(/\((\d{4})\)/);
         const year = yearMatch ? Number(yearMatch[1]) : undefined;
-        
+
         if (title) {
           out.push({ title, year, srcList: "imdbTop250" });
           console.log(`[IMDB] Top 250 (fallback): "${title}" (${year || 'no year'})`);
         }
       });
     }
-    
+
   } catch (error) {
     console.error(`[IMDB] Error fetching Top 250:`, error);
   }
-  
+
   console.log(`[IMDB] Top 250 total: ${out.length} titles`);
   return out.slice(0, 100); // Take top 100
 }
@@ -131,7 +130,7 @@ async function fetchTop250(): Promise<Raw[]> {
 async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
   const out: Raw[] = [];
   const seenTitles = new Set<string>(); // Track unique titles to detect loops
-  
+
   for (let page=1; page<=maxPages; page++) {
     const url = `https://www.imdb.com/list/${listId}/?st_dt=&mode=detail&sort=listOrder,asc&page=${page}`;
     try {
@@ -141,9 +140,9 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
           "accept-language":"en-US,en;q=0.9"
         }
       }).then(r=>r.text());
-      
+
       const $ = cheerio.load(html);
-      
+
       // Try multiple selectors for different IMDB list layouts
       let rows = $(".lister-list .lister-item").toArray();
       if (!rows.length) {
@@ -155,9 +154,9 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
       if (!rows.length) {
         rows = $(".ipc-title").toArray();
       }
-      
+
       console.log(`[IMDB] List ${listId} page ${page}: found ${rows.length} items`);
-      
+
       if (!rows.length) break;
 
       let newItemsThisPage = 0;
@@ -168,22 +167,22 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
         if (!t) t = $(r).find("[data-testid='title-card-title'] a").first().text().trim();
         if (!t) t = $(r).find(".ipc-title a").first().text().trim();
         if (!t) t = $(r).find("h3 a").first().text().trim();
-        
+
         // Clean title - remove list numbers like "1. Title" 
         t = t.replace(/^\d+\.\s*/, "").trim();
-        
+
         // Try multiple year selectors - look in the same row and nearby elements
         let yText = $(r).find(".lister-item-year").first().text() || "";
         if (!yText) yText = $(r).find(".secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find(".titleColumn .secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find("[data-testid='title-card-metadata']").first().text() || "";
         if (!yText) yText = $(r).find("span").filter((_i, el) => !!$(el).text().match(/\(.*\d{4}.*\)/)).first().text() || "";
-        
+
         // More aggressive year extraction - look for any 4-digit year in parentheses
         let yMatch = yText.match(/\(.*?(19|20)\d{2}.*?\)/);
         if (!yMatch) yMatch = yText.match(/(19|20)\d{2}/);
         const year = yMatch ? Number(yMatch[1] || yMatch[0]) : undefined;
-        
+
         if (t) {
           const titleKey = `${t}_${year || 'noYear'}`;
           if (!seenTitles.has(titleKey)) {
@@ -194,15 +193,15 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
           }
         }
       }
-      
+
       // If we didn't find any new unique items, we're in a loop - stop
       if (newItemsThisPage === 0) {
         console.log(`[IMDB] No new unique items on page ${page}, stopping pagination (found ${out.length} total)`);
         break;
       }
-      
+
       console.log(`[IMDB] Added ${newItemsThisPage} new items from page ${page}`);
-      
+
       // be a good citizen; IMDb is prickly
       await sleep(300);
     } catch (error) {
@@ -210,9 +209,9 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
       break;
     }
   }
-  
+
   console.log(`[IMDB] Total unique titles from list ${listId}: ${out.length}`);
-  return out;
+  return out.slice(0, PER_LIST_LIMIT); // Use your limit
 }
 
 /* ====================== TMDb resolution (title→id→credits) ====================== */
@@ -241,7 +240,7 @@ async function resolveRaw(raw: Raw): Promise<Item|null> {
       console.log(`[TMDB] No hit for: "${raw.title}" (${raw.year})`);
       return null;
     }
-    
+
     const { directors, actors } = await tmdbCredits(hit.id);
     const resolved = {
       id: hit.id,
@@ -257,7 +256,7 @@ async function resolveRaw(raw: Raw): Promise<Item|null> {
       voteCount: hit.vote_count || 0,
       sources: [raw.srcList]
     };
-    
+
     console.log(`[TMDB] Resolved: "${raw.title}" → "${resolved.title}" (ID: ${resolved.id})`);
     return resolved;
   } catch (error) {
@@ -311,25 +310,25 @@ async function buildAll(): Promise<void> {
     console.log(`[BUILD] Using cached catalogue: ${CATALOGUE.length} items, ${AB_SET.size} in AB set`);
     return;
   }
-  
+
   // Clear cache for fresh build
   CATALOGUE = [];
   AB_SET.clear();
 
   console.log(`[BUILD] Starting fresh build with Top 250 + supplementary lists`);
-  
+
   const rawAll: Raw[] = [];
-  
+
   // Skip Top 250 - using only your specified lists
-  
+
   // Then get your specified lists
   for (const id of LIST_IDS) {
     console.log(`[BUILD] Fetching IMDB list: ${id}`);
     const rows = await fetchListTitles(id);
     console.log(`[BUILD] List ${id}: ${rows.length} raw titles`);
-    rawAll.push(...rows.slice(0, PER_LIST_LIMIT)); // Use your limit
+    rawAll.push(...rows);
   }
-  
+
   console.log(`[BUILD] Total raw titles across all lists: ${rawAll.length}`);
 
   // resolve sequentially per list to keep memory calm
@@ -337,11 +336,11 @@ async function buildAll(): Promise<void> {
   for (const listId of LIST_IDS) {
     const raws = rawAll.filter(r=>r.srcList===listId);
     console.log(`[BUILD] Resolving ${raws.length} titles for list ${listId}`);
-    
+
     const jobs = raws.map(r => async()=> await resolveRaw(r));
     const resolved = await pLimit(CONCURRENCY, jobs);
     const items = resolved.filter(Boolean) as Item[];
-    
+
     console.log(`[BUILD] List ${listId}: ${items.length}/${raws.length} titles resolved`);
     byList.set(listId, items);
   }
@@ -359,11 +358,11 @@ async function buildAll(): Promise<void> {
       else ex.sources = Array.from(new Set([...ex.sources, ...it.sources]));
     }
   });
-  
+
   CATALOGUE = Array.from(full.values());
   AB_SET = new Set(abIds);
   BUILT_AT = now;
-  
+
   console.log(`[BUILD] Final catalogue: ${CATALOGUE.length} total movies, ${AB_SET.size} in AB set`);
   console.log(`[BUILD] Sample AB movies:`, Array.from(AB_SET).slice(0, 5).map(id => {
     const item = CATALOGUE.find(i => i.id === id);
@@ -393,9 +392,15 @@ function addScaled(w:Record<string,number>, f:Record<string,number>, scale:numbe
 
 /* ====================== A/B selection & learning ====================== */
 function sess(req:Request): Profile {
-  const sid = (req.headers["x-session-id"] as string) || "anon";
+  const sid =
+    (req.headers["x-session-id"] as string) ||
+    (req.query.sid as string) ||
+    "anon";
   let p = PROFILES.get(sid);
-  if (!p) { p = { w:{}, seenPairs:new Set(), rounds:0 }; PROFILES.set(sid,p); }
+  if (!p) {
+    p = { w: {}, seenPairs: new Set(), rounds: 0 };
+    PROFILES.set(sid,p);
+  }
   return p;
 }
 
@@ -574,7 +579,7 @@ api.get("/trailers", async (req:Request, res:Response) => {
 api.get("/trailer", async (req:Request, res:Response) => {
   const id = Number(req.query.id);
   if (!Number.isFinite(id)) return res.status(400).json({ ok:false, error:"Invalid id" });
-  
+
   const url = `${TMDB}/movie/${id}/videos?api_key=${encodeURIComponent(TMDB_API_KEY)}&language=en-US`;
   try {
     const r = await fetch(url);
