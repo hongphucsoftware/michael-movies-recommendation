@@ -1,7 +1,17 @@
+// Global event system for preference updates
+type PrefsUpdatedListener = (freshRecs?: any[]) => void;
 
-export const firePrefsUpdated = () => window.dispatchEvent(new Event('ab:prefs-updated'));
+let listeners: PrefsUpdatedListener[] = [];
 
-export const onPrefsUpdated = (fn: () => void) => {
-  window.addEventListener('ab:prefs-updated', fn);
-  return () => window.removeEventListener('ab:prefs-updated', fn);
-};
+export function onPrefsUpdated(callback: PrefsUpdatedListener): () => void {
+  listeners.push(callback);
+
+  // Return cleanup function
+  return () => {
+    listeners = listeners.filter(l => l !== callback);
+  };
+}
+
+export function dispatchPrefsUpdated(freshRecs?: any[]): void {
+  listeners.forEach(listener => listener(freshRecs));
+}
