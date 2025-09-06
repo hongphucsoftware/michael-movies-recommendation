@@ -124,7 +124,7 @@ async function scrapeFilms101Decade(url: string, src: string): Promise<RawTitle[
   const pages = new Set<string>();
   pages.add(url);
 
-  // follow page "2" (and any other local numbered page)
+  // follow pagination links
   try {
     const html = await httpText(url);
     const $ = cheerio.load(html);
@@ -132,7 +132,6 @@ async function scrapeFilms101Decade(url: string, src: string): Promise<RawTitle[
       const t = ($(a).text() || "").trim();
       const href = ($(a).attr("href") || "").trim();
       if (/^\d+$/.test(t) && Number(t) <= 9 && href && href.includes("by-rank")) {
-        // absolute or relative
         const full = href.startsWith("http") ? href : new URL(href, url).toString();
         pages.add(full);
       }
@@ -143,25 +142,69 @@ async function scrapeFilms101Decade(url: string, src: string): Promise<RawTitle[
 
   for (const pg of pages) {
     console.log(`[SCRAPE] ${src}: ${pg}`);
-    const html = await httpText(pg);
-    const $ = cheerio.load(html);
+    try {
+      const html = await httpText(pg);
+      const $ = cheerio.load(html);
 
-    // find the first table that has a header cell "Title"
-    const tables = $("table").toArray();
-    let table: cheerio.Cheerio | null = null;
-    for (const t of tables) {
-      const hasTitle = $(t).find("th,td").filter((_, el) => /title/i.test($(el).text())).length > 0;
-      if (hasTitle) { table = $(t); break; }
+      // Look for the main content table with movie rankings
+      const tables = $("table");
+      let foundMovies = false;
+
+      tables.each((_, table) => {
+        const $table = $(table);
+        const headers = $table.find("tr").first().find("th, td");
+        
+        // Check if this table has movie ranking structure
+        const hasRank = headers.filter((_, el) => /rank/i.test($(el).text())).length > 0;
+        const hasTitle = headers.filter((_, el) => /title/i.test($(el).text())).length > 0;
+        
+        if (hasRank || hasTitle || headers.length >= 4) {
+          $table.find("tr").slice(1).each((_, tr) => {
+            const $row = $(tr);
+            const cells = $row.find("td");
+            
+            if (cells.length >= 4) {
+              // Try different column positions for title and year
+              let title = "", year = undefined;
+              
+              // Common patterns: [Rank, Poster, Title, Year, Rating] or [Rank, Title, Year, Rating]
+              for (let i = 1; i < Math.min(cells.length, 5); i++) {
+                const cellText = $(cells[i]).text().trim();
+                if (cellText && cellText.length > 2 && !cellText.match(/^\d+\.?\d*$/) && !cellText.match(/^\d{4}$/) && !title) {
+                  title = cellText.replace(/\s+/g, " ").trim();
+                }
+                if (cellText.match(/^\d{4}$/)) {
+                  year = parseYear(cellText);
+                }
+              }
+              
+              if (title && title.length > 1) {
+                out.push({ title, year, src });
+                foundMovies = true;
+              }
+            }
+          });
+        }
+      });
+
+      // Fallback: look for any structured list of movies
+      if (!foundMovies) {
+        // Try to find movie titles in any structured format
+        $("tr").each((_, tr) => {
+          const $row = $(tr);
+          const cells = $row.find("td");
+          if (cells.length >= 2) {
+            const possibleTitle = $(cells[cells.length >= 4 ? 2 : 1]).text().trim();
+            if (possibleTitle && possibleTitle.length > 2 && !possibleTitle.match(/^\d+\.?\d*$/)) {
+              const possibleYear = cells.length > 2 ? parseYear($(cells[cells.length - 2]).text()) : undefined;
+              out.push({ title: possibleTitle.replace(/\s+/g, " ").trim(), year: possibleYear, src });
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn(`[SCRAPE] Failed to scrape ${pg}:`, e);
     }
-    if (!table) continue;
-
-    table.find("tr").slice(1).each((_, tr) => {
-      const tds = $(tr).find("td");
-      if (tds.length < 4) return;
-      const title = $(tds[3]).text().replace(/\s+/g, " ").trim();
-      const year = parseYear($(tds[4]).text());
-      if (title) out.push({ title, year, src });
-    });
   }
 
   console.log(`[SCRAPE] ${src}: found ${out.length} titles`);
