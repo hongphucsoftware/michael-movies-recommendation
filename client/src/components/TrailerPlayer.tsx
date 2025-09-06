@@ -40,7 +40,7 @@ function cosine(a: number[], b: number[]): number {
 export default function TrailerPlayer({
   items, learnedVec, recentChosenIds, avoidIds = [], count = 6,
 }: Props) {
-  const [queue, setQueue] = useState<Array<Title & { genres: string[], explanation: string }>>([]);
+  const [queue, setQueue] = useState<Array<Omit<Title, 'genres'> & { genres: string[], explanation: string }>>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
@@ -54,11 +54,11 @@ export default function TrailerPlayer({
     const chosen: T[] = [];
     const sim = (a:T,b:T) => {
       const va = vec(a), vb = vec(b);
-      let dot=0, na=0, nb=0; 
-      for (let i=0;i<va.length;i++){ 
-        dot+=va[i]*vb[i]; 
-        na+=va[i]*va[i]; 
-        nb+=vb[i]*vb[i]; 
+      let dot=0, na=0, nb=0;
+      for (let i=0;i<va.length;i++){
+        dot+=va[i]*vb[i];
+        na+=va[i]*va[i];
+        nb+=vb[i]*vb[i];
       }
       const la = Math.sqrt(na)||1, lb=Math.sqrt(nb)||1;
       return dot/(la*lb);
@@ -79,7 +79,7 @@ export default function TrailerPlayer({
 
   // Fetch personalized recommendations from new Bradley-Terry model
   const [recommendations, setRecommendations] = useState<Title[]>([]);
-  
+
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
@@ -97,13 +97,13 @@ export default function TrailerPlayer({
               feature: [], // Not used
               sources: item.sources || [],
             }));
-            
+
             console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations from Bradley-Terry model`);
             console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
             if (data.likes?.length > 0) {
               console.log(`[TrailerPlayer] User preferences:`, data.likes.slice(0, 3));
             }
-            
+
             setRecommendations(recs);
           }
         }
@@ -120,12 +120,12 @@ export default function TrailerPlayer({
     if (recommendations.length === 0) return [];
 
     // Remove recently chosen to avoid immediate repeats
-    const available = recommendations.filter(item => 
+    const available = recommendations.filter(item =>
       !recentChosenIds.includes(item.id) && !avoidIds.includes(item.id)
     );
 
     console.log(`[TrailerPlayer] ${available.length} personalized recommendations available`);
-    
+
     if (available.length === 0) {
       console.warn('[TrailerPlayer] No available personalized recommendations');
       return [];
@@ -133,7 +133,7 @@ export default function TrailerPlayer({
 
     // Take top recommendations (already ranked by Bradley-Terry model)
     const picks = available.slice(0, count);
-    
+
     picks.forEach((pick, i) => {
       console.log(`[PERSONALIZED PICK ${i+1}] "${pick.title}" (${pick.year})`);
     });
@@ -190,6 +190,7 @@ export default function TrailerPlayer({
 
       console.log('[TrailerPlayer] Received embeds for:', Object.keys(newEmbeds).length, 'items');
       console.log('[TrailerPlayer] Items with trailers:', Object.values(newEmbeds).filter(Boolean).length);
+      console.log('[TrailerPlayer] Sample embed URLs:', Object.entries(newEmbeds).slice(0, 3));
 
       setEmbeds(newEmbeds);
     };
@@ -215,6 +216,11 @@ export default function TrailerPlayer({
     setIdx(prev => (prev - 1 + queue.length) % queue.length);
   };
 
+  // Helper to set the current index in the queue
+  const setCurrentIndex = (index: number) => {
+    setIdx(index);
+  };
+
   if (!currentItem) {
     return (
       <div className="flex items-center justify-center h-64 bg-gray-900 rounded-lg">
@@ -225,7 +231,7 @@ export default function TrailerPlayer({
 
   // Generate explanation based on recommendations API response
   const [explanationText, setExplanationText] = useState("Loading your personalized recommendations...");
-  
+
   useEffect(() => {
     const fetchExplanation = async () => {
       try {
@@ -249,7 +255,7 @@ export default function TrailerPlayer({
                   if (key.startsWith('era:')) return `era preferences`;
                   return 'cinematic taste';
                 }).slice(0, 2).join(' and ');
-                
+
                 setExplanationText(`Based on your A/B testing choices, we've learned your ${prefText}. Here are movies we think you'll love:`);
               } else {
                 setExplanationText("Based on your A/B testing choices, here are personalized recommendations for you:");
@@ -279,18 +285,24 @@ export default function TrailerPlayer({
         {currentEmbed ? (
           <div className="aspect-video">
             <iframe
-              src={currentEmbed}
+              src={currentEmbed.includes('youtube.com/embed/') ? currentEmbed : `https://www.youtube.com/embed/${currentEmbed.replace('https://www.youtube.com/watch?v=', '')}`}
               title={`${currentItem.title} trailer`}
-              className="w-full h-full"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              className="w-full h-full border-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
+              loading="lazy"
             />
           </div>
         ) : (
           <div className="aspect-video flex items-center justify-center bg-gray-800">
             <div className="text-center">
               <p className="text-white font-semibold">{currentItem.title}</p>
-              <p className="text-gray-400">Loading trailer...</p>
+              <p className="text-gray-400">
+                {Object.keys(embeds).length === 0 ? 'Loading trailer...' : 'No trailer available'}
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Debug: Queue {queue.length}, Index {idx}, Embeds {Object.keys(embeds).length}
+              </p>
             </div>
           </div>
         )}

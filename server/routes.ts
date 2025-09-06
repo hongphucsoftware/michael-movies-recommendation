@@ -6,9 +6,10 @@ import { z } from "zod";
 /* ====================== Config ====================== */
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY");
-const LIST_IDS = (process.env.IMDB_LISTS || "ls051432359,ls021347064,ls091520106")
+const LIST_IDS = (process.env.IMDB_LISTS || "ls094921320,ls003501243,ls002065120,ls000873904,ls005747458")
   .split(",").map(s => s.trim()).filter(Boolean);
 const AB_PER_LIST = Number(process.env.AB_PER_LIST || 15);
+const PER_LIST_LIMIT = Number(process.env.PER_LIST_LIMIT || 100);
 const CONCURRENCY = Number(process.env.TMDB_CONCURRENCY || 3);
 const CATALOGUE_TTL_MS = 1000 * 60 * 60 * Number(process.env.CATALOGUE_TTL_HOURS || 24);
 
@@ -176,7 +177,7 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
         if (!yText) yText = $(r).find(".secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find(".titleColumn .secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find("[data-testid='title-card-metadata']").first().text() || "";
-        if (!yText) yText = $(r).find("span").filter((_i, el) => $(el).text().match(/\(.*\d{4}.*\)/)).first().text() || "";
+        if (!yText) yText = $(r).find("span").filter((_i, el) => !!$(el).text().match(/\(.*\d{4}.*\)/)).first().text() || "";
         
         // More aggressive year extraction - look for any 4-digit year in parentheses
         let yMatch = yText.match(/\(.*?(19|20)\d{2}.*?\)/);
@@ -319,18 +320,14 @@ async function buildAll(): Promise<void> {
   
   const rawAll: Raw[] = [];
   
-  // First get IMDb Top 250 (primary source)
-  console.log(`[BUILD] Fetching IMDb Top 250...`);
-  const top250 = await fetchTop250();
-  console.log(`[BUILD] Top 250: ${top250.length} raw titles`);
-  rawAll.push(...top250);
+  // Skip Top 250 - using only your specified lists
   
-  // Then get supplementary lists
-  for (const id of LIST_IDS.slice(0, 2)) { // Limit to 2 lists to avoid the broken ones
+  // Then get your specified lists
+  for (const id of LIST_IDS) {
     console.log(`[BUILD] Fetching IMDB list: ${id}`);
     const rows = await fetchListTitles(id);
     console.log(`[BUILD] List ${id}: ${rows.length} raw titles`);
-    rawAll.push(...rows.slice(0, 25)); // Limit each list
+    rawAll.push(...rows.slice(0, PER_LIST_LIMIT)); // Use your limit
   }
   
   console.log(`[BUILD] Total raw titles across all lists: ${rawAll.length}`);
@@ -352,7 +349,7 @@ async function buildAll(): Promise<void> {
   // build AB set and full catalogue
   const abIds: number[] = [];
   const full: Map<number, Item> = new Map();
-  for (const [listId, items] of byList.entries()) {
+  Array.from(byList.entries()).forEach(([listId, items]) => {
     const picks = chooseAB15(items);
     console.log(`[BUILD] List ${listId}: selected ${picks.length} for AB testing`);
     abIds.push(...picks);
@@ -361,7 +358,7 @@ async function buildAll(): Promise<void> {
       if (!ex) full.set(it.id, it);
       else ex.sources = Array.from(new Set([...ex.sources, ...it.sources]));
     }
-  }
+  });
   
   CATALOGUE = Array.from(full.values());
   AB_SET = new Set(abIds);
@@ -423,8 +420,8 @@ function nextPair(p:Profile): [Item, Item] | null {
       // distance = Jaccard over binary features (genres+era+people)
       const fa = feats(anchor.it), fb = feats(cand.it);
       const ka = new Set(Object.keys(fa)), kb = new Set(Object.keys(fb));
-      let inter=0; for (const k of ka) if (kb.has(k)) inter++;
-      const uni = new Set([...ka, ...kb]).size;
+      let inter=0; Array.from(ka).forEach(k => { if (kb.has(k)) inter++; });
+      const uni = new Set([...Array.from(ka), ...Array.from(kb)]).size;
       const dist = 1 - (inter/(uni||1));
       if (!best || dist>best.dist) best = { it:cand.it, dist };
     }
@@ -451,9 +448,9 @@ function updateFromVote(p:Profile, left:Item, right:Item, chosenId:number) {
   const fA = feats(left), fB = feats(right);
   const fDiff: Record<string,number> = {};
   // f = fA - fB
-  for (const k of new Set([...Object.keys(fA), ...Object.keys(fB)])) {
+  Array.from(new Set([...Object.keys(fA), ...Object.keys(fB)])).forEach(k => {
     fDiff[k] = (fA[k]||0) - (fB[k]||0);
-  }
+  });
   const y = (chosenId === left.id) ? 1 : 0;
   const s = dot(p.w, fDiff);
   const pHat = 1/(1+Math.exp(-s));
