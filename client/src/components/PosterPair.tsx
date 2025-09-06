@@ -41,6 +41,13 @@ export default function PosterPair({ movieA, movieB, onChoice }: PosterPairProps
     );
   }
 
+  // Generate fallback poster URLs
+  const fallbackA = `https://via.placeholder.com/400x600/1a1a1a/ffffff?text=${encodeURIComponent(movieA.title)}`;
+  const fallbackB = `https://via.placeholder.com/400x600/1a1a1a/ffffff?text=${encodeURIComponent(movieB.title)}`;
+  
+  const posterA = movieA.posterUrl || fallbackA;
+  const posterB = movieB.posterUrl || fallbackB;
+
   const handleChoice = (winner: Movie, loser: Movie) => {
     // Record vote to server
     fetch('/api/vote', {
@@ -71,8 +78,8 @@ export default function PosterPair({ movieA, movieB, onChoice }: PosterPairProps
         <div className="gradient-border relative overflow-hidden">
           <div className="p-6 relative">
             <RobustImage 
-              src={movieA?.posterUrl || ''} 
-              alt={`${movieA?.title || ''} poster`} 
+              src={posterA} 
+              alt={`${movieA.title} poster`} 
               className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
             />
             <div className="space-y-2">
@@ -105,8 +112,8 @@ export default function PosterPair({ movieA, movieB, onChoice }: PosterPairProps
         <div className="gradient-border relative overflow-hidden">
           <div className="p-6 relative">
             <RobustImage 
-              src={movieB?.posterUrl || ''} 
-              alt={`${movieB?.title || ''} poster`} 
+              src={posterB} 
+              alt={`${movieB.title} poster`} 
               className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
             />
             <div className="space-y-2">

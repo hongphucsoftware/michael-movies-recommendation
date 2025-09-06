@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import Header from './components/Header';
@@ -33,20 +34,6 @@ async function fetchWithSession(url: string) {
   });
 }
 
-// Convert server movie format to client Movie format
-function convertServerMovie(serverMovie: any): Movie {
-  return {
-    id: serverMovie.id, // Keep numeric ID
-    title: serverMovie.title || "Unknown",
-    year: serverMovie.year || 2024,
-    posterUrl: serverMovie.posterUrl || `https://via.placeholder.com/500x750/1a1a1a/ffffff?text=${encodeURIComponent(serverMovie.title || 'Unknown')}`,
-    backdropUrl: serverMovie.backdropUrl || "",
-    overview: serverMovie.overview || "",
-    genres: (serverMovie.genres || []).slice(0, 3),
-    sourceListId: serverMovie.sourceListId,
-  };
-}
-
 export default function AppEnhanced() {
   const [posters, setPosters] = useState<Movie[]>([]);
   const [recommendations, setRecommendations] = useState<Movie[]>([]);
@@ -55,7 +42,6 @@ export default function AppEnhanced() {
   const [error, setError] = useState<string | null>(null);
   const [currentPairIndex, setCurrentPairIndex] = useState(0);
   const [showTrailers, setShowTrailers] = useState(false);
-  const [abTestingComplete, setAbTestingComplete] = useState(false);
 
   useEffect(() => {
     ensureSessionId();
@@ -68,41 +54,61 @@ export default function AppEnhanced() {
       setError(null);
 
       console.log('[APP] Loading catalogue from server...');
+      
       // Get poster movies (75 total: 15 per list)
-      const posterRes = await fetchWithSession(`/api/catalogue?t=${Date.now()}`);
+      const posterRes = await fetchWithSession('/api/catalogue');
+      
+      if (!posterRes.ok) {
+        throw new Error(`Failed to load catalogue: ${posterRes.status}`);
+      }
+      
       const posterData = await posterRes.json();
 
       if (!posterData.ok || !Array.isArray(posterData.items)) {
-        throw new Error('Failed to load poster catalogue');
+        throw new Error('Invalid catalogue response format');
       }
 
       console.log(`[APP] Loaded ${posterData.items.length} poster movies`);
-      // Convert server format to client format
-      const movies = posterData.items.map(convertServerMovie);
+      
+      // Convert and validate poster data
+      const movies = posterData.items
+        .filter((item: any) => item && item.id && item.title)
+        .map((item: any): Movie => ({
+          id: item.id,
+          title: item.title || "Unknown Title",
+          year: item.year || undefined,
+          posterUrl: item.posterUrl || null,
+          backdropUrl: item.backdropUrl || null,
+          overview: item.overview || "",
+          genres: Array.isArray(item.genres) ? item.genres : [],
+          sourceListId: item.sourceListId
+        }));
+
       setPosters(movies);
 
-      // Get recommendations (random 6 from remaining pool)
+      // Get recommendations
       console.log('[APP] Loading recommendations...');
-      const recRes = await fetchWithSession(`/api/recs?limit=6&t=${Date.now()}`);
-      const recData = await recRes.json();
+      const recRes = await fetchWithSession('/api/recs?limit=6');
+      
+      if (recRes.ok) {
+        const recData = await recRes.json();
+        if (recData.ok && Array.isArray(recData.recs)) {
+          console.log(`[APP] Loaded ${recData.recs.length} recommendations`);
+          setRecommendations(recData.recs);
 
-      if (!recData.ok || !Array.isArray(recData.recs)) {
-        throw new Error('Failed to load recommendations');
-      }
-
-      console.log(`[APP] Loaded ${recData.recs.length} recommendations from pool of ${recData.total}`);
-      setRecommendations(recData.recs);
-
-      // Get trailers for recommendations
-      if (recData.recs.length > 0) {
-        console.log('[APP] Loading trailers...');
-        const ids = recData.recs.map((m: Movie) => m.id);
-        const trailerRes = await fetchWithSession(`/api/trailers?ids=${ids.join(',')}&t=${Date.now()}`);
-        const trailerData = await trailerRes.json();
-
-        if (trailerData.ok && trailerData.trailers) {
-          console.log(`[APP] Loaded trailers:`, Object.keys(trailerData.trailers).length);
-          setTrailers(trailerData.trailers);
+          // Get trailers for recommendations
+          if (recData.recs.length > 0) {
+            const ids = recData.recs.map((m: Movie) => m.id);
+            const trailerRes = await fetchWithSession(`/api/trailers?ids=${ids.join(',')}`);
+            
+            if (trailerRes.ok) {
+              const trailerData = await trailerRes.json();
+              if (trailerData.ok && trailerData.trailers) {
+                console.log(`[APP] Loaded trailers for ${Object.keys(trailerData.trailers).length} movies`);
+                setTrailers(trailerData.trailers);
+              }
+            }
+          }
         }
       }
 
@@ -118,12 +124,12 @@ export default function AppEnhanced() {
     console.log(`[APP] Choice: "${winner.title}" beat "${loser.title}"`);
 
     // Move to next pair
-    if (currentPairIndex < Math.floor(posters.length / 2) - 1) {
+    const totalPairs = Math.floor(posters.length / 2);
+    if (currentPairIndex < totalPairs - 1) {
       setCurrentPairIndex(currentPairIndex + 1);
     } else {
       // A/B testing complete, show trailers
       console.log('[APP] A/B testing complete, showing trailers');
-      setAbTestingComplete(true);
       setShowTrailers(true);
     }
   };
@@ -212,9 +218,35 @@ export default function AppEnhanced() {
             onBack={() => {
               setShowTrailers(false);
               setCurrentPairIndex(0);
-              setAbTestingComplete(false);
             }}
           />
+        </section>
+      </div>
+    );
+  }
+
+  // Check if we have enough posters for pairs
+  if (posters.length < 2) {
+    if (recommendations.length > 0) {
+      setShowTrailers(true);
+      return null;
+    }
+    
+    return (
+      <div className="bg-netflix-black text-white min-h-screen">
+        <Header choices={0} onboardingComplete={false} />
+        <section className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
+          <div className="glass-card p-12 rounded-2xl text-center">
+            <h2 className="text-3xl font-bold mb-4">No Movies Available</h2>
+            <p className="text-xl text-gray-300 mb-8">Please try again later</p>
+            <button 
+              onClick={loadData}
+              className="inline-flex items-center px-6 py-3 bg-netflix-red hover:bg-red-700 text-white font-semibold rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-5 h-5 mr-2" />
+              Retry
+            </button>
+          </div>
         </section>
       </div>
     );
@@ -228,10 +260,11 @@ export default function AppEnhanced() {
     // Not enough movies for pairs, skip to trailers
     if (!showTrailers && recommendations.length > 0) {
       setShowTrailers(true);
-      setAbTestingComplete(true);
     }
     return null;
   }
+
+  const totalPairs = Math.floor(posters.length / 2);
 
   return (
     <div className="bg-netflix-black text-white min-h-screen">
@@ -258,7 +291,7 @@ export default function AppEnhanced() {
             Which movie would you rather watch?
           </p>
           <p className="text-sm text-gray-400">
-            Choice {currentPairIndex + 1} of {Math.floor(posters.length / 2)}
+            Choice {currentPairIndex + 1} of {totalPairs}
           </p>
         </div>
 
