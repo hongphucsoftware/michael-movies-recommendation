@@ -69,7 +69,7 @@ const decadeOf = (y?:number)=> y ? Math.floor(y/10)*10 : undefined;
 
 /* ====================== IMDb scrape (title, year) ====================== */
 /* We fetch list pages in "detail" mode with sort by list order; paginate until exhausted. */
-async function fetchListTitles(listId: string, maxPages=10): Promise<Raw[]> {
+async function fetchListTitles(listId: string, maxPages=5): Promise<Raw[]> {
   const out: Raw[] = [];
   for (let page=1; page<=maxPages; page++) {
     const url = `https://www.imdb.com/list/${listId}/?st_dt=&mode=detail&sort=listOrder,asc&page=${page}`;
@@ -99,6 +99,7 @@ async function fetchListTitles(listId: string, maxPages=10): Promise<Raw[]> {
       
       if (!rows.length) break;
 
+      const pageStartCount = out.length;
       for (const r of rows) {
         // Try multiple title selectors
         let t = $(r).find(".lister-item-header a").first().text().trim();
@@ -120,6 +121,12 @@ async function fetchListTitles(listId: string, maxPages=10): Promise<Raw[]> {
           out.push({ title: t, year, srcList: listId });
           console.log(`[IMDB] Found: "${t}" (${year || 'no year'})`);
         }
+      }
+      
+      // Check if we got any new items this page - if not, we're done
+      if (out.length === pageStartCount) {
+        console.log(`[IMDB] No new items found on page ${page}, stopping pagination`);
+        break;
       }
       
       // be a good citizen; IMDb is prickly
