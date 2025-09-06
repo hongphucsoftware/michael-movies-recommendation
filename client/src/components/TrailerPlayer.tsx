@@ -358,11 +358,43 @@ export default function TrailerPlayer({
     );
   }
 
+  // Generate personalized explanation based on A/B learning
+  const generatePersonalizedExplanation = () => {
+    const genrePrefs = [
+      { name: 'Comedy', score: learnedVec[0] || 0, id: 35 },
+      { name: 'Drama', score: learnedVec[1] || 0, id: 18 },
+      { name: 'Action', score: learnedVec[2] || 0, id: 28 },
+      { name: 'Thriller', score: learnedVec[3] || 0, id: 53 },
+      { name: 'Sci-Fi', score: learnedVec[4] || 0, id: 878 },
+      { name: 'Fantasy', score: learnedVec[5] || 0, id: 14 }
+    ].sort((a, b) => b.score - a.score);
+
+    const topGenres = genrePrefs.filter(g => g.score > 0.3).slice(0, 3);
+    const strongestGenre = topGenres[0];
+    
+    if (topGenres.length === 0) {
+      return "We're still learning your preferences! These movies offer a great variety to help us understand your taste better.";
+    }
+
+    let explanation = `Based on your A/B testing choices, you showed a strong preference for ${strongestGenre.name.toLowerCase()}`;
+    
+    if (topGenres.length > 1) {
+      const otherGenres = topGenres.slice(1).map(g => g.name.toLowerCase()).join(" and ");
+      explanation += ` with ${otherGenres}`;
+    }
+    
+    explanation += `. We really think you should give one of these movies a go tonight:`;
+    
+    return explanation;
+  };
+
   return (
     <div className="space-y-4">
       <div className="text-center">
         <h3 className="text-xl font-bold text-white mb-2">Your Personalized Trailer Reel</h3>
-        <p className="text-gray-400">Based on your A/B testing choices</p>
+        <p className="text-gray-300 text-sm max-w-2xl mx-auto leading-relaxed">
+          {generatePersonalizedExplanation()}
+        </p>
       </div>
 
       {/* Trailer Player */}
