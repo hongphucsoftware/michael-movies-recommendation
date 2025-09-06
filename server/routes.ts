@@ -177,7 +177,7 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
         if (!yText) yText = $(r).find(".secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find(".titleColumn .secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find("[data-testid='title-card-metadata']").first().text() || "";
-        if (!yText) yText = $(r).find("span").filter((_i, el) => $(el).text().match(/\(.*\d{4}.*\)/)).first().text() || "";
+        if (!yText) yText = $(r).find("span").filter((_i, el) => !!$(el).text().match(/\(.*\d{4}.*\)/)).first().text() || "";
         
         // More aggressive year extraction - look for any 4-digit year in parentheses
         let yMatch = yText.match(/\(.*?(19|20)\d{2}.*?\)/);
