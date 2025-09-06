@@ -50,7 +50,7 @@ type Profile = {
   w: Record<string, number>;          // feature weights
   seenPairs: Set<string>;             // "idA|idB" canonicalized
   rounds: number;
-  genreScores: Record<string, number>; // genre -> score
+  genreScores: Record<number, number>; // genre ID -> score
 };
 const PROFILES = new Map<string, Profile>();
 
@@ -484,25 +484,45 @@ function updateFromVote(p:Profile, chosenId: number) {
   p.rounds += 1;
 }
 
-// simplified ranking based on genre scores
-function rankRecsByGenre(p:Profile, topN=60): Item[] {
-  return CATALOGUE
-    .filter(x => !AB_SET.has(x.id)) // rec pool only
-    .map(it => {
-      let score = 0;
-      for (const genre of it.genres) {
-        const genreKey = `g:${genre}`;
-        score += (p.genreScores[genreKey] || 0);
-      }
-      // Add a small prior based on popularity/vote average to break ties
-      const popularityScore = (it.voteAverage || 0) * Math.log(1 + (it.voteCount || 1));
-      const finalScore = score + 0.1 * (popularityScore / 20); // Blend genre score with popularity
+// Deterministic light shuffle seeded by round count
+function seedSortKey(id: number, rounds: number) {
+  return ((id * 1103515245 + 12345 + rounds * 1337) >>> 0) / 2**32;
+}
 
-      return { it, s: finalScore };
-    })
-    .sort((a,b)=> b.s - a.s)
-    .slice(0, topN)
-    .map(x=>x.it);
+function scoreByGenresOnly(genres: number[]|undefined, gp: Profile): number {
+  let s = 0; 
+  for (const g of genres || []) {
+    s += gp.genreScores[g] || 0;
+  }
+  return s;
+}
+
+// Genre-only ranking with per-round rotation to force variety
+function rankRecsByGenreOnly(p: Profile, topN: number = 60): Item[] {
+  const pool = CATALOGUE.filter(x => !AB_SET.has(x.id)); // rec pool only
+
+  if (p.rounds === 0) {
+    // no signal yet: popularity baseline
+    return pool.slice().sort((a,b) =>
+      ((b.voteAverage||0)*Math.log(1+(b.voteCount||1))) - ((a.voteAverage||0)*Math.log(1+(a.voteCount||1)))
+    ).slice(0, topN);
+  }
+
+  // 1) score by genre counts only
+  const ranked = pool.map(it => ({
+    it,
+    s: scoreByGenresOnly(it.genres, p),
+    j: seedSortKey(it.id, p.rounds), // tie-break rotation
+  }))
+  .sort((a,b) => (b.s - a.s) || (b.j - a.j))
+  .map(x => x.it);
+
+  // 2) visible variety: rotate the window each round
+  const window = Math.min(8, Math.max(1, Math.floor(topN/3)));
+  const offset = (p.rounds % 5) * window; // shift by a few slots each round
+  const rotated = ranked.slice(offset).concat(ranked.slice(0, offset));
+
+  return rotated.slice(0, topN);
 }
 
 /* rank recs (the non-AB pool) by learned score + small popularity prior */
@@ -581,22 +601,32 @@ api.get("/ab/next", async (req:Request, res:Response) => {
 // Record a vote (left vs right) and update profile
 api.post("/api/ab/vote", express.json(), async (req:Request, res:Response) => {
   noStore(res);
+  await buildAll(); // Ensure catalogue is built
+  
   const { leftId, rightId, chosenId } = req.body as { leftId: number; rightId: number; chosenId: number };
 
   const left = CATALOGUE.find(i=>i.id===leftId);
   const right= CATALOGUE.find(i=>i.id===rightId);
-  if (!left || !right || !AB_SET.has(left.id) || !AB_SET.has(right.id)) {
+  const chosen = CATALOGUE.find(i=>i.id===chosenId);
+  
+  if (!left || !right || !chosen || !AB_SET.has(left.id) || !AB_SET.has(right.id)) {
     return res.status(400).json({ ok:false, error:"Bad pair" });
   }
+  
   const p = sess(req);
-  updateFromVote(p, chosenId);
+  
+  // Genre-only learning - simple increment for chosen genres
+  for (const g of (chosen.genres || [])) {
+    p.genreScores[g] = (p.genreScores[g] || 0) + 1;
+  }
+  p.rounds += 1;
 
   const chosenTitle = chosenId === left.id ? left.title : right.title;
   console.log(`[A/B VOTE] Session ${req.headers["x-session-id"] || req.query.sid || "anon"}: ${left.title} vs ${right.title} → chose ${chosenTitle} (Round ${p.rounds})`);
   console.log(`[VOTE] Rounds: ${p.rounds}, Genre scores:`, Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,5));
 
-  // Immediately return fresh genre-based recs
-  const recItems = rankRecsByGenre(p, 20).map(t => ({
+  // Immediately return fresh genre-based recs with rotation
+  const recItems = rankRecsByGenreOnly(p, 20).map(t => ({
     id: t.id,
     title: t.title,
     year: t.year,
@@ -621,13 +651,13 @@ api.get("/recs", async (req:Request, res:Response) => {
   const p = sess(req);
   const sid = (req.headers["x-session-id"] as string) || (req.query.sid as string) || "anon";
 
-  console.log(`[RECS] Session ${sid}: ${p.rounds} rounds completed, ${Object.keys(p.w).length} features learned`);
+  console.log(`[RECS] Session ${sid}: ${p.rounds} rounds completed, ${Object.keys(p.genreScores).length} genres learned`);
   if (p.rounds > 0) {
-    const topWeights = Object.entries(p.w).sort((a,b)=>b[1]-a[1]).slice(0,3);
-    console.log(`[RECS] Top learned preferences:`, topWeights);
+    const topGenres = Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    console.log(`[RECS] Top learned genres:`, topGenres);
   }
 
-  const top = recommend(p, Number(req.query.top||60));
+  const top = rankRecsByGenreOnly(p, Number(req.query.top||60));
   console.log(`[RECS] Returning ${top.length} recommendations. Top 3:`, top.slice(0,3).map(t => `${t.title} (${t.year})`));
 
   res.json({
@@ -639,8 +669,8 @@ api.get("/recs", async (req:Request, res:Response) => {
       posterUrl: t.posterUrl, backdropUrl: t.backdropUrl,
       overview: t.overview, genres: t.genres, sources: t.sources
     })),
-    // quick rationale: top 3 positive weights
-    likes: Object.entries(p.w).sort((a,b)=>b[1]-a[1]).slice(0,6)
+    // quick rationale: top genre scores
+    topGenres: Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,6)
   });
 });
 
@@ -669,7 +699,7 @@ api.post("/recs", express.json(), async (req:Request, res:Response) => {
   return res.json({ ok:true, rounds, items, debug:{ weightsHash: hashW(w), topWeights } });
 });
 
-// Trailers unchanged (TMDb→YouTube)
+// Trailers with proper no-cache headers
 api.get("/trailers", async (req:Request, res:Response) => {
   noStore(res);
   const ids = String(req.query.ids||"")

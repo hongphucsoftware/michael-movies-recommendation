@@ -79,40 +79,20 @@ export default function TrailerPlayer({
     return chosen;
   }
 
-  // Fetch personalized recommendations from new Bradley-Terry model
-  const [recommendations, setRecommendations] = useState<Title[]>([]);
-  const [abPairs, setAbPairs] = useState<any[]>([]);
-
-  // First, get the A/B pairs the user should be choosing from
-  useEffect(() => {
-    const fetchABPairs = async () => {
-      try {
-        const response = await apiGet('/api/ab/next');
-        if (response.ok && !response.done) {
-          console.log('[TrailerPlayer] A/B pairs available:', response);
-        }
-      } catch (error) {
-        console.error('[TrailerPlayer] Failed to fetch A/B pairs:', error);
-      }
-    };
-    fetchABPairs();
-  }, []);
+  // Track rounds to force re-renders
+  const [recommendations, setRecommendations] = useState<{rounds: number, items: Title[]}>({rounds: 0, items: []});
 
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
         const { getSID } = await import('../lib/session');
         
-        const body = { top: 60 };
-        const data = await fetch("/api/recs", {
-          method: "POST",
+        const data = await fetch(`/api/recs?top=60&t=${Date.now()}`, {
           headers: { 
-            "Content-Type": "application/json", 
             "Cache-Control": "no-store",
             "x-session-id": getSID()
           },
           cache: "no-store",
-          body: JSON.stringify(body),
         }).then(r => r.json());
 
         if (data.ok && data.items) {
@@ -130,13 +110,12 @@ export default function TrailerPlayer({
           console.log(`[TrailerPlayer] Fetched ${recs.length} genre-based recommendations`);
           console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
           console.log(`[TrailerPlayer] Top genre preferences:`, data.topGenres?.slice(0,3));
-          console.log(`[TrailerPlayer] Genre learning count: ${data.debug?.genreCount}`);
 
-          setRecommendations(recs);
+          setRecommendations({rounds: data.rounds, items: recs});
         }
       } catch (error) {
         console.error('[TrailerPlayer] Failed to fetch recommendations:', error);
-        setRecommendations([]);
+        setRecommendations({rounds: 0, items: []});
       }
     };
 
@@ -152,35 +131,35 @@ export default function TrailerPlayer({
   }, []); // Remove learnedVec dependency since we listen for updates
 
   const picks = useMemo(() => {
-    if (recommendations.length === 0) return [];
+    if (recommendations.items.length === 0) return [];
 
     // Only avoid exact duplicates from recent A/B testing, but allow variety in recommendations
-    const available = recommendations.filter(item =>
+    const available = recommendations.items.filter(item =>
       !avoidIds.includes(item.id) // Only filter out items seen in current A/B round
     );
 
-    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available (from ${recommendations.length} total)`);
-    console.log(`[TrailerPlayer] Avoiding IDs:`, avoidIds);
+    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available (from ${recommendations.items.length} total)`);
+    console.log(`[TrailerPlayer] Round ${recommendations.rounds}: Avoiding IDs:`, avoidIds.length);
     console.log(`[TrailerPlayer] Recent chosen IDs:`, recentChosenIds.length);
 
     if (available.length === 0) {
       console.warn('[TrailerPlayer] No available personalized recommendations, using all recommendations');
       // Fallback to all recommendations if filtering is too aggressive
-      const picks = recommendations.slice(0, count);
+      const picks = recommendations.items.slice(0, count);
       picks.forEach((pick, i) => {
         console.log(`[FALLBACK PICK ${i+1}] "${pick.title}" (${pick.year})`);
       });
       return picks;
     }
 
-    // Take top recommendations (already ranked by Bradley-Terry model)
+    // Take top recommendations (already ranked by genre-only model with rotation)
     const picks = available.slice(0, count);
 
     picks.forEach((pick, i) => {
-      console.log(`[PERSONALIZED PICK ${i+1}] "${pick.title}" (${pick.year})`);
+      console.log(`[GENRE PICK ${i+1}] "${pick.title}" (${pick.year}) - Round ${recommendations.rounds}`);
     });
 
-    console.log(`[TrailerPlayer] Selected ${picks.length} personalized recommendations`);
+    console.log(`[TrailerPlayer] Selected ${picks.length} genre-based recommendations for round ${recommendations.rounds}`);
     return picks;
   }, [recommendations, recentChosenIds, avoidIds, count]);
 
@@ -332,7 +311,8 @@ export default function TrailerPlayer({
         {currentEmbed ? (
           <div className="aspect-video">
             <iframe
-              src={currentEmbed.includes('youtube.com/embed/') ? currentEmbed : `https://www.youtube.com/embed/${currentEmbed.replace('https://www.youtube.com/watch?v=', '')}`}
+              key={`iframe-${currentItem.id}-${recommendations.rounds}`}
+              src={`${currentEmbed.includes('youtube.com/embed/') ? currentEmbed : `https://www.youtube.com/embed/${currentEmbed.replace('https://www.youtube.com/watch?v=', '')}`}?rel=0&modestbranding=1&round=${recommendations.rounds}`}
               title={`${currentItem.title} trailer`}
               className="w-full h-full border-0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -385,11 +365,11 @@ export default function TrailerPlayer({
 
       {/* Queue Preview */}
       <div className="mt-6">
-        <h5 className="text-sm font-semibold text-gray-400 mb-2">Up Next:</h5>
+        <h5 className="text-sm font-semibold text-gray-400 mb-2">Up Next (Round {recommendations.rounds}):</h5>
         <div className="flex space-x-2 overflow-x-auto">
           {queue.map((item, i) => (
             <button
-              key={item.id}
+              key={`${item.id}-${recommendations.rounds}`}
               onClick={() => setIdx(i)}
               className={`flex-shrink-0 p-2 rounded text-xs ${
                 i === idx ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
