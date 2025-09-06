@@ -40,7 +40,7 @@ function cosine(a: number[], b: number[]): number {
 export default function TrailerPlayer({
   items, learnedVec, recentChosenIds, avoidIds = [], count = 6,
 }: Props) {
-  const [queue, setQueue] = useState<Array<Title & { genres: string[], explanation: string }>>([]);
+  const [queue, setQueue] = useState<Array<Omit<Title, 'genres'> & { genres: string[], explanation: string }>>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
@@ -305,7 +305,7 @@ export default function TrailerPlayer({
               </p>
             </div>
           </div>
-        )}</div>
+        )}
       </div>
 
       {/* Movie Info */}
