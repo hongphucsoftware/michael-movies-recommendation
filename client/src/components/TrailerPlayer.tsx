@@ -101,8 +101,9 @@ export default function TrailerPlayer({
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
-        // Add cache-buster to avoid client cache
-        const data = await apiGet(`/api/recs?top=12&t=${Date.now()}`);
+        // Add cache-buster and request more recommendations to account for filtering
+        const timestamp = Date.now();
+        const data = await apiGet(`/api/recs?top=60&cache=${timestamp}&v=${Math.random()}`);
         if (data.ok && data.items) {
           // Convert API format to Title format
           const recs: Title[] = data.items.map((item: any) => ({
@@ -134,7 +135,7 @@ export default function TrailerPlayer({
     // Listen for preference updates and refetch
     const cleanup = onPrefsUpdated(() => {
       console.log('[TrailerPlayer] Preferences updated, refetching recommendations');
-      fetchRecommendations();
+      setTimeout(fetchRecommendations, 100); // Small delay to ensure server has processed the vote
     });
     
     return cleanup;
@@ -143,16 +144,23 @@ export default function TrailerPlayer({
   const picks = useMemo(() => {
     if (recommendations.length === 0) return [];
 
-    // Remove recently chosen to avoid immediate repeats
+    // Only avoid exact duplicates from recent A/B testing, but allow variety in recommendations
     const available = recommendations.filter(item =>
-      !recentChosenIds.includes(item.id) && !avoidIds.includes(item.id)
+      !avoidIds.includes(item.id) // Only filter out items seen in current A/B round
     );
 
-    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available`);
+    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available (from ${recommendations.length} total)`);
+    console.log(`[TrailerPlayer] Avoiding IDs:`, avoidIds);
+    console.log(`[TrailerPlayer] Recent chosen IDs:`, recentChosenIds.length);
 
     if (available.length === 0) {
-      console.warn('[TrailerPlayer] No available personalized recommendations');
-      return [];
+      console.warn('[TrailerPlayer] No available personalized recommendations, using all recommendations');
+      // Fallback to all recommendations if filtering is too aggressive
+      const picks = recommendations.slice(0, count);
+      picks.forEach((pick, i) => {
+        console.log(`[FALLBACK PICK ${i+1}] "${pick.title}" (${pick.year})`);
+      });
+      return picks;
     }
 
     // Take top recommendations (already ranked by Bradley-Terry model)

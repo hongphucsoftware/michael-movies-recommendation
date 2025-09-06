@@ -557,6 +557,11 @@ api.get("/recs", async (req:Request, res:Response) => {
   const top = recommend(p, Number(req.query.top||60));
   console.log(`[RECS] Returning ${top.length} recommendations. Top 3:`, top.slice(0,3).map(t => `${t.title} (${t.year})`));
   
+  // Disable caching to ensure fresh recommendations
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  
   res.json({
     ok:true,
     rounds: p.rounds,
@@ -564,7 +569,7 @@ api.get("/recs", async (req:Request, res:Response) => {
       id:t.id, title:t.title, year:t.year,
       image: t.posterUrl || t.backdropUrl,
       posterUrl: t.posterUrl, backdropUrl: t.backdropUrl,
-      overview: t.overview, genres: t.genres
+      overview: t.overview, genres: t.genres, sources: t.sources
     })),
     // quick rationale: top 3 positive weights
     likes: Object.entries(p.w).sort((a,b)=>b[1]-a[1]).slice(0,6)
