@@ -411,6 +411,11 @@ function noStore(res: express.Response) {
   res.setHeader('Expires', '0');
 }
 
+const hashW = (w: Weights) => {
+  let s = 0; for (const [k,v] of Object.entries(w)) s = ((s<<5)-s + (k.charCodeAt(0)|0) + Math.floor(v*1e4))|0;
+  return (s >>> 0).toString(16);
+};
+
 // pick next pair: unseen, far apart in feature space, from AB set only
 function nextPair(p:Profile): [Item, Item] | null {
   const pool = CATALOGUE.filter(x => AB_SET.has(x.id));
@@ -488,6 +493,25 @@ function recommend(p:Profile, topN=60): Item[] {
   return scores.slice(0, topN).map(x=>x.it);
 }
 
+function rankWith(w: Weights, rounds: number, topN: number) {
+  const prefWeight = rounds >= 5 ? 0.9 : rounds >= 2 ? 0.8 : 0.7;
+  const priorWeight = 1 - prefWeight;
+
+  return CATALOGUE
+    .filter(x => !AB_SET.has(x.id)) // rec pool only
+    .map(it => {
+      const pref  = dot(w, feats(it));
+      const prior = (it.voteAverage || 0) * Math.log(1 + (it.voteCount || 1));
+      // tiny deterministic jitter to break ties (changes with rounds)
+      const jitter = (((it.id * 9301 + rounds * 97) % 997) / 1e6);
+      const s = prefWeight * pref + priorWeight * (prior / 20) + jitter;
+      return { it, s };
+    })
+    .sort((a,b)=> b.s - a.s)
+    .slice(0, topN)
+    .map(x => x.it);
+}
+
 /* ====================== Router ====================== */
 const api = express.Router();
 
@@ -545,7 +569,16 @@ api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
   console.log(`[A/B VOTE] Session ${req.headers["x-session-id"] || req.query.sid || "anon"}: ${left.title} vs ${right.title} → chose ${chosenId === left.id ? left.title : right.title} (Round ${p.rounds})`);
   console.log(`[VOTE] Rounds: ${p.rounds}, Features learned: ${Object.keys(p.w).length}`);
   
-  res.json({ ok:true, rounds:p.rounds, w: p.w as Weights });
+  // Immediately return the *new* recs (top 20) and the live weights.
+  const recs = rankWith(p.w, p.rounds, 20).map(t => ({
+    id:t.id, title:t.title, year:t.year,
+    image: t.posterUrl || t.backdropUrl, posterUrl:t.posterUrl, backdropUrl:t.backdropUrl, genres:t.genres
+  }));
+  return res.json({
+    ok:true, rounds:p.rounds, w:p.w,
+    debug: { weightsHash: hashW(p.w) },
+    recs
+  });
 });
 
 // Recommendations ranked for the current user
@@ -592,32 +625,15 @@ api.post("/recs", express.json(), async (req:Request, res:Response) => {
   const w: Weights = wOverride ?? prof.w;
   const rounds = roundHint ?? prof.rounds;
   
-  // preference/prior blend — make preferences dominate quickly
-  const prefWeight = rounds >= 5 ? 0.9 : rounds >= 2 ? 0.8 : 0.7;
-  const priorWeight = 1 - prefWeight;
+  const items = rankWith(w, rounds, top).map(t => ({
+    id:t.id, title:t.title, year:t.year,
+    image: t.posterUrl || t.backdropUrl, posterUrl:t.posterUrl, backdropUrl:t.backdropUrl, genres:t.genres
+  }));
+
+  const topWeights = Object.entries(w).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  console.log(`[RECS POST] Using ${Object.keys(w).length} features, ${rounds} rounds. Top 3:`, items.slice(0,3).map(s => s.title));
   
-  const scored = CATALOGUE
-    .filter(x => !AB_SET.has(x.id)) // rec pool only
-    .map(it => {
-      const pref = dot(w, feats(it));
-      const prior = (it.voteAverage || 0) * Math.log(1 + (it.voteCount || 1));
-      return { it, s: prefWeight * pref + priorWeight * (prior / 20) };
-    })
-    .sort((a, b) => b.s - a.s)
-    .slice(0, top)
-    .map(({ it }) => ({
-      id: it.id,
-      title: it.title,
-      year: it.year,
-      image: it.posterUrl || it.backdropUrl,
-      posterUrl: it.posterUrl,
-      backdropUrl: it.backdropUrl,
-      genres: it.genres,
-    }));
-    
-  console.log(`[RECS POST] Using ${Object.keys(w).length} features, ${rounds} rounds. Top 3:`, scored.slice(0,3).map(s => s.title));
-  
-  return res.json({ ok: true, rounds, items: scored });
+  return res.json({ ok:true, rounds, items, debug:{ weightsHash: hashW(w), topWeights } });
 });
 
 // Trailers unchanged (TMDb→YouTube)

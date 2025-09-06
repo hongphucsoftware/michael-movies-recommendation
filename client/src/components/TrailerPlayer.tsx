@@ -130,7 +130,8 @@ export default function TrailerPlayer({
 
           console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations using client weights`);
           console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
-          console.log(`[TrailerPlayer] Client weights keys:`, Object.keys(loadW()).length);
+          console.log(`[TrailerPlayer] Weights hash: ${data.debug?.weightsHash}`);
+          console.log(`[TrailerPlayer] Top learned preferences:`, data.debug?.topWeights?.slice(0,3));
 
           setRecommendations(recs);
         }

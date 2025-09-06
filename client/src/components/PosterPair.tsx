@@ -47,6 +47,7 @@ export default function PosterPair() {
         saveW(resp.w || {});
         saveRounds(resp.rounds || 0);
         console.log(`[A/B VOTE] Recorded vote for "${(chosen as any).title}" over "${(other as any).title}" - Round ${resp.rounds}`);
+        console.log(`[A/B VOTE] Weights hash: ${resp.debug?.weightsHash}, got ${resp.recs?.length} fresh recs`);
         firePrefsUpdated(); // Trigger recommendations refresh
       }
     } catch (error) {
