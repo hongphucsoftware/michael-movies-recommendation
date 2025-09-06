@@ -146,61 +146,91 @@ async function scrapeFilms101Decade(url: string, src: string): Promise<RawTitle[
       const html = await httpText(pg);
       const $ = cheerio.load(html);
 
-      // Look for the main content table with movie rankings
-      const tables = $("table");
+      // Films101 uses a specific table structure - look for the movie ranking table
       let foundMovies = false;
 
-      tables.each((_, table) => {
+      // Try to find the main ranking table
+      $("table").each((_, table) => {
         const $table = $(table);
-        const headers = $table.find("tr").first().find("th, td");
         
-        // Check if this table has movie ranking structure
-        const hasRank = headers.filter((_, el) => /rank/i.test($(el).text())).length > 0;
-        const hasTitle = headers.filter((_, el) => /title/i.test($(el).text())).length > 0;
-        
-        if (hasRank || hasTitle || headers.length >= 4) {
-          $table.find("tr").slice(1).each((_, tr) => {
-            const $row = $(tr);
-            const cells = $row.find("td");
+        // Look for rows with movie data
+        $table.find("tr").each((_, tr) => {
+          const $row = $(tr);
+          const cells = $row.find("td");
+          
+          // Skip header rows and rows with too few cells
+          if (cells.length < 3) return;
+          
+          // Extract data from each cell
+          let rank = "", title = "", year = undefined, rating = "";
+          
+          cells.each((cellIndex, cell) => {
+            const cellText = $(cell).text().trim();
             
-            if (cells.length >= 4) {
-              // Try different column positions for title and year
-              let title = "", year = undefined;
-              
-              // Common patterns: [Rank, Poster, Title, Year, Rating] or [Rank, Title, Year, Rating]
-              for (let i = 1; i < Math.min(cells.length, 5); i++) {
-                const cellText = $(cells[i]).text().trim();
-                if (cellText && cellText.length > 2 && !cellText.match(/^\d+\.?\d*$/) && !cellText.match(/^\d{4}$/) && !title) {
-                  title = cellText.replace(/\s+/g, " ").trim();
+            // First cell is usually rank
+            if (cellIndex === 0 && /^\d+\.?$/.test(cellText)) {
+              rank = cellText;
+            }
+            // Look for movie title (non-numeric, longer text)
+            else if (cellText && cellText.length > 3 && 
+                     !cellText.match(/^\d+\.?\d*$/) && 
+                     !cellText.match(/^\d{4}$/) && 
+                     !cellText.match(/^\d+\.\d+$/) &&
+                     !title) {
+              title = cellText.replace(/\s+/g, " ").trim();
+            }
+            // Look for year (4 digits)
+            else if (cellText.match(/^\d{4}$/)) {
+              year = parseYear(cellText);
+            }
+          });
+          
+          // If we found a valid title, add it
+          if (title && title.length > 1 && !title.match(/^(rank|title|year|rating|genre)$/i)) {
+            out.push({ title, year, src });
+            foundMovies = true;
+          }
+        });
+      });
+
+      // Fallback: look for any links or text that might be movie titles
+      if (!foundMovies) {
+        // Look for movie titles in links
+        $("a").each((_, a) => {
+          const linkText = $(a).text().trim();
+          const href = $(a).attr("href") || "";
+          
+          if (linkText && linkText.length > 3 && 
+              !linkText.match(/^\d+$/) && 
+              !linkText.match(/^(next|previous|page|home)$/i) &&
+              !href.includes("page")) {
+            out.push({ title: linkText, src });
+            foundMovies = true;
+          }
+        });
+        
+        // Look for movie titles in paragraphs or divs
+        if (!foundMovies) {
+          $("p, div").each((_, el) => {
+            const text = $(el).text().trim();
+            
+            // Look for patterns like "1. Movie Title (2020)"
+            const matches = text.match(/(\d+)\.\s*([^(]+)\s*\((\d{4})\)/g);
+            if (matches) {
+              matches.forEach(match => {
+                const parts = match.match(/\d+\.\s*([^(]+)\s*\((\d{4})\)/);
+                if (parts) {
+                  const title = parts[1].trim();
+                  const year = parseYear(parts[2]);
+                  if (title && title.length > 1) {
+                    out.push({ title, year, src });
+                    foundMovies = true;
+                  }
                 }
-                if (cellText.match(/^\d{4}$/)) {
-                  year = parseYear(cellText);
-                }
-              }
-              
-              if (title && title.length > 1) {
-                out.push({ title, year, src });
-                foundMovies = true;
-              }
+              });
             }
           });
         }
-      });
-
-      // Fallback: look for any structured list of movies
-      if (!foundMovies) {
-        // Try to find movie titles in any structured format
-        $("tr").each((_, tr) => {
-          const $row = $(tr);
-          const cells = $row.find("td");
-          if (cells.length >= 2) {
-            const possibleTitle = $(cells[cells.length >= 4 ? 2 : 1]).text().trim();
-            if (possibleTitle && possibleTitle.length > 2 && !possibleTitle.match(/^\d+\.?\d*$/)) {
-              const possibleYear = cells.length > 2 ? parseYear($(cells[cells.length - 2]).text()) : undefined;
-              out.push({ title: possibleTitle.replace(/\s+/g, " ").trim(), year: possibleYear, src });
-            }
-          }
-        });
       }
     } catch (e) {
       console.warn(`[SCRAPE] Failed to scrape ${pg}:`, e);
