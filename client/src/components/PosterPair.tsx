@@ -44,10 +44,9 @@ export default function PosterPair() {
       }).then(r => r.json());
 
       if (resp?.ok) {
-        saveW(resp.w || {});
-        saveRounds(resp.rounds || 0);
+        // For genre-only system, we don't need to save complex weights
         console.log(`[A/B VOTE] Recorded vote for "${(chosen as any).title}" over "${(other as any).title}" - Round ${resp.rounds}`);
-        console.log(`[A/B VOTE] Weights hash: ${resp.debug?.weightsHash}, got ${resp.recs?.length} fresh recs`);
+        console.log(`[A/B VOTE] Top genres:`, resp.topGenres, `got ${resp.recs?.length} fresh recs`);
         firePrefsUpdated(); // Trigger recommendations refresh
       }
     } catch (error) {

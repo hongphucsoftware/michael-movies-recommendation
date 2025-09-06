@@ -101,10 +101,9 @@ export default function TrailerPlayer({
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
-        const { loadW, loadRounds } = await import('../lib/userModel');
         const { getSID } = await import('../lib/session');
         
-        const body = { top: 60, w: loadW(), rounds: loadRounds() };
+        const body = { top: 60 };
         const data = await fetch("/api/recs", {
           method: "POST",
           headers: { 
@@ -128,10 +127,10 @@ export default function TrailerPlayer({
             sources: [],
           }));
 
-          console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations using client weights`);
+          console.log(`[TrailerPlayer] Fetched ${recs.length} genre-based recommendations`);
           console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
-          console.log(`[TrailerPlayer] Weights hash: ${data.debug?.weightsHash}`);
-          console.log(`[TrailerPlayer] Top learned preferences:`, data.debug?.topWeights?.slice(0,3));
+          console.log(`[TrailerPlayer] Top genre preferences:`, data.topGenres?.slice(0,3));
+          console.log(`[TrailerPlayer] Genre learning count: ${data.debug?.genreCount}`);
 
           setRecommendations(recs);
         }

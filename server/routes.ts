@@ -50,6 +50,7 @@ type Profile = {
   w: Record<string, number>;          // feature weights
   seenPairs: Set<string>;             // "idA|idB" canonicalized
   rounds: number;
+  genreScores: Record<string, number>; // genre -> score
 };
 const PROFILES = new Map<string, Profile>();
 
@@ -169,7 +170,7 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
         if (!t) t = $(r).find(".ipc-title a").first().text().trim();
         if (!t) t = $(r).find("h3 a").first().text().trim();
 
-        // Clean title - remove list numbers like "1. Title" 
+        // Clean title - remove list numbers like "1. Title"
         t = t.replace(/^\d+\.\s*/, "").trim();
 
         // Try multiple year selectors - look in the same row and nearby elements
@@ -399,7 +400,7 @@ function sess(req:Request): Profile {
     "anon";
   let p = PROFILES.get(sid);
   if (!p) {
-    p = { w: {}, seenPairs: new Set(), rounds: 0 };
+    p = { w: {}, seenPairs: new Set(), rounds: 0, genreScores: {} };
     PROFILES.set(sid,p);
   }
   return p;
@@ -460,24 +461,48 @@ function nextPair(p:Profile): [Item, Item] | null {
   return null;
 }
 
-// one SGD step on logistic loss for (A vs B)
-function updateFromVote(p:Profile, left:Item, right:Item, chosenId:number) {
-  const fA = feats(left), fB = feats(right);
-  const fDiff: Record<string,number> = {};
-  // f = fA - fB
-  Array.from(new Set([...Object.keys(fA), ...Object.keys(fB)])).forEach(k => {
-    fDiff[k] = (fA[k]||0) - (fB[k]||0);
-  });
-  const y = (chosenId === left.id) ? 1 : 0;
-  const s = dot(p.w, fDiff);
-  const pHat = 1/(1+Math.exp(-s));
-  const grad = (pHat - y);             // d/dw
-  const lr = 0.25;                     // learning rate tuned for 12 rounds
-  const l2 = 0.001;                    // small weight decay
-  // w ← w - lr*(grad*f + l2*w)
-  for (const k in p.w) p.w[k] = p.w[k]*(1 - lr*l2);
-  addScaled(p.w, fDiff, -lr*grad);
+// simplified update: only uses genre features, updates genreScores
+function updateFromVote(p:Profile, chosenId: number) {
+  const leftId = Number(new URLSearchParams(require('url').parse(req.url).query).get('leftId'));
+  const rightId = Number(new URLSearchParams(require('url').parse(req.url).query).get('rightId'));
+
+  const left = CATALOGUE.find(i=>i.id===leftId);
+  const right = CATALOGUE.find(i=>i.id===rightId);
+
+  if (!left || !right) return; // Should not happen if called after nextPair
+
+  const chosenGenres = (chosenId === left.id ? left.genres : right.genres);
+  const rejectedGenres = (chosenId === left.id ? right.genres : left.genres);
+
+  const genresToUpdate = new Set([...chosenGenres, ...rejectedGenres]);
+
+  for (const genre of genresToUpdate) {
+    const genreKey = `g:${genre}`;
+    const scoreIncrement = chosenGenres.includes(genre) ? 1 : -0.5; // Positive for chosen, negative for rejected
+    p.genreScores[genreKey] = (p.genreScores[genreKey] || 0) + scoreIncrement;
+  }
   p.rounds += 1;
+}
+
+// simplified ranking based on genre scores
+function rankRecsByGenre(p:Profile, topN=60): Item[] {
+  return CATALOGUE
+    .filter(x => !AB_SET.has(x.id)) // rec pool only
+    .map(it => {
+      let score = 0;
+      for (const genre of it.genres) {
+        const genreKey = `g:${genre}`;
+        score += (p.genreScores[genreKey] || 0);
+      }
+      // Add a small prior based on popularity/vote average to break ties
+      const popularityScore = (it.voteAverage || 0) * Math.log(1 + (it.voteCount || 1));
+      const finalScore = score + 0.1 * (popularityScore / 20); // Blend genre score with popularity
+
+      return { it, s: finalScore };
+    })
+    .sort((a,b)=> b.s - a.s)
+    .slice(0, topN)
+    .map(x=>x.it);
 }
 
 /* rank recs (the non-AB pool) by learned score + small popularity prior */
@@ -554,30 +579,38 @@ api.get("/ab/next", async (req:Request, res:Response) => {
 });
 
 // Record a vote (left vs right) and update profile
-api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
+api.post("/api/ab/vote", express.json(), async (req:Request, res:Response) => {
   noStore(res);
   const { leftId, rightId, chosenId } = req.body as { leftId: number; rightId: number; chosenId: number };
-  
+
   const left = CATALOGUE.find(i=>i.id===leftId);
   const right= CATALOGUE.find(i=>i.id===rightId);
   if (!left || !right || !AB_SET.has(left.id) || !AB_SET.has(right.id)) {
     return res.status(400).json({ ok:false, error:"Bad pair" });
   }
   const p = sess(req);
-  updateFromVote(p, left, right, chosenId);
-  
-  console.log(`[A/B VOTE] Session ${req.headers["x-session-id"] || req.query.sid || "anon"}: ${left.title} vs ${right.title} → chose ${chosenId === left.id ? left.title : right.title} (Round ${p.rounds})`);
-  console.log(`[VOTE] Rounds: ${p.rounds}, Features learned: ${Object.keys(p.w).length}`);
-  
-  // Immediately return the *new* recs (top 20) and the live weights.
-  const recs = rankWith(p.w, p.rounds, 20).map(t => ({
-    id:t.id, title:t.title, year:t.year,
-    image: t.posterUrl || t.backdropUrl, posterUrl:t.posterUrl, backdropUrl:t.backdropUrl, genres:t.genres
+  updateFromVote(p, chosenId);
+
+  const chosenTitle = chosenId === left.id ? left.title : right.title;
+  console.log(`[A/B VOTE] Session ${req.headers["x-session-id"] || req.query.sid || "anon"}: ${left.title} vs ${right.title} → chose ${chosenTitle} (Round ${p.rounds})`);
+  console.log(`[VOTE] Rounds: ${p.rounds}, Genre scores:`, Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,5));
+
+  // Immediately return fresh genre-based recs
+  const recItems = rankRecsByGenre(p, 20).map(t => ({
+    id: t.id,
+    title: t.title,
+    year: t.year,
+    image: t.posterUrl || t.backdropUrl,
+    posterUrl: t.posterUrl,
+    backdropUrl: t.backdropUrl,
+    genres: t.genres
   }));
+
   return res.json({
-    ok:true, rounds:p.rounds, w:p.w,
-    debug: { weightsHash: hashW(p.w) },
-    recs
+    ok: true,
+    rounds: p.rounds,
+    topGenres: Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,5),
+    recs: recItems
   });
 });
 
@@ -587,16 +620,16 @@ api.get("/recs", async (req:Request, res:Response) => {
   await buildAll();
   const p = sess(req);
   const sid = (req.headers["x-session-id"] as string) || (req.query.sid as string) || "anon";
-  
+
   console.log(`[RECS] Session ${sid}: ${p.rounds} rounds completed, ${Object.keys(p.w).length} features learned`);
   if (p.rounds > 0) {
     const topWeights = Object.entries(p.w).sort((a,b)=>b[1]-a[1]).slice(0,3);
     console.log(`[RECS] Top learned preferences:`, topWeights);
   }
-  
+
   const top = recommend(p, Number(req.query.top||60));
   console.log(`[RECS] Returning ${top.length} recommendations. Top 3:`, top.slice(0,3).map(t => `${t.title} (${t.year})`));
-  
+
   res.json({
     ok:true,
     rounds: p.rounds,
@@ -615,16 +648,16 @@ api.get("/recs", async (req:Request, res:Response) => {
 api.post("/recs", express.json(), async (req:Request, res:Response) => {
   noStore(res);
   await buildAll();
-  
+
   // if client sends its own weights, use them; else fall back to session profile
   const top: number = Number(req.body?.top ?? 20);
   const roundHint: number | undefined = req.body?.rounds;
   const wOverride: Weights | undefined = req.body?.w;
-  
+
   const prof = sess(req);
   const w: Weights = wOverride ?? prof.w;
   const rounds = roundHint ?? prof.rounds;
-  
+
   const items = rankWith(w, rounds, top).map(t => ({
     id:t.id, title:t.title, year:t.year,
     image: t.posterUrl || t.backdropUrl, posterUrl:t.posterUrl, backdropUrl:t.backdropUrl, genres:t.genres
@@ -632,7 +665,7 @@ api.post("/recs", express.json(), async (req:Request, res:Response) => {
 
   const topWeights = Object.entries(w).sort((a,b)=>b[1]-a[1]).slice(0,8);
   console.log(`[RECS POST] Using ${Object.keys(w).length} features, ${rounds} rounds. Top 3:`, items.slice(0,3).map(s => s.title));
-  
+
   return res.json({ ok:true, rounds, items, debug:{ weightsHash: hashW(w), topWeights } });
 });
 
