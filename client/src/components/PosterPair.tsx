@@ -29,7 +29,7 @@ export default function PosterPair() {
     // Record the vote in the Bradley-Terry system
     try {
       const { saveW, saveRounds } = await import("../lib/userModel");
-      
+
       const resp = await fetch("/api/ab/vote", {
         method: "POST",
         headers: { 

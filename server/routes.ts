@@ -217,54 +217,38 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
 }
 
 /* ====================== TMDb resolution (title→id→credits) ====================== */
-async function tmdbSearch(title: string, year?: number) {
-  const url = `${TMDB}/search/movie?api_key=${encodeURIComponent(TMDB_API_KEY)}&query=${encodeURIComponent(title)}${year?`&year=${year}`:""}`;
-  const r = await fetch(url); if (!r.ok) return null;
-  const j:any = await r.json(); const hits:any[] = j?.results || [];
+async function tmdbSearch(title: string, year?: number): Promise<TMDbSearchHit|null> {
+  const u = `${TMDB}/search/movie?api_key=${encodeURIComponent(TMDB_API_KEY)}&query=${encodeURIComponent(title)}${year?`&year=${year}`:""}`;
+  const r = await fetch(u); if (!r.ok) return null;
+  const j:any = await r.json(); const hits:TMDbSearchHit[] = j?.results || [];
   if (!hits.length) return null;
   const exact = year ? hits.find(h => (h.release_date||"").startsWith(String(year))) : null;
   return exact || hits[0];
 }
-async function tmdbCredits(id:number): Promise<{directors:string[]; actors:string[]}> {
-  const url = `${TMDB}/movie/${id}/credits?api_key=${encodeURIComponent(TMDB_API_KEY)}`;
-  const r = await fetch(url); if (!r.ok) return { directors:[], actors:[] };
-  const j:any = await r.json();
-  const directors = (j?.crew||[])
-    .filter((c:any)=> String(c?.job).toLowerCase()==="director")
-    .slice(0,2).map((c:any)=>normName(c.name));
-  const actors = (j?.cast||[]).slice(0,3).map((c:any)=>normName(c.name));
-  return { directors, actors };
+async function tmdbDetails(id:number): Promise<TMDbDetails|null> {
+  const u = `${TMDB}/movie/${id}?api_key=${encodeURIComponent(TMDB_API_KEY)}&append_to_response=credits`;
+  const r = await fetch(u); if (!r.ok) return null;
+  return await r.json();
 }
-async function resolveRaw(raw: Raw): Promise<Item|null> {
-  try {
-    const hit = await tmdbSearch(raw.title, raw.year);
-    if (!hit || hit.adult) {
-      console.log(`[TMDB] No hit for: "${raw.title}" (${raw.year})`);
-      return null;
-    }
+async function resolveRaw(raw: { title:string; year?:number; srcList:string }): Promise<Item|null> {
+  const hit = await tmdbSearch(raw.title, raw.year);
+  if (!hit || hit.adult) return null;
+  const det = await tmdbDetails(hit.id); if (!det) return null;
 
-    const { directors, actors } = await tmdbCredits(hit.id);
-    const resolved = {
-      id: hit.id,
-      title: hit.title || hit.original_title || raw.title,
-      year: raw.year,
-      genres: Array.isArray(hit.genre_ids) ? hit.genre_ids.slice() : [],
-      directors, actors,
-      posterUrl: hit.poster_path? `${IMG}/${POSTER}${hit.poster_path}` : null,
-      backdropUrl: hit.backdrop_path? `${IMG}/${BACKDROP}${hit.backdrop_path}` : null,
-      overview: hit.overview || "",
-      popularity: hit.popularity || 0,
-      voteAverage: hit.vote_average || 0,
-      voteCount: hit.vote_count || 0,
-      sources: [raw.srcList]
-    };
-
-    console.log(`[TMDB] Resolved: "${raw.title}" → "${resolved.title}" (ID: ${resolved.id})`);
-    return resolved;
-  } catch (error) {
-    console.error(`[TMDB] Error resolving "${raw.title}":`, error);
-    return null;
-  }
+  const genres = (det.genres || []).map(g => g.id);
+  return {
+    id: det.id,
+    title: (det.title || det.original_title || raw.title).trim(),
+    year: raw.year,
+    genres,
+    posterUrl: det.poster_path ? `${IMG}/${POSTER}${det.poster_path}` : null,
+    backdropUrl: det.backdrop_path ? `${IMG}/${BACKDROP}${det.backdrop_path}` : null,
+    overview: (det as any).overview || "",
+    popularity: det.popularity || 0,
+    voteAverage: det.vote_average || 0,
+    voteCount: det.vote_count || 0,
+    sources: [raw.srcList],
+  };
 }
 
 /* ====================== Build catalogue & AB (15 per list) ====================== */
@@ -409,7 +393,7 @@ function sess(req:Request): Profile {
 function noStore(res: express.Response) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
+  res.setHeader('Vary', 'x-session-id');
 }
 
 const hashW = (w: Weights) => {
@@ -490,7 +474,7 @@ function seedSortKey(id: number, rounds: number) {
 }
 
 function scoreByGenresOnly(genres: number[]|undefined, gp: Profile): number {
-  let s = 0; 
+  let s = 0;
   for (const g of genres || []) {
     s += gp.genreScores[g] || 0;
   }
@@ -602,19 +586,19 @@ api.get("/ab/next", async (req:Request, res:Response) => {
 api.post("/api/ab/vote", express.json(), async (req:Request, res:Response) => {
   noStore(res);
   await buildAll(); // Ensure catalogue is built
-  
+
   const { leftId, rightId, chosenId } = req.body as { leftId: number; rightId: number; chosenId: number };
 
   const left = CATALOGUE.find(i=>i.id===leftId);
   const right= CATALOGUE.find(i=>i.id===rightId);
   const chosen = CATALOGUE.find(i=>i.id===chosenId);
-  
+
   if (!left || !right || !chosen || !AB_SET.has(left.id) || !AB_SET.has(right.id)) {
     return res.status(400).json({ ok:false, error:"Bad pair" });
   }
-  
+
   const p = sess(req);
-  
+
   // Genre-only learning - simple increment for chosen genres
   for (const g of (chosen.genres || [])) {
     p.genreScores[g] = (p.genreScores[g] || 0) + 1;
@@ -719,6 +703,7 @@ api.get("/trailers", async (req:Request, res:Response) => {
 
 // Individual trailer endpoint (for compatibility)
 api.get("/trailer", async (req:Request, res:Response) => {
+  noStore(res);
   const id = Number(req.query.id);
   if (!Number.isFinite(id)) return res.status(400).json({ ok:false, error:"Invalid id" });
 
