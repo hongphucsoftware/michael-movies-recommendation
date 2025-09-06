@@ -1,22 +1,23 @@
+// Replit Agent: This banner MUST show the live total from the server, not a hardcoded number.
+import { useEffect, useState } from "react";
 
-import React, { useState, useEffect } from 'react';
-
-interface DataBannerProps {
-  totalMovies?: number;
-  currentPhase?: string;
-}
-
-export default function DataBanner({ totalMovies = 0, currentPhase = "Loading" }: DataBannerProps) {
-  const [total, setTotal] = useState<number>(totalMovies);
+function DataBanner() {
+  const [total, setTotal] = useState<number | null>(null);
 
   useEffect(() => {
-    setTotal(totalMovies);
-  }, [totalMovies]);
+    // Pull the full count (and force-build if needed)
+    fetch("/api/catalogue")
+      .then(r => r.json())
+      .then(j => setTotal(j?.total ?? null))
+      .catch(() => setTotal(null));
+  }, []);
 
   return (
-    <div className="fixed top-4 right-4 bg-black/80 text-white px-4 py-2 rounded-lg text-sm z-50">
-      <div>Phase: {currentPhase}</div>
-      <div>Movies: {total}</div>
+    <div className="text-xs opacity-70">
+      Using the complete Rotten Tomatoes 2020, IMDb Top 250, and IMDb list —{" "}
+      {total === null ? "loading…" : `${total} titles (deduped)`}
     </div>
   );
 }
+
+export default DataBanner;
