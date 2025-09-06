@@ -6,7 +6,7 @@ import { z } from "zod";
 /* ====================== Config ====================== */
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY");
-const LIST_IDS = (process.env.IMDB_LISTS || "ls094921320,ls003501243,ls002065120,ls000873904,ls005747458")
+const LIST_IDS = (process.env.IMDB_LISTS || "ls051432359,ls021347064,ls091520106")
   .split(",").map(s => s.trim()).filter(Boolean);
 const AB_PER_LIST = Number(process.env.AB_PER_LIST || 15);
 const CONCURRENCY = Number(process.env.TMDB_CONCURRENCY || 3);
@@ -67,7 +67,65 @@ async function pLimit<T>(n:number, jobs:(()=>Promise<T>)[]) {
 const normName = (s:string)=>s.normalize("NFKC").replace(/\s+/g," ").trim();
 const decadeOf = (y?:number)=> y ? Math.floor(y/10)*10 : undefined;
 
-/* ====================== IMDb scrape (title, year) ====================== */
+/* ====================== IMDb Top 250 scrape ====================== */
+async function fetchTop250(): Promise<Raw[]> {
+  const url = "https://www.imdb.com/chart/top/";
+  const out: Raw[] = [];
+  
+  try {
+    const html = await fetch(url, {
+      headers: {
+        "user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+        "accept-language":"en-US,en;q=0.9"
+      }
+    }).then(r=>r.text());
+    
+    const $ = cheerio.load(html);
+    
+    // New IMDb Top 250 layout
+    $("li[data-testid='cvitem-top-chartmeter-titlecard']").each((_i, el) => {
+      const titleLink = $(el).find("h3.ipc-title__text").first();
+      let title = titleLink.text().trim();
+      
+      // Remove ranking number like "1. The Shawshank Redemption"
+      title = title.replace(/^\d+\.\s*/, "");
+      
+      // Get year from metadata
+      const yearText = $(el).find("span[data-testid='title-card-metadata'] span").first().text();
+      const yearMatch = yearText.match(/(19|20)\d{2}/);
+      const year = yearMatch ? Number(yearMatch[0]) : undefined;
+      
+      if (title) {
+        out.push({ title, year, srcList: "imdbTop250" });
+        console.log(`[IMDB] Top 250: "${title}" (${year || 'no year'})`);
+      }
+    });
+    
+    // Fallback for older layout
+    if (out.length < 50) {
+      $("td.titleColumn").each((_i, el) => {
+        const titleLink = $(el).find("a").first();
+        const title = titleLink.text().trim();
+        const yearText = $(el).find("span.secondaryInfo").text();
+        const yearMatch = yearText.match(/\((\d{4})\)/);
+        const year = yearMatch ? Number(yearMatch[1]) : undefined;
+        
+        if (title) {
+          out.push({ title, year, srcList: "imdbTop250" });
+          console.log(`[IMDB] Top 250 (fallback): "${title}" (${year || 'no year'})`);
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[IMDB] Error fetching Top 250:`, error);
+  }
+  
+  console.log(`[IMDB] Top 250 total: ${out.length} titles`);
+  return out.slice(0, 100); // Take top 100
+}
+
+/* ====================== IMDb list scrape (title, year) ====================== */
 /* We fetch list pages in "detail" mode with sort by list order; paginate until exhausted. */
 async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
   const out: Raw[] = [];
@@ -110,14 +168,20 @@ async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
         if (!t) t = $(r).find(".ipc-title a").first().text().trim();
         if (!t) t = $(r).find("h3 a").first().text().trim();
         
-        // Try multiple year selectors
+        // Clean title - remove list numbers like "1. Title" 
+        t = t.replace(/^\d+\.\s*/, "").trim();
+        
+        // Try multiple year selectors - look in the same row and nearby elements
         let yText = $(r).find(".lister-item-year").first().text() || "";
         if (!yText) yText = $(r).find(".secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find(".titleColumn .secondaryInfo").first().text() || "";
         if (!yText) yText = $(r).find("[data-testid='title-card-metadata']").first().text() || "";
+        if (!yText) yText = $(r).find("span").filter((_i, el) => $(el).text().match(/\(.*\d{4}.*\)/)).first().text() || "";
         
-        const yMatch = yText.match(/(19|20)\d{2}/);
-        const year = yMatch ? Number(yMatch[0]) : undefined;
+        // More aggressive year extraction - look for any 4-digit year in parentheses
+        let yMatch = yText.match(/\(.*?(19|20)\d{2}.*?\)/);
+        if (!yMatch) yMatch = yText.match(/(19|20)\d{2}/);
+        const year = yMatch ? Number(yMatch[1] || yMatch[0]) : undefined;
         
         if (t) {
           const titleKey = `${t}_${year || 'noYear'}`;
@@ -246,15 +310,27 @@ async function buildAll(): Promise<void> {
     console.log(`[BUILD] Using cached catalogue: ${CATALOGUE.length} items, ${AB_SET.size} in AB set`);
     return;
   }
+  
+  // Clear cache for fresh build
+  CATALOGUE = [];
+  AB_SET.clear();
 
-  console.log(`[BUILD] Starting fresh build for lists: ${LIST_IDS.join(', ')}`);
+  console.log(`[BUILD] Starting fresh build with Top 250 + supplementary lists`);
   
   const rawAll: Raw[] = [];
-  for (const id of LIST_IDS) {
+  
+  // First get IMDb Top 250 (primary source)
+  console.log(`[BUILD] Fetching IMDb Top 250...`);
+  const top250 = await fetchTop250();
+  console.log(`[BUILD] Top 250: ${top250.length} raw titles`);
+  rawAll.push(...top250);
+  
+  // Then get supplementary lists
+  for (const id of LIST_IDS.slice(0, 2)) { // Limit to 2 lists to avoid the broken ones
     console.log(`[BUILD] Fetching IMDB list: ${id}`);
     const rows = await fetchListTitles(id);
     console.log(`[BUILD] List ${id}: ${rows.length} raw titles`);
-    rawAll.push(...rows);
+    rawAll.push(...rows.slice(0, 25)); // Limit each list
   }
   
   console.log(`[BUILD] Total raw titles across all lists: ${rawAll.length}`);
