@@ -190,6 +190,7 @@ export default function TrailerPlayer({
 
       console.log('[TrailerPlayer] Received embeds for:', Object.keys(newEmbeds).length, 'items');
       console.log('[TrailerPlayer] Items with trailers:', Object.values(newEmbeds).filter(Boolean).length);
+      console.log('[TrailerPlayer] Sample embed URLs:', Object.entries(newEmbeds).slice(0, 3));
 
       setEmbeds(newEmbeds);
     };
@@ -284,21 +285,27 @@ export default function TrailerPlayer({
         {currentEmbed ? (
           <div className="aspect-video">
             <iframe
-              src={currentEmbed}
+              src={currentEmbed.includes('youtube.com/embed/') ? currentEmbed : `https://www.youtube.com/embed/${currentEmbed.replace('https://www.youtube.com/watch?v=', '')}`}
               title={`${currentItem.title} trailer`}
-              className="w-full h-full"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              className="w-full h-full border-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
+              loading="lazy"
             />
           </div>
         ) : (
           <div className="aspect-video flex items-center justify-center bg-gray-800">
             <div className="text-center">
               <p className="text-white font-semibold">{currentItem.title}</p>
-              <p className="text-gray-400">Loading trailer...</p>
+              <p className="text-gray-400">
+                {Object.keys(embeds).length === 0 ? 'Loading trailer...' : 'No trailer available'}
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Debug: Queue {queue.length}, Index {idx}, Embeds {Object.keys(embeds).length}
+              </p>
             </div>
           </div>
-        )}
+        )}</div>
       </div>
 
       {/* Movie Info */}
