@@ -7,6 +7,7 @@ import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/u
 import { useQuickPicks } from "../hooks/useQuickPicks";
 import { useABHistory } from "../hooks/useABHistory";
 import { firePrefsUpdated } from "../lib/events";
+import { apiPost } from "../lib/api";
 import TrailerPlayer from "./TrailerPlayer";
 
 export default function PosterPair() {
@@ -20,13 +21,27 @@ export default function PosterPair() {
   if (error) return <div className="text-red-400">Error: {error}</div>;
   if (!items.length) return <div>No titles found.</div>;
 
-  function pick(side: "left" | "right") {
+  async function pick(side: "left" | "right") {
     const result = choose(side);
     if (!result) return;
     const { chosen, other } = result;
+    
+    // Record the vote in the Bradley-Terry system
+    try {
+      await apiPost("/api/ab/vote", {
+        leftId: side === "left" ? (chosen as any).id : (other as any).id,
+        rightId: side === "left" ? (other as any).id : (chosen as any).id,
+        chosenId: (chosen as any).id
+      });
+      console.log(`[A/B VOTE] Recorded vote for "${(chosen as any).title}" over "${(other as any).title}"`);
+    } catch (error) {
+      console.error("[A/B VOTE] Failed to record vote:", error);
+    }
+    
+    // Update local learning (for compatibility)
     like(chosen as any);
     skip(other as any);
-    record((chosen as any).id, (other as any).id);  // Track A/B history for personalized reel
+    record((chosen as any).id, (other as any).id);
     
     // Notify other components that preferences have been updated
     firePrefsUpdated();

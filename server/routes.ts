@@ -536,6 +536,9 @@ api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
   }
   const p = sess(req);
   updateFromVote(p, left, right, chosenId);
+  
+  console.log(`[A/B VOTE] Session ${req.headers["x-session-id"] || req.query.sid || "anon"}: ${left.title} vs ${right.title} → chose ${chosenId === left.id ? left.title : right.title} (Round ${p.rounds})`);
+  
   res.json({ ok:true, rounds:p.rounds });
 });
 
@@ -543,7 +546,17 @@ api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
 api.get("/recs", async (req:Request, res:Response) => {
   await buildAll();
   const p = sess(req);
+  const sid = (req.headers["x-session-id"] as string) || (req.query.sid as string) || "anon";
+  
+  console.log(`[RECS] Session ${sid}: ${p.rounds} rounds completed, ${Object.keys(p.w).length} features learned`);
+  if (p.rounds > 0) {
+    const topWeights = Object.entries(p.w).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    console.log(`[RECS] Top learned preferences:`, topWeights);
+  }
+  
   const top = recommend(p, Number(req.query.top||60));
+  console.log(`[RECS] Returning ${top.length} recommendations. Top 3:`, top.slice(0,3).map(t => `${t.title} (${t.year})`));
+  
   res.json({
     ok:true,
     rounds: p.rounds,

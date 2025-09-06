@@ -81,6 +81,22 @@ export default function TrailerPlayer({
 
   // Fetch personalized recommendations from new Bradley-Terry model
   const [recommendations, setRecommendations] = useState<Title[]>([]);
+  const [abPairs, setAbPairs] = useState<any[]>([]);
+
+  // First, get the A/B pairs the user should be choosing from
+  useEffect(() => {
+    const fetchABPairs = async () => {
+      try {
+        const response = await apiGet('/api/ab/next');
+        if (response.ok && !response.done) {
+          console.log('[TrailerPlayer] A/B pairs available:', response);
+        }
+      } catch (error) {
+        console.error('[TrailerPlayer] Failed to fetch A/B pairs:', error);
+      }
+    };
+    fetchABPairs();
+  }, []);
 
   useEffect(() => {
     const fetchRecommendations = async () => {
