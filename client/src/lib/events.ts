@@ -15,3 +15,6 @@ export function onPrefsUpdated(callback: PrefsUpdatedListener): () => void {
 export function dispatchPrefsUpdated(freshRecs?: any[]): void {
   listeners.forEach(listener => listener(freshRecs));
 }
+
+// Alias for backwards compatibility
+export const firePrefsUpdated = dispatchPrefsUpdated;
