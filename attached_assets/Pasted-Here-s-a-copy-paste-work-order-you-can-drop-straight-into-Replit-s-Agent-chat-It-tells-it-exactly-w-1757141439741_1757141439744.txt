@@ -1,0 +1,253 @@
+Here’s a copy-paste work order you can drop straight into Replit’s Agent chat. It tells it exactly what to change, why, and how to verify—no wiggle room, no loops.
+
+🔧 WORK ORDER FOR REPLIT AGENT (DO EXACTLY THIS)
+0) Operating mode
+
+Create a new file replit.md with this content and follow it for this session:
+
+# Development Working Script (must follow exactly)
+
+- Execute steps character-for-character. No additions or “improvements”.
+- Touch only the files and lines specified below.
+- If something is ambiguous, STOP and ask a yes/no question before proceeding.
+- After each step, reply: "STEP X DONE" and show the exact diff.
+
+Auto-confirm mode triggers (ask before proceeding):
+- Multiple file changes not listed here
+- Any refactors or dependency changes not listed here
+- Anything that affects UI layout or data contracts
+
+Never silently ignore errors. Never proceed on red.
+
+1) Stop dev reload loops; run in prod
+
+Edit .replit to exactly:
+
+run = "npm run start:prod"
+
+
+Edit package.json → "scripts":
+
+"scripts": {
+  "build": "tsc -b",
+  "start:prod": "NODE_ENV=production node dist/server/index.js"
+}
+
+
+Build:
+
+npm run build
+
+
+Why: hot-reload loops wipe in-memory state and make results look “the same”.
+
+2) Ensure server binds Replit’s port and never caches
+
+In server/index.ts (or wherever app.listen is called):
+
+Change the listen call to:
+
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`[SERVER] listening on ${PORT}`);
+});
+
+
+Add a no-store helper in server/routes.ts:
+
+function noStore(res: import("express").Response) {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Vary", "x-session-id");
+}
+
+
+Call noStore(res) at the top of handlers that return recs and trailers.
+
+3) Guarantee genres exist (TMDb details, not just search)
+
+In server/routes.ts, replace your TMDb resolver with this exact pair (keep posters/trailers as-is):
+
+const TMDB = "https://api.themoviedb.org/3";
+const IMG  = "https://image.tmdb.org/t/p";
+const POSTER = "w500", BACKDROP = "w780";
+const TMDB_KEY = process.env.TMDB_API_KEY || "";
+
+type TMDbSearchHit = { id:number; title?:string; original_title?:string; release_date?:string; poster_path?:string|null; backdrop_path?:string|null; vote_average?:number; vote_count?:number; popularity?:number; adult?:boolean; genre_ids?:number[] };
+type TMDbDetails = {
+  id:number; title?:string; original_title?:string; overview?:string;
+  release_date?:string; poster_path?:string|null; backdrop_path?:string|null;
+  vote_average?:number; vote_count?:number; popularity?:number;
+  genres?: { id:number; name:string }[];
+};
+
+async function tmdbSearch(title: string, year?: number): Promise<TMDbSearchHit|null> {
+  const u = `${TMDB}/search/movie?api_key=${encodeURIComponent(TMDB_KEY)}&query=${encodeURIComponent(title)}${year?`&year=${year}`:""}`;
+  const r = await fetch(u); if (!r.ok) return null;
+  const j:any = await r.json(); const hits:TMDbSearchHit[] = j?.results || [];
+  if (!hits.length) return null;
+  const exact = year ? hits.find(h => (h.release_date||"").startsWith(String(year))) : null;
+  return exact || hits[0];
+}
+async function tmdbDetails(id:number): Promise<TMDbDetails|null> {
+  const u = `${TMDB}/movie/${id}?api_key=${encodeURIComponent(TMDB_KEY)}&append_to_response=credits`;
+  const r = await fetch(u); if (!r.ok) return null;
+  return await r.json();
+}
+
+// Replace your resolveRaw() with:
+async function resolveRaw(raw: { title:string; year?:number; srcList:string }): Promise<Item|null> {
+  const hit = await tmdbSearch(raw.title, raw.year);
+  if (!hit || hit.adult) return null;
+  const det = await tmdbDetails(hit.id); if (!det) return null;
+
+  const genres = (det.genres || []).map(g => g.id);
+  return {
+    id: det.id,
+    title: (det.title || det.original_title || raw.title).trim(),
+    year: raw.year,
+    genres,
+    posterUrl: det.poster_path ? `${IMG}/${POSTER}${det.poster_path}` : null,
+    backdropUrl: det.backdrop_path ? `${IMG}/${BACKDROP}${det.backdrop_path}` : null,
+    overview: (det as any).overview || "",
+    popularity: det.popularity || 0,
+    voteAverage: det.vote_average || 0,
+    voteCount: det.vote_count || 0,
+    sources: [raw.srcList],
+  };
+}
+
+
+Why: empty genre_ids → every score = 0 → “same trailers”.
+
+4) Minimal genre-only learning and ranking (no other features)
+
+At top of server/routes.ts:
+
+type GenreId = number;
+type GenreProfile = { genreScores: Record<GenreId, number>; rounds: number };
+const PROFILES = new Map<string, GenreProfile>();
+
+function sess(req: import("express").Request): GenreProfile {
+  const sid = (req.headers["x-session-id"] as string) || (req.query.sid as string) || "anon";
+  let p = PROFILES.get(sid);
+  if (!p) { p = { genreScores: {}, rounds: 0 }; PROFILES.set(sid, p); }
+  return p;
+}
+
+
+Scorer + rotation:
+
+function scoreByGenres(genres:number[]|undefined, gp:GenreProfile){ let s=0; for (const g of genres||[]) s += gp.genreScores[g]||0; return s; }
+function seedSortKey(id:number, rounds:number){ return ((id * 1103515245 + 12345 + rounds * 1337) >>> 0) / 2**32; }
+
+function rankRecsByGenre(gp: GenreProfile, topN: number): Item[] {
+  const pool = CATALOGUE.filter(x => !AB_SET.has(x.id)); // rec pool only
+  if (gp.rounds === 0) {
+    return pool.slice().sort((a,b) =>
+      ((b.voteAverage||0)*Math.log(1+(b.voteCount||1))) - ((a.voteAverage||0)*Math.log(1+(a.voteCount||1)))
+    ).slice(0, topN);
+  }
+  const ranked = pool.map(it => ({
+    it, s: scoreByGenres(it.genres, gp), j: seedSortKey(it.id, gp.rounds)
+  })).sort((a,b)=> (b.s-a.s) || (b.j-a.j)).map(x=>x.it);
+
+  // rotate window so visible set changes even if top genres tie
+  const window = Math.min(8, Math.max(1, Math.floor(topN/3)));
+  const offset = (gp.rounds % 5) * window;
+  return ranked.slice(offset).concat(ranked.slice(0, offset)).slice(0, topN);
+}
+
+
+Vote → learn genres → return fresh recs now:
+
+api.post("/api/ab/vote", import("express").json(), async (req, res) => {
+  noStore(res);
+  const { leftId, rightId, chosenId } = req.body as { leftId:number; rightId:number; chosenId:number };
+  const p = sess(req);
+  const chosen = CATALOGUE.find(i => i.id === chosenId);
+  if (!chosen) return res.status(400).json({ ok:false, error:"bad chosenId" });
+
+  for (const g of (chosen.genres || [])) p.genreScores[g] = (p.genreScores[g] || 0) + 1;
+  p.rounds += 1;
+
+  const recs = rankRecsByGenre(p, 20).map(t => ({
+    id:t.id, title:t.title, year:t.year,
+    image: t.posterUrl || t.backdropUrl,
+    posterUrl: t.posterUrl, backdropUrl: t.backdropUrl, genres: t.genres
+  }));
+
+  res.json({ ok:true, rounds:p.rounds, topGenres:Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,5), recs });
+});
+
+
+Recs on demand (optional):
+
+api.get("/api/recs-genre", async (req, res) => {
+  noStore(res);
+  await buildAll();
+  const p = sess(req);
+  const items = rankRecsByGenre(p, Number(req.query.top||20)).map(t => ({
+    id:t.id, title:t.title, year:t.year,
+    image: t.posterUrl || t.backdropUrl,
+    posterUrl: t.posterUrl, backdropUrl: t.backdropUrl, genres: t.genres
+  }));
+  res.json({ ok:true, rounds:p.rounds, items });
+});
+
+
+Also call noStore(res) at the top of /api/trailers.
+
+5) Client: force fresh trailers after every vote
+
+In the A/B component’s vote handler, replace with:
+
+const sid = localStorage.getItem("paf.sid") || (() => { const s="sid_"+Math.random().toString(36).slice(2); localStorage.setItem("paf.sid", s); return s; })();
+
+const vote = await fetch(`/api/ab/vote?sid=${sid}`, {
+  method: "POST",
+  headers: { "Content-Type":"application/json", "Cache-Control":"no-store", "x-session-id": sid },
+  cache: "no-store",
+  body: JSON.stringify({ leftId, rightId, chosenId })
+}).then(r=>r.json());
+
+if (vote?.ok) {
+  const ids = vote.recs.map((m:any)=>m.id).join(",");
+  const tr = await fetch(`/api/trailers?sid=${sid}&ids=${encodeURIComponent(ids)}&t=${Date.now()}`, {
+    headers: { "Cache-Control":"no-store" }, cache: "no-store"
+  }).then(r=>r.json());
+  const withTrailers = vote.recs.map((m:any)=>({ ...m, trailer: tr.trailers?.[m.id] ?? null }));
+  setRecommendations({ rounds: vote.rounds, items: withTrailers }); // make sure keys use rounds
+}
+
+
+And render each trailer card with keys that include rounds so iframes re-mount:
+
+<div key={`${m.id}-${rounds}`}> … <iframe key={`ifr-${m.id}-${rounds}`} src={`${m.trailer}?round=${rounds}`} … />
+
+6) Acceptance tests (agent must run and paste results)
+
+Server bind check
+Run and paste the console line: [SERVER] listening on <port>
+
+Genres hydrated
+Temporarily log after catalogue build:
+console.log("emptyGenreCount", CATALOGUE.filter(x=>!x.genres || x.genres.length===0).length);
+Expect near 0.
+
+Vote → different recs (shell):
+
+# get AB items then vote for the first movie’s id twice with different partners
+curl -s http://localhost:$PORT/api/catalogue | jq '.items[0].id, .items[1].id'
+curl -s -X POST http://localhost:$PORT/api/ab/vote -H 'Content-Type: application/json' \
+  -d '{"leftId":123,"rightId":456,"chosenId":123}' | jq '.rounds, .topGenres, (.recs | map(.id)[:5])'
+
+# vote again with a different chosen id (different genre)
+curl -s -X POST http://localhost:$PORT/api/ab/vote -H 'Content-Type: application/json' \
+  -d '{"leftId":789,"rightId":123,"chosenId":789}' | jq '.rounds, .topGenres, (.recs | map(.id)[:5])'
+
+
+Agent must show that the top 5 change and rounds increments.
+
+That’s it.
+If any step fails, STOP and ask a yes/no clarification. Do not “improve” anything outside these instructions.
