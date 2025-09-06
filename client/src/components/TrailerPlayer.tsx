@@ -221,14 +221,6 @@ export default function TrailerPlayer({
     setIdx(index);
   };
 
-  if (!currentItem) {
-    return (
-      <div className="flex items-center justify-center h-64 bg-gray-900 rounded-lg">
-        <p className="text-gray-400">Loading personalized recommendations...</p>
-      </div>
-    );
-  }
-
   // Generate explanation based on recommendations API response
   const [explanationText, setExplanationText] = useState("Loading your personalized recommendations...");
 
@@ -270,6 +262,14 @@ export default function TrailerPlayer({
 
     fetchExplanation();
   }, [learnedVec]);
+
+  if (!currentItem) {
+    return (
+      <div className="flex items-center justify-center h-64 bg-gray-900 rounded-lg">
+        <p className="text-gray-400">Loading personalized recommendations...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
