@@ -77,69 +77,70 @@ export default function TrailerPlayer({
     return chosen;
   }
 
-  // RANDOM selection from 5 decade lists only (no A/B correlation yet)
+  // Fetch personalized recommendations from new Bradley-Terry model
+  const [recommendations, setRecommendations] = useState<Title[]>([]);
+  
+  useEffect(() => {
+    const fetchRecommendations = async () => {
+      try {
+        const response = await fetch('/api/recs?top=12');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ok && data.items) {
+            // Convert API format to Title format
+            const recs: Title[] = data.items.map((item: any) => ({
+              id: item.id,
+              title: item.title,
+              year: item.year?.toString() || '',
+              genres: item.genres || [],
+              popularity: 50, // Default
+              feature: [], // Not used
+              sources: item.sources || [],
+            }));
+            
+            console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations from Bradley-Terry model`);
+            console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
+            if (data.likes?.length > 0) {
+              console.log(`[TrailerPlayer] User preferences:`, data.likes.slice(0, 3));
+            }
+            
+            setRecommendations(recs);
+          }
+        }
+      } catch (error) {
+        console.error('[TrailerPlayer] Failed to fetch recommendations:', error);
+        setRecommendations([]);
+      }
+    };
+
+    fetchRecommendations();
+  }, [learnedVec]); // Refetch when A/B learning updates
+
   const picks = useMemo(() => {
-    if (!items.length) return [];
-
-    // Filter to movies from ONLY the 5 decade sources with posters
-    const decadeMovies = items.filter(item => {
-      // Must be from one of the 5 decade sources
-      const isFromDecadeSources = item.sources?.some(src => 
-        ['decade2020s', 'decade2010s', 'decade2000s', 'decade1990s', 'decade1980s'].includes(src)
-      );
-
-      // Must have a poster/image
-      const hasImage = bestImageUrl(item);
-
-      return isFromDecadeSources && hasImage;
-    });
+    if (recommendations.length === 0) return [];
 
     // Remove recently chosen to avoid immediate repeats
-    const available = decadeMovies.filter(item => 
+    const available = recommendations.filter(item => 
       !recentChosenIds.includes(item.id) && !avoidIds.includes(item.id)
     );
 
-    console.log(`[TrailerPlayer] RANDOM SELECTION: ${available.length} available from decade sources`);
-    console.log(`[TrailerPlayer] Source breakdown:`, {
-      decade2020s: available.filter(item => item.sources?.includes('decade2020s')).length,
-      decade2010s: available.filter(item => item.sources?.includes('decade2010s')).length,
-      decade2000s: available.filter(item => item.sources?.includes('decade2000s')).length,
-      decade1990s: available.filter(item => item.sources?.includes('decade1990s')).length,
-      decade1980s: available.filter(item => item.sources?.includes('decade1980s')).length,
-    });
-
+    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available`);
+    
     if (available.length === 0) {
-      console.warn('[TrailerPlayer] No available movies from decade sources');
+      console.warn('[TrailerPlayer] No available personalized recommendations');
       return [];
     }
 
-    // PURE RANDOM SELECTION - No scoring, no preferences, no MMR
-    const randomPicks: any[] = [];
-    const usedIndices = new Set<number>();
+    // Take top recommendations (already ranked by Bradley-Terry model)
+    const picks = available.slice(0, count);
+    
+    picks.forEach((pick, i) => {
+      console.log(`[PERSONALIZED PICK ${i+1}] "${pick.title}" (${pick.year})`);
+    });
 
-    for (let i = 0; i < Math.min(count, available.length); i++) {
-      let randomIndex;
-      let attempts = 0;
-
-      // Get a random unused movie
-      do {
-        randomIndex = Math.floor(Math.random() * available.length);
-        attempts++;
-      } while (usedIndices.has(randomIndex) && attempts < 100);
-
-      if (attempts < 100) {
-        usedIndices.add(randomIndex);
-        const pick = available[randomIndex];
-        randomPicks.push(pick);
-
-        console.log(`[RANDOM PICK ${i+1}] "${pick.title}" (${pick.year}) from sources: ${pick.sources?.join(', ')}`);
-      }
-    }
-
-    console.log(`[TrailerPlayer] Selected ${randomPicks.length} random movies from decade sources only`);
-
-    return randomPicks;
-  }, [items, learnedVec, recentChosenIds, avoidIds, count]);
+    console.log(`[TrailerPlayer] Selected ${picks.length} personalized recommendations`);
+    return picks;
+  }, [recommendations, recentChosenIds, avoidIds, count]);
 
   // Convert picks to queue format
   useEffect(() => {
@@ -156,7 +157,7 @@ export default function TrailerPlayer({
         };
         return genreMap[g] || 'Unknown';
       }) || [],
-      explanation: 'Randomly selected from decade lists' // Update explanation
+      explanation: 'Personalized based on your A/B testing preferences'
     }));
 
     setQueue(newQueue);
@@ -222,42 +223,54 @@ export default function TrailerPlayer({
     );
   }
 
-  // Generate personalized explanation based on A/B learning (This part is now unused for selection but kept for UI)
-  const generatePersonalizedExplanation = () => {
-    const genrePrefs = [
-      { name: 'Comedy', score: learnedVec[0] || 0, id: 35 },
-      { name: 'Drama', score: learnedVec[1] || 0, id: 18 },
-      { name: 'Action', score: learnedVec[2] || 0, id: 28 },
-      { name: 'Thriller', score: learnedVec[3] || 0, id: 53 },
-      { name: 'Sci-Fi', score: learnedVec[4] || 0, id: 878 },
-      { name: 'Fantasy', score: learnedVec[5] || 0, id: 14 }
-    ].sort((a, b) => b.score - a.score);
+  // Generate explanation based on recommendations API response
+  const [explanationText, setExplanationText] = useState("Loading your personalized recommendations...");
+  
+  useEffect(() => {
+    const fetchExplanation = async () => {
+      try {
+        const response = await fetch('/api/recs?top=5');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ok) {
+            if (data.rounds === 0) {
+              setExplanationText("Complete the A/B testing to get personalized recommendations!");
+            } else if (data.rounds < 12) {
+              setExplanationText(`Based on ${data.rounds} A/B choices, here are some initial recommendations. Complete more rounds for better personalization!`);
+            } else {
+              // Generate explanation from user preferences
+              const topPrefs = data.likes?.slice(0, 3) || [];
+              if (topPrefs.length > 0) {
+                const prefText = topPrefs.map((pref: [string, number]) => {
+                  const [key] = pref;
+                  if (key.startsWith('g:')) return `genre preferences`;
+                  if (key.startsWith('dir:')) return `director style`;
+                  if (key.startsWith('act:')) return `actor preferences`;
+                  if (key.startsWith('era:')) return `era preferences`;
+                  return 'cinematic taste';
+                }).slice(0, 2).join(' and ');
+                
+                setExplanationText(`Based on your A/B testing choices, we've learned your ${prefText}. Here are movies we think you'll love:`);
+              } else {
+                setExplanationText("Based on your A/B testing choices, here are personalized recommendations for you:");
+              }
+            }
+          }
+        }
+      } catch (error) {
+        setExplanationText("These movies are selected based on your preferences:");
+      }
+    };
 
-    const topGenres = genrePrefs.filter(g => g.score > 0.3).slice(0, 3);
-    const strongestGenre = topGenres[0];
-
-    if (topGenres.length === 0) {
-      return "We're still learning your preferences! These movies offer a great variety to help us understand your taste better.";
-    }
-
-    let explanation = `Based on your A/B testing choices, you showed a strong preference for ${strongestGenre.name.toLowerCase()}`;
-
-    if (topGenres.length > 1) {
-      const otherGenres = topGenres.slice(1).map(g => g.name.toLowerCase()).join(" and ");
-      explanation += ` with ${otherGenres}`;
-    }
-
-    explanation += `. We really think you should give one of these movies a go tonight:`;
-
-    return explanation;
-  };
+    fetchExplanation();
+  }, [learnedVec]);
 
   return (
     <div className="space-y-4">
       <div className="text-center">
         <h3 className="text-xl font-bold text-white mb-2">Your Personalized Trailer Reel</h3>
         <p className="text-gray-300 text-sm max-w-2xl mx-auto leading-relaxed">
-          {generatePersonalizedExplanation()}
+          {explanationText}
         </p>
       </div>
 
