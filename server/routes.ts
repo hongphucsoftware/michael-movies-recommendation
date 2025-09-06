@@ -8,13 +8,9 @@ if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY");
 
 const IMDB_LISTS = [
   { id: "ls094921320", url: "https://www.imdb.com/list/ls094921320/" },
-  { id: "ls003501243", url: "https://www.imdb.com/list/ls003501243/" },
-  { id: "ls002065120", url: "https://www.imdb.com/list/ls002065120/" },
-  { id: "ls000873904", url: "https://www.imdb.com/list/ls000873904/" },
-  { id: "ls005747458", url: "https://www.imdb.com/list/ls005747458/" },
 ];
 
-const CATALOGUE_TTL_MS = 1000 * 60 * 60 * Number(process.env.CATALOGUE_TTL_HOURS || 24);
+const CATALOGUE_TTL_MS = 1000 * 60 * 60 * Number(process.env.CATALOGUE_TTL_HOURS || 168); // 1 week cache
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p";
 const POSTER = "w500", BACKDROP = "w780";
@@ -80,7 +76,8 @@ async function scrapeImdbListAll(listId: string): Promise<BasicImdbItem[]> {
   let page = 1;
   const results: BasicImdbItem[] = [];
 
-  while (true) {
+  // Limit to first 2 pages to prevent server overload during development
+  while (page <= 2) {
     const url = `https://www.imdb.com/list/${listId}/?mode=detail&page=${page}`;
 
     try {
@@ -200,10 +197,10 @@ async function buildCatalogue(): Promise<BuiltState> {
     console.log(`[BUILD] List ${list.id}: ${acc.length} movies resolved`);
   }
 
-  // Pick 15 random per list for posters
+  // Pick 10 random per list for posters to reduce load
   const postersByList: Record<string, CatalogueMovie[]> = {};
   for (const list of IMDB_LISTS) {
-    postersByList[list.id] = sample(byList[list.id] || [], 15);
+    postersByList[list.id] = sample(byList[list.id] || [], 10);
     console.log(`[BUILD] List ${list.id}: selected ${postersByList[list.id].length} for posters`);
   }
 
