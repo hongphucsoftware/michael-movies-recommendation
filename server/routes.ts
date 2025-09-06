@@ -349,7 +349,7 @@ async function buildAll(): Promise<void> {
   // build AB set and full catalogue
   const abIds: number[] = [];
   const full: Map<number, Item> = new Map();
-  for (const [listId, items] of byList.entries()) {
+  Array.from(byList.entries()).forEach(([listId, items]) => {
     const picks = chooseAB15(items);
     console.log(`[BUILD] List ${listId}: selected ${picks.length} for AB testing`);
     abIds.push(...picks);
@@ -358,7 +358,7 @@ async function buildAll(): Promise<void> {
       if (!ex) full.set(it.id, it);
       else ex.sources = Array.from(new Set([...ex.sources, ...it.sources]));
     }
-  }
+  });
   
   CATALOGUE = Array.from(full.values());
   AB_SET = new Set(abIds);
@@ -420,8 +420,8 @@ function nextPair(p:Profile): [Item, Item] | null {
       // distance = Jaccard over binary features (genres+era+people)
       const fa = feats(anchor.it), fb = feats(cand.it);
       const ka = new Set(Object.keys(fa)), kb = new Set(Object.keys(fb));
-      let inter=0; for (const k of ka) if (kb.has(k)) inter++;
-      const uni = new Set([...ka, ...kb]).size;
+      let inter=0; Array.from(ka).forEach(k => { if (kb.has(k)) inter++; });
+      const uni = new Set([...Array.from(ka), ...Array.from(kb)]).size;
       const dist = 1 - (inter/(uni||1));
       if (!best || dist>best.dist) best = { it:cand.it, dist };
     }
@@ -448,9 +448,9 @@ function updateFromVote(p:Profile, left:Item, right:Item, chosenId:number) {
   const fA = feats(left), fB = feats(right);
   const fDiff: Record<string,number> = {};
   // f = fA - fB
-  for (const k of new Set([...Object.keys(fA), ...Object.keys(fB)])) {
+  Array.from(new Set([...Object.keys(fA), ...Object.keys(fB)])).forEach(k => {
     fDiff[k] = (fA[k]||0) - (fB[k]||0);
-  }
+  });
   const y = (chosenId === left.id) ? 1 : 0;
   const s = dot(p.w, fDiff);
   const pHat = 1/(1+Math.exp(-s));
