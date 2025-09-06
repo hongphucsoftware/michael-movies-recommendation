@@ -1,0 +1,516 @@
+Got it — we’ll hard-cap each Films101 decade to the first 100 rows (page 1 + page 2 combined), then pick the A/B 30 from inside that 100. No UI changes.
+
+What to change (server only)
+
+Open server/routes.ts and make these edits.
+
+1) Add a limit constant (top of file with the other consts)
+// Only take the first N titles from each Films101 list
+const PER_DECADE_LIMIT = Number(process.env.PER_DECADE_LIMIT ?? 100);
+
+2) Cap the scraper to PER_DECADE_LIMIT
+
+Replace your scrapeFilms101Decade with this version (or just add the limit param and the two if (out.length >= limit) break; guards):
+
+async function scrapeFilms101Decade(url: string, src: string, limit: number = PER_DECADE_LIMIT): Promise<RawTitle[]> {
+  const pages = new Set<string>();
+  pages.add(url);
+
+  // follow page “2” (and similar) if present
+  try {
+    const html = await httpText(url);
+    const $ = cheerio.load(html);
+    $("a").each((_, a) => {
+      const t = ($(a).text() || "").trim();
+      const href = ($(a).attr("href") || "").trim();
+      if (/^\d+$/.test(t) && href && href.includes("by-rank")) {
+        const full = href.startsWith("http") ? href : new URL(href, url).toString();
+        pages.add(full);
+      }
+    });
+  } catch {}
+
+  const out: RawTitle[] = [];
+
+  for (const pg of pages) {
+    if (out.length >= limit) break;
+
+    const html = await httpText(pg);
+    const $ = cheerio.load(html);
+
+    // pick the first table containing a 'Title' header
+    let table: cheerio.Cheerio | null = null;
+    for (const t of $("table").toArray()) {
+      if ($(t).find("th,td").filter((_, el) => /title/i.test($(el).text())).length) {
+        table = $(t); break;
+      }
+    }
+    if (!table) continue;
+
+    for (const tr of table.find("tr").slice(1).toArray()) {
+      if (out.length >= limit) break;
+
+      const tds = $(tr).find("td");
+      if (tds.length < 8) continue;
+
+      const title = $(tds[3]).text().replace(/\s+/g, " ").trim();
+      const year  = parseYear($(tds[4]).text());
+      if (title) out.push({ title, year, src });
+    }
+  }
+
+  return out.slice(0, limit);
+}
+
+3) Pass the limit when scraping
+
+In buildAll() (where you loop decades), change the call to:
+
+const raw = await scrapeFilms101Decade(url, src, PER_DECADE_LIMIT);
+
+
+Remove any previous “MAX_TITLES_PER_DECADE” trimming you added—this scraper-level cap replaces it.
+
+4) Make the A/B picker tolerant of short lists
+
+Inside pickAB30ForDecade, ensure we never request more than we have:
+
+const need = Math.min(30, items.length);  // was: 30
+
+5) (Optional) surface the cap in stats/logs
+
+Where you set cache.stats per decade, include the cap so you can verify:
+
+cache.stats.perDecade[src] = {
+  limit: PER_DECADE_LIMIT,
+  scraped: raw.length,   // after cap this will be <= limit
+  resolved: localItems.length
+};
+
+Run it
+
+In Replit, set (optional)
+PER_DECADE_LIMIT=100 in Secrets if you want to override later.
+
+Restart (Run or npm run dev).
+
+Verify:
+
+GET /api/catalogue → items.length ≈ 30 × 8 = 240 (A/B set).
+
+GET /api/catalogue?all=1 → total items resolved from <= 100 per decade.
+
+Logs show limit: 100 for each source.
+
+This keeps memory low (we only resolve up to 100 per decade), and the UI/poster/trailer plumbing stays exactly as-is.
+
+You said:
+maybe do 15 x 8 instead and cap the 15 to choose from the top 100 from each list also. Rewrite code and instructions for replit for previous change and this change
+ChatGPT said:
+Thought for 16s
+
+Locked in. We’ll (1) only scrape the first 100 movies from each Films101 list, and (2) pick 15 per decade for A/B (so 15 × 8 = 120 total A/B items), while keeping the UI, posters, and trailer plumbing exactly as-is.
+
+Below is a drop-in server/routes.ts you can paste over the existing file, plus exact Replit steps.
+
+Replit: what to change
+1) Set secrets (left sidebar → 🔑 Secrets)
+TMDB_API_KEY=<your TMDb key>     # required
+PER_DECADE_LIMIT=100             # take only the top 100 rows from each list
+AB_PER_DECADE=15                 # pick 15 per decade for A/B
+TMDB_CONCURRENCY=3               # (optional) keep memory low
+NODE_OPTIONS=--max-old-space-size=1024   # (optional) allow ~1GB heap if your plan permits
+
+2) Replace server/routes.ts with this (copy/paste)
+import express, { Request, Response } from "express";
+import * as cheerio from "cheerio";
+
+/** ----------------- Config (keeps your UI/poster/trailer path unchanged) ----------------- **/
+const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "";
+if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY / TMDB_KEY");
+
+const TMDB_BASE = "https://api.themoviedb.org/3";
+const IMG_BASE = "https://image.tmdb.org/t/p";
+const POSTER_SIZE = "w500";
+const BACKDROP_SIZE = "w780";
+
+// caps to keep memory predictable
+const CONCURRENCY = Number(process.env.TMDB_CONCURRENCY ?? 3);
+const PER_DECADE_LIMIT = Number(process.env.PER_DECADE_LIMIT ?? 100); // take only top 100 from each list
+const AB_PER_DECADE = Number(process.env.AB_PER_DECADE ?? 15);       // choose 15 items for A/B per decade
+const CATALOGUE_TTL_MS = 1000 * 60 * 60 * 24; // rebuild at most daily
+
+// Films101 sources
+const F101: Record<string, string> = {
+  "f101-2020s": "https://www.films101.com/best-movies-of-2020s-by-rank.htm",
+  "f101-2010s": "https://www.films101.com/best-movies-of-2010s-by-rank.htm",
+  "f101-2000s": "https://www.films101.com/best-movies-of-2000s-by-rank.htm",
+  "f101-1990s": "https://www.films101.com/best-movies-of-1990s-by-rank.htm",
+  "f101-1980s": "https://www.films101.com/best-movies-of-1980s-by-rank.htm",
+  "f101-1970s": "https://www.films101.com/best-movies-of-1970s-by-rank.htm",
+  "f101-1960s": "https://www.films101.com/best-movies-of-1960s-by-rank.htm",
+  "f101-1950s": "https://www.films101.com/best-movies-of-1950s-by-rank.htm",
+};
+
+/** ----------------- Types ----------------- **/
+type RawTitle = { title: string; year?: number; src: string };
+type TMDbMovie = {
+  id: number; title?: string; original_title?: string; overview?: string;
+  genre_ids?: number[]; release_date?: string; poster_path?: string|null; backdrop_path?: string|null;
+  popularity?: number; vote_average?: number; vote_count?: number; adult?: boolean; original_language?: string;
+};
+type Item = {
+  id: number;
+  title: string;
+  overview: string;
+  genres: number[];
+  releaseDate: string | null;
+  popularity: number;
+  voteAverage: number;
+  voteCount: number;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  sources: string[];
+  originalLanguage?: string | null;
+};
+type CatalogueCache = { ts: number; catalogue: Item[]; stats: Record<string, any> };
+
+/** ----------------- State ----------------- **/
+const cache: CatalogueCache = { ts: 0, catalogue: [], stats: {} };
+let AB_SET_IDS: Set<number> = new Set();
+
+/** ----------------- Utils ----------------- **/
+const norm = (s: string) =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/&amp;/g, "&")
+    .replace(/&/g, "and")
+    .replace(/[–—-]/g, "-")
+    .replace(/[:!?,.()"']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const parseYear = (s?: string) => {
+  const m = String(s || "").match(/(19|20)\d{2}/);
+  return m ? Number(m[0]) : undefined;
+};
+
+function fresh() {
+  return cache.catalogue.length > 0 && Date.now() - cache.ts < CATALOGUE_TTL_MS;
+}
+
+async function httpText(url: string, tries = 3, delayMs = 400): Promise<string> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121 Safari/537.36",
+          "accept-language": "en-US,en;q=0.9",
+        },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.text();
+    } catch (e) {
+      if (i === tries - 1) throw e;
+      await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
+    }
+  }
+  throw new Error("unreachable");
+}
+
+async function pLimit<T>(limit: number, fns: (() => Promise<T>)[]) {
+  const results: T[] = [];
+  const executing: Promise<void>[] = [];
+  for (const fn of fns) {
+    const p = (async () => { results.push(await fn()); })();
+    executing.push(p);
+    if (executing.length >= limit) await Promise.race(executing);
+  }
+  await Promise.all(executing);
+  return results;
+}
+
+/** ----------------- Films101 scrape (cap to first N) ----------------- **/
+async function scrapeFilms101Decade(url: string, src: string, limit: number = PER_DECADE_LIMIT): Promise<RawTitle[]> {
+  const pages = new Set<string>();
+  pages.add(url);
+
+  // follow numbered pagination links (e.g., "2")
+  try {
+    const html = await httpText(url);
+    const $ = cheerio.load(html);
+    $("a").each((_, a) => {
+      const t = ($(a).text() || "").trim();
+      const href = ($(a).attr("href") || "").trim();
+      if (/^\d+$/.test(t) && href && href.includes("by-rank")) {
+        const full = href.startsWith("http") ? href : new URL(href, url).toString();
+        pages.add(full);
+      }
+    });
+  } catch {}
+
+  const out: RawTitle[] = [];
+
+  for (const pg of pages) {
+    if (out.length >= limit) break;
+
+    const html = await httpText(pg);
+    const $ = cheerio.load(html);
+
+    // first table that contains a Title header
+    let table: cheerio.Cheerio | null = null;
+    for (const t of $("table").toArray()) {
+      if ($(t).find("th,td").filter((_, el) => /title/i.test($(el).text())).length) {
+        table = $(t); break;
+      }
+    }
+    if (!table) continue;
+
+    for (const tr of table.find("tr").slice(1).toArray()) {
+      if (out.length >= limit) break;
+      const tds = cheerio.default(tr).find("td");
+      if (tds.length < 8) continue;
+      const title = cheerio.default(tds[3]).text().replace(/\s+/g, " ").trim();
+      const year  = parseYear(cheerio.default(tds[4]).text());
+      if (title) out.push({ title, year, src });
+    }
+  }
+
+  return out.slice(0, limit);
+}
+
+/** ----------------- TMDb resolution ----------------- **/
+async function tmdbSearchTitle(q: string, year?: number): Promise<TMDbMovie | null> {
+  const url = `${TMDB_BASE}/search/movie?api_key=${encodeURIComponent(TMDB_API_KEY)}&query=${encodeURIComponent(q)}${year ? `&year=${year}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const j: any = await res.json();
+  const hits: TMDbMovie[] = Array.isArray(j?.results) ? j.results : [];
+  if (!hits.length) return null;
+  const exact = year ? hits.find(h => parseYear(h.release_date) === year) : null;
+  return exact || hits[0] || null;
+}
+
+function toItem(m: TMDbMovie, src: string[]): Item {
+  return {
+    id: m.id,
+    title: (m.title || m.original_title || "").trim(),
+    overview: (m.overview || "").trim(),
+    genres: (m.genre_ids || []).slice(),
+    releaseDate: m.release_date || null,
+    popularity: m.popularity || 0,
+    voteAverage: m.vote_average || 0,
+    voteCount: m.vote_count || 0,
+    posterUrl: m.poster_path ? `${IMG_BASE}/${POSTER_SIZE}${m.poster_path}` : null,
+    backdropUrl: m.backdrop_path ? `${IMG_BASE}/${BACKDROP_SIZE}${m.backdrop_path}` : null,
+    sources: src.slice(),
+    originalLanguage: m.original_language || null,
+  };
+}
+
+/** ----------------- AB picker (general for N per decade) ----------------- **/
+function decadeFromSrc(src: string): number {
+  const m = src.match(/f101-(\d{4})s/);
+  return m ? Number(m[1]) : 0;
+}
+
+function pickABForDecade(items: Item[], src: string, need: number): number[] {
+  need = Math.min(need, items.length);
+  if (need <= 0) return [];
+  const decade = decadeFromSrc(src); // e.g., 1990
+  const yearOf = (it: Item) => parseYear(it.releaseDate || "") || decade;
+  const bin = (y: number) => (y < decade + 3 ? "early" : y < decade + 7 ? "mid" : "late");
+  const byBin: Record<string, Item[]> = { early: [], mid: [], late: [] };
+  for (const it of items) byBin[bin(yearOf(it))].push(it);
+
+  // deterministic-ish ordering by popularity with light jitter
+  const jitter = (id: number) => (id * 9301 + 49297) % 233280;
+  for (const k of ["early","mid","late"] as const) {
+    byBin[k].sort((a,b)=> (b.popularity - a.popularity) || (jitter(a.id) - jitter(b.id)));
+  }
+
+  // divide quota across bins
+  const base = Math.floor(need / 3);
+  const rem = need - base * 3; // 0..2
+  const binNeed: Record<"early"|"mid"|"late", number> = { early: base, mid: base, late: base };
+  const order: ("early"|"mid"|"late")[] = ["mid","early","late"]; // prefer mid-decade first for variety
+  for (let i = 0; i < rem; i++) binNeed[order[i]]++;
+
+  // ensure primary-genre variety in each bin
+  const primary = (it: Item) => (it.genres?.length ? it.genres[0] : -1);
+  const picks: number[] = [];
+  const chosen = new Set<number>();
+
+  for (const k of ["early","mid","late"] as const) {
+    const pool = byBin[k];
+    const needK = binNeed[k];
+    const seenG = new Set<number>();
+    for (const it of pool) {
+      if (picks.length >= need) break;
+      if (picks.filter(id => byBin[k].some(x => x.id === id)).length >= needK) break;
+      const g = primary(it);
+      if (seenG.has(g)) continue;
+      picks.push(it.id); chosen.add(it.id); seenG.add(g);
+    }
+    // top-up for the bin if we still need more from it
+    for (const it of pool) {
+      if (picks.length >= need) break;
+      if (picks.filter(id => byBin[k].some(x => x.id === id)).length >= needK) break;
+      if (!chosen.has(it.id)) { picks.push(it.id); chosen.add(it.id); }
+    }
+  }
+
+  // global top-up if bins were short
+  if (picks.length < need) {
+    const rest = items
+      .slice()
+      .sort((a,b)=> (b.popularity - a.popularity))
+      .map(x=>x.id)
+      .filter(id => !chosen.has(id))
+      .slice(0, need - picks.length);
+    picks.push(...rest);
+  }
+
+  return picks.slice(0, need);
+}
+
+/** ----------------- Build: sequential per-decade (low memory) ----------------- **/
+async function buildAll(): Promise<Item[]> {
+  console.log(`[BUILD] Films101 capped: PER_DECADE_LIMIT=${PER_DECADE_LIMIT}, AB_PER_DECADE=${AB_PER_DECADE}`);
+  const idSet = new Set<number>();
+  const byId = new Map<number, Item>();
+  const abIds: number[] = [];
+  cache.stats = { sources: Object.keys(F101), perDecade: {} as any };
+
+  for (const [src, url] of Object.entries(F101)) {
+    const raw = await scrapeFilms101Decade(url, src, PER_DECADE_LIMIT); // cap to first N
+    const seen = new Set<string>();
+    const trimmed: RawTitle[] = [];
+    for (const r of raw) {
+      const k = `${norm(r.title)}|${r.year ?? ""}`;
+      if (!seen.has(k)) { seen.add(k); trimmed.push(r); }
+    }
+
+    const localItems: Item[] = [];
+    const tasks = trimmed.map((r) => async () => {
+      const hit = await tmdbSearchTitle(r.title, r.year);
+      if (!hit || hit.adult || idSet.has(hit.id)) return;
+      idSet.add(hit.id);
+      localItems.push(toItem(hit, [src]));
+    });
+
+    await pLimit(CONCURRENCY, tasks);
+
+    const picks = pickABForDecade(localItems, src, AB_PER_DECADE);
+    abIds.push(...picks);
+
+    // merge into global map (coalesce sources)
+    for (const it of localItems) {
+      const ex = byId.get(it.id);
+      if (!ex) { byId.set(it.id, it); continue; }
+      ex.sources = Array.from(new Set([...ex.sources, ...it.sources]));
+    }
+
+    cache.stats.perDecade[src] = { limit: PER_DECADE_LIMIT, scraped: raw.length, resolved: localItems.length, ab: picks.length };
+    if ((global as any).gc) { try { (global as any).gc(); } catch {} } // if --expose-gc is enabled
+  }
+
+  AB_SET_IDS = new Set(abIds);
+  const all = Array.from(byId.values());
+  cache.stats.total = all.length;
+  cache.stats.abSet = AB_SET_IDS.size;
+  console.log(`[BUILD] done. total=${all.length} ab=${AB_SET_IDS.size}`);
+  return all;
+}
+
+/** ----------------- Trailer cache (unchanged behavior) ----------------- **/
+const trailerCache = new Map<number, { at: number; embed: string|null }>();
+async function bestYouTubeEmbedFor(movieId: number): Promise<string|null> {
+  const cached = trailerCache.get(movieId);
+  const now = Date.now();
+  if (cached && now - cached.at < 1000 * 60 * 60 * 24) return cached.embed;
+  const url = `${TMDB_BASE}/movie/${movieId}/videos?api_key=${encodeURIComponent(TMDB_API_KEY)}&language=en-US`;
+  try {
+    const res = await fetch(url);
+    const j: any = await res.json();
+    const vids: any[] = Array.isArray(j?.results) ? j.results : [];
+    const yt = vids.find(v => v.site === "YouTube" && /(Trailer|Teaser)/i.test(v.name)) || vids.find(v => v.site === "YouTube");
+    const embed = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
+    trailerCache.set(movieId, { embed, at: now });
+    return embed;
+  } catch {
+    trailerCache.set(movieId, { embed: null, at: now });
+    return null;
+  }
+}
+
+/** ----------------- Router ----------------- **/
+const api = express.Router();
+
+api.get("/trailers", async (req: Request, res: Response) => {
+  try {
+    let raw = String(req.query.ids ?? "");
+    try { raw = decodeURIComponent(raw); } catch {}
+    const ids = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0).slice(0, 200);
+    if (!ids.length) return res.json({ ok: true, trailers: {} });
+    const tasks = ids.map((id) => async () => ({ id, embed: await bestYouTubeEmbedFor(id) }));
+    const pairs = await pLimit(6, tasks);
+    const map: Record<number, string|null> = {};
+    for (const p of pairs) map[p.id] = p.embed;
+    res.json({ ok: true, trailers: map });
+  } catch (e:any) {
+    res.status(500).json({ ok:false, error: e?.message ?? String(e) });
+  }
+});
+
+api.get("/catalogue", async (req: Request, res: Response) => {
+  try {
+    if (!fresh()) {
+      cache.catalogue = await buildAll();
+      cache.ts = Date.now();
+    }
+    const wantAll = String(req.query.all || "") === "1";
+    const allItems = cache.catalogue.slice();
+    const items = wantAll ? allItems : allItems.filter(x => AB_SET_IDS.has(x.id));
+    res.json({
+      ok: true,
+      total: allItems.length,
+      items: items.map(t => ({ ...t, image: t.posterUrl || t.backdropUrl || null })),
+      stats: cache.stats,
+      sources: Object.keys(F101),
+      policy: wantAll ? `ALL_ITEMS_FOR_RECS(limit=${PER_DECADE_LIMIT})` : `AB_SET_PER_DECADE=${AB_PER_DECADE}`,
+    });
+  } catch (e:any) {
+    res.status(500).json({ ok:false, error: e?.message ?? String(e) });
+  }
+});
+
+export default api;
+
+3) Run
+
+In Replit, click Run (or npm run dev).
+
+First run builds the cache (sequential per decade, capped to 100 each).
+
+4) Verify quickly (browser or shell)
+
+A/B only (15 × 8 = 120):
+GET /api/catalogue → response should show "policy":"AB_SET_PER_DECADE=15" and items.length ≈ 120.
+
+Full catalogue for recs:
+GET /api/catalogue?all=1 → "policy":"ALL_ITEMS_FOR_RECS(limit=100)" and items.length = total across all decades (≤ 800 before TMDb matching/dedup).
+
+What stays the same (per your constraints)
+
+UI untouched (same components, same layout).
+
+Poster & trailer sourcing unchanged (TMDb poster paths + /movie/{id}/videos → YouTube).
+
+Client contract unchanged:
+
+GET /api/catalogue → returns the A/B pool only.
+
+GET /api/catalogue?all=1 → returns the whole catalogue for recommendations/trailer strip.
+
+If you want me to pin the exact 15 for each decade (hand-picked list rather than the balanced picker), say the word and I’ll swap the picker to read a config/ab_picks.json you can edit.
