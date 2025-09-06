@@ -73,26 +73,64 @@ async function fetchListTitles(listId: string, maxPages=10): Promise<Raw[]> {
   const out: Raw[] = [];
   for (let page=1; page<=maxPages; page++) {
     const url = `https://www.imdb.com/list/${listId}/?st_dt=&mode=detail&sort=listOrder,asc&page=${page}`;
-    const html = await fetch(url, {
-      headers: {
-        "user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
-        "accept-language":"en-US,en;q=0.9"
+    try {
+      const html = await fetch(url, {
+        headers: {
+          "user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+          "accept-language":"en-US,en;q=0.9"
+        }
+      }).then(r=>r.text());
+      
+      const $ = cheerio.load(html);
+      
+      // Try multiple selectors for different IMDB list layouts
+      let rows = $(".lister-list .lister-item").toArray();
+      if (!rows.length) {
+        rows = $(".titleColumn").toArray();
       }
-    }).then(r=>r.text());
-    const $ = cheerio.load(html);
-    const rows = $(".lister-list .lister-item").toArray();
-    if (!rows.length) break;
+      if (!rows.length) {
+        rows = $("[data-testid='title-card']").toArray();
+      }
+      if (!rows.length) {
+        rows = $(".ipc-title").toArray();
+      }
+      
+      console.log(`[IMDB] List ${listId} page ${page}: found ${rows.length} items`);
+      
+      if (!rows.length) break;
 
-    for (const r of rows) {
-      const t = $(r).find(".lister-item-header a").first().text().trim();
-      const yText = $(r).find(".lister-item-year").first().text() || "";
-      const yMatch = yText.match(/(19|20)\d{2}/);
-      const year = yMatch ? Number(yMatch[0]) : undefined;
-      if (t) out.push({ title: t, year, srcList: listId });
+      for (const r of rows) {
+        // Try multiple title selectors
+        let t = $(r).find(".lister-item-header a").first().text().trim();
+        if (!t) t = $(r).find(".titleColumn a").first().text().trim();
+        if (!t) t = $(r).find("[data-testid='title-card-title'] a").first().text().trim();
+        if (!t) t = $(r).find(".ipc-title a").first().text().trim();
+        if (!t) t = $(r).find("h3 a").first().text().trim();
+        
+        // Try multiple year selectors
+        let yText = $(r).find(".lister-item-year").first().text() || "";
+        if (!yText) yText = $(r).find(".secondaryInfo").first().text() || "";
+        if (!yText) yText = $(r).find(".titleColumn .secondaryInfo").first().text() || "";
+        if (!yText) yText = $(r).find("[data-testid='title-card-metadata']").first().text() || "";
+        
+        const yMatch = yText.match(/(19|20)\d{2}/);
+        const year = yMatch ? Number(yMatch[0]) : undefined;
+        
+        if (t) {
+          out.push({ title: t, year, srcList: listId });
+          console.log(`[IMDB] Found: "${t}" (${year || 'no year'})`);
+        }
+      }
+      
+      // be a good citizen; IMDb is prickly
+      await sleep(200);
+    } catch (error) {
+      console.error(`[IMDB] Error fetching list ${listId} page ${page}:`, error);
+      break;
     }
-    // be a good citizen; IMDb is prickly
-    await sleep(150);
   }
+  
+  console.log(`[IMDB] Total titles from list ${listId}: ${out.length}`);
   return out;
 }
 
@@ -116,23 +154,35 @@ async function tmdbCredits(id:number): Promise<{directors:string[]; actors:strin
   return { directors, actors };
 }
 async function resolveRaw(raw: Raw): Promise<Item|null> {
-  const hit = await tmdbSearch(raw.title, raw.year);
-  if (!hit || hit.adult) return null;
-  const { directors, actors } = await tmdbCredits(hit.id);
-  return {
-    id: hit.id,
-    title: hit.title || hit.original_title || raw.title,
-    year: raw.year,
-    genres: Array.isArray(hit.genre_ids) ? hit.genre_ids.slice() : [],
-    directors, actors,
-    posterUrl: hit.poster_path? `${IMG}/${POSTER}${hit.poster_path}` : null,
-    backdropUrl: hit.backdrop_path? `${IMG}/${BACKDROP}${hit.backdrop_path}` : null,
-    overview: hit.overview || "",
-    popularity: hit.popularity || 0,
-    voteAverage: hit.vote_average || 0,
-    voteCount: hit.vote_count || 0,
-    sources: [raw.srcList]
-  };
+  try {
+    const hit = await tmdbSearch(raw.title, raw.year);
+    if (!hit || hit.adult) {
+      console.log(`[TMDB] No hit for: "${raw.title}" (${raw.year})`);
+      return null;
+    }
+    
+    const { directors, actors } = await tmdbCredits(hit.id);
+    const resolved = {
+      id: hit.id,
+      title: hit.title || hit.original_title || raw.title,
+      year: raw.year,
+      genres: Array.isArray(hit.genre_ids) ? hit.genre_ids.slice() : [],
+      directors, actors,
+      posterUrl: hit.poster_path? `${IMG}/${POSTER}${hit.poster_path}` : null,
+      backdropUrl: hit.backdrop_path? `${IMG}/${BACKDROP}${hit.backdrop_path}` : null,
+      overview: hit.overview || "",
+      popularity: hit.popularity || 0,
+      voteAverage: hit.vote_average || 0,
+      voteCount: hit.vote_count || 0,
+      sources: [raw.srcList]
+    };
+    
+    console.log(`[TMDB] Resolved: "${raw.title}" → "${resolved.title}" (ID: ${resolved.id})`);
+    return resolved;
+  } catch (error) {
+    console.error(`[TMDB] Error resolving "${raw.title}":`, error);
+    return null;
+  }
 }
 
 /* ====================== Build catalogue & AB (15 per list) ====================== */
@@ -176,21 +226,34 @@ function chooseAB15(items: Item[]): number[] {
 
 async function buildAll(): Promise<void> {
   const now = Date.now();
-  if (CATALOGUE.length && now - BUILT_AT < CATALOGUE_TTL_MS) return;
+  if (CATALOGUE.length && now - BUILT_AT < CATALOGUE_TTL_MS) {
+    console.log(`[BUILD] Using cached catalogue: ${CATALOGUE.length} items, ${AB_SET.size} in AB set`);
+    return;
+  }
 
+  console.log(`[BUILD] Starting fresh build for lists: ${LIST_IDS.join(', ')}`);
+  
   const rawAll: Raw[] = [];
   for (const id of LIST_IDS) {
+    console.log(`[BUILD] Fetching IMDB list: ${id}`);
     const rows = await fetchListTitles(id);
+    console.log(`[BUILD] List ${id}: ${rows.length} raw titles`);
     rawAll.push(...rows);
   }
+  
+  console.log(`[BUILD] Total raw titles across all lists: ${rawAll.length}`);
 
   // resolve sequentially per list to keep memory calm
   const byList = new Map<string, Item[]>();
   for (const listId of LIST_IDS) {
     const raws = rawAll.filter(r=>r.srcList===listId);
+    console.log(`[BUILD] Resolving ${raws.length} titles for list ${listId}`);
+    
     const jobs = raws.map(r => async()=> await resolveRaw(r));
     const resolved = await pLimit(CONCURRENCY, jobs);
     const items = resolved.filter(Boolean) as Item[];
+    
+    console.log(`[BUILD] List ${listId}: ${items.length}/${raws.length} titles resolved`);
     byList.set(listId, items);
   }
 
@@ -199,6 +262,7 @@ async function buildAll(): Promise<void> {
   const full: Map<number, Item> = new Map();
   for (const [listId, items] of byList.entries()) {
     const picks = chooseAB15(items);
+    console.log(`[BUILD] List ${listId}: selected ${picks.length} for AB testing`);
     abIds.push(...picks);
     for (const it of items) {
       const ex = full.get(it.id);
@@ -206,10 +270,16 @@ async function buildAll(): Promise<void> {
       else ex.sources = Array.from(new Set([...ex.sources, ...it.sources]));
     }
   }
+  
   CATALOGUE = Array.from(full.values());
   AB_SET = new Set(abIds);
   BUILT_AT = now;
-  console.log(`[BUILD] lists=${LIST_IDS.length} full=${CATALOGUE.length} AB=${AB_SET.size}`);
+  
+  console.log(`[BUILD] Final catalogue: ${CATALOGUE.length} total movies, ${AB_SET.size} in AB set`);
+  console.log(`[BUILD] Sample AB movies:`, Array.from(AB_SET).slice(0, 5).map(id => {
+    const item = CATALOGUE.find(i => i.id === id);
+    return item ? `${item.title} (${item.year})` : `ID:${id}`;
+  }));
 }
 
 /* ====================== Feature encoding ====================== */
