@@ -69,8 +69,10 @@ const decadeOf = (y?:number)=> y ? Math.floor(y/10)*10 : undefined;
 
 /* ====================== IMDb scrape (title, year) ====================== */
 /* We fetch list pages in "detail" mode with sort by list order; paginate until exhausted. */
-async function fetchListTitles(listId: string, maxPages=5): Promise<Raw[]> {
+async function fetchListTitles(listId: string, maxPages=3): Promise<Raw[]> {
   const out: Raw[] = [];
+  const seenTitles = new Set<string>(); // Track unique titles to detect loops
+  
   for (let page=1; page<=maxPages; page++) {
     const url = `https://www.imdb.com/list/${listId}/?st_dt=&mode=detail&sort=listOrder,asc&page=${page}`;
     try {
@@ -99,7 +101,7 @@ async function fetchListTitles(listId: string, maxPages=5): Promise<Raw[]> {
       
       if (!rows.length) break;
 
-      const pageStartCount = out.length;
+      let newItemsThisPage = 0;
       for (const r of rows) {
         // Try multiple title selectors
         let t = $(r).find(".lister-item-header a").first().text().trim();
@@ -118,26 +120,33 @@ async function fetchListTitles(listId: string, maxPages=5): Promise<Raw[]> {
         const year = yMatch ? Number(yMatch[0]) : undefined;
         
         if (t) {
-          out.push({ title: t, year, srcList: listId });
-          console.log(`[IMDB] Found: "${t}" (${year || 'no year'})`);
+          const titleKey = `${t}_${year || 'noYear'}`;
+          if (!seenTitles.has(titleKey)) {
+            seenTitles.add(titleKey);
+            out.push({ title: t, year, srcList: listId });
+            newItemsThisPage++;
+            console.log(`[IMDB] Found: "${t}" (${year || 'no year'})`);
+          }
         }
       }
       
-      // Check if we got any new items this page - if not, we're done
-      if (out.length === pageStartCount) {
-        console.log(`[IMDB] No new items found on page ${page}, stopping pagination`);
+      // If we didn't find any new unique items, we're in a loop - stop
+      if (newItemsThisPage === 0) {
+        console.log(`[IMDB] No new unique items on page ${page}, stopping pagination (found ${out.length} total)`);
         break;
       }
       
+      console.log(`[IMDB] Added ${newItemsThisPage} new items from page ${page}`);
+      
       // be a good citizen; IMDb is prickly
-      await sleep(200);
+      await sleep(300);
     } catch (error) {
       console.error(`[IMDB] Error fetching list ${listId} page ${page}:`, error);
       break;
     }
   }
   
-  console.log(`[IMDB] Total titles from list ${listId}: ${out.length}`);
+  console.log(`[IMDB] Total unique titles from list ${listId}: ${out.length}`);
   return out;
 }
 
