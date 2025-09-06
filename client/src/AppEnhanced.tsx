@@ -36,13 +36,13 @@ async function fetchWithSession(url: string) {
 // Convert server movie format to client Movie format
 function convertServerMovie(serverMovie: any): Movie {
   return {
-    id: `movie_${serverMovie.id}`,
+    id: serverMovie.id, // Keep numeric ID
     title: serverMovie.title || "Unknown",
     year: serverMovie.year || 2024,
-    posterUrl: serverMovie.posterUrl || "",
-    backdropUrl: "", // Will be populated when fetching trailers if needed
-    overview: "", // Placeholder
-    genres: (serverMovie.genres || []).slice(0, 3).map((g: any) => g.name || "Genre"),
+    posterUrl: serverMovie.posterUrl || `https://via.placeholder.com/500x750/1a1a1a/ffffff?text=${encodeURIComponent(serverMovie.title || 'Unknown')}`,
+    backdropUrl: serverMovie.backdropUrl || "",
+    overview: serverMovie.overview || "",
+    genres: (serverMovie.genres || []).slice(0, 3),
     sourceListId: serverMovie.sourceListId,
   };
 }
