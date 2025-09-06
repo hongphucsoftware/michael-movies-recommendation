@@ -1,0 +1,209 @@
+ok this doesnt seem to be working - you are consistently showing the same movies. Stop doing what you are doing and just write code that shows a simple relationship based on genre only then we will build on it. I want to see progress and that looks like the reccomendations showing correlation between ab test and genre only for now. I wnt to see the trailer showing a variety of movies that correlate based on this slected only from the imdb list i gave you recently (the decades). Once this is correct then we willbuild on it 
+ChatGPT said:
+Thought for 38s
+
+You’re right—let’s strip it back to genre-only so you can see clear movement after each vote.
+
+Below is a minimal patch that:
+
+learns only genre counts from the movie you choose in A/B,
+
+ranks recommendations only by those genre counts (plus a tiny tie-breaker),
+
+returns fresh recs immediately after every vote,
+
+uses only the IMDb decade lists you already load (no other sources),
+
+keeps posters/trailers exactly as before (TMDb).
+
+1) Server patch (drop into server/routes.ts)
+1.1 Add/replace these helpers near the top
+// --- Session + no-cache helpers ---
+type GenreId = number;
+type GenreProfile = {
+  genreScores: Record<GenreId, number>; // simple counts per TMDb genre id
+  rounds: number;
+  seenPairs: Set<string>;
+};
+
+const PROFILES = new Map<string, GenreProfile>();
+
+function sess(req: import("express").Request): GenreProfile {
+  const sid =
+    (req.headers["x-session-id"] as string) ||
+    (req.query.sid as string) ||
+    "anon";
+  let p = PROFILES.get(sid);
+  if (!p) {
+    p = { genreScores: {}, rounds: 0, seenPairs: new Set() };
+    PROFILES.set(sid, p);
+  }
+  return p;
+}
+
+function noStore(res: import("express").Response) {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+}
+
+
+Keep your existing catalogue building code that resolves IMDB lists to TMDb and fills item.genres (TMDb genre_ids). We reuse that.
+
+1.2 100% genre-only ranking
+
+Add this scorer (anywhere below your imports):
+
+function scoreByGenres(it: Item, gp: GenreProfile): number {
+  let s = 0;
+  for (const g of it.genres || []) s += gp.genreScores[g] || 0;
+  return s;
+}
+
+// rank recs from the *rec pool* (everything NOT in AB_SET) by genre score only
+function rankRecsByGenre(gp: GenreProfile, topN: number): Item[] {
+  const pool = CATALOGUE.filter(x => !AB_SET.has(x.id)); // rec pool only
+  if (gp.rounds === 0) {
+    // no signal yet: return a popularity baseline
+    return pool
+      .slice()
+      .sort((a, b) => ((b.voteAverage || 0) * Math.log(1 + (b.voteCount || 1))) - ((a.voteAverage || 0) * Math.log(1 + (a.voteCount || 1))))
+      .slice(0, topN);
+  }
+  const ranked = pool.map(it => {
+    const pref = scoreByGenres(it, gp);    // pure genre preference
+    const jitter = (((it.id * 9301 + gp.rounds * 97) % 997) / 1e6); // tiny, deterministic tie-break
+    return { it, s: pref + jitter };
+  })
+  .sort((a,b) => b.s - a.s)
+  .map(x => x.it);
+
+  // ensure visible variety across the top 3 liked genres (round-robin)
+  const topGenres = Object.entries(gp.genreScores)
+    .sort((a,b)=> b[1]-a[1]).slice(0,3).map(([gid])=> Number(gid));
+  if (!topGenres.length) return ranked.slice(0, topN);
+
+  const bins: Record<number, Item[]> = {};
+  for (const g of topGenres) bins[g] = [];
+  for (const it of ranked) {
+    const gs = it.genres || [];
+    const hit = topGenres.find(g => gs.includes(g));
+    if (hit !== undefined) bins[hit].push(it);
+  }
+  const out: Item[] = [];
+  let i = 0;
+  while (out.length < topN && i < topN * 6) {
+    const g = topGenres[i % topGenres.length];
+    const nxt = bins[g]?.shift();
+    if (nxt && !out.some(x => x.id === nxt.id)) out.push(nxt);
+    i++;
+  }
+  // fill any remaining
+  for (const it of ranked) {
+    if (out.length >= topN) break;
+    if (!out.some(x => x.id === it.id)) out.push(it);
+  }
+  return out.slice(0, topN);
+}
+
+1.3 Update vote handler to learn only genres and return fresh recs
+
+Replace your /api/ab/vote route with this:
+
+api.post("/api/ab/vote", import("express").json(), async (req, res) => {
+  noStore(res);
+  const { leftId, rightId, chosenId } = req.body as { leftId: number; rightId: number; chosenId: number };
+
+  const p = sess(req);
+  const chosen = CATALOGUE.find(i => i.id === chosenId);
+  if (!chosen) return res.status(400).json({ ok: false, error: "bad chosenId" });
+
+  // --- SIMPLE GENRE LEARNING: +1 for each genre on the chosen movie ---
+  for (const g of chosen.genres || []) {
+    p.genreScores[g] = (p.genreScores[g] || 0) + 1;
+  }
+  p.rounds += 1;
+
+  // fresh recs now
+  const recItems = rankRecsByGenre(p, 20).map(t => ({
+    id: t.id,
+    title: t.title,
+    year: t.year,
+    image: t.posterUrl || t.backdropUrl,
+    posterUrl: t.posterUrl,
+    backdropUrl: t.backdropUrl,
+    genres: t.genres,
+  }));
+
+  return res.json({
+    ok: true,
+    rounds: p.rounds,
+    topGenres: Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,5),
+    recs: recItems,
+  });
+});
+
+1.4 A dedicated “genre-only recs” endpoint (if you need to fetch later)
+api.get("/api/recs-genre", async (req, res) => {
+  noStore(res);
+  await buildAll();
+  const p = sess(req);
+  const top = Number(req.query.top || 20);
+  const items = rankRecsByGenre(p, top).map(t => ({
+    id: t.id,
+    title: t.title,
+    year: t.year,
+    image: t.posterUrl || t.backdropUrl,
+    posterUrl: t.posterUrl,
+    backdropUrl: t.backdropUrl,
+    genres: t.genres,
+  }));
+  return res.json({
+    ok: true,
+    rounds: p.rounds,
+    items,
+    topGenres: Object.entries(p.genreScores).sort((a,b)=>b[1]-a[1]).slice(0,5),
+  });
+});
+
+
+Keep your /api/catalogue (A/B items) and /api/trailers routes as they are.
+
+2) Client changes (very small)
+
+Where you currently submit a vote, switch to this pattern so the page uses the fresh recs from the vote response:
+
+// on user choosing a side in A/B:
+const resp = await fetch("/api/ab/vote", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  // IMPORTANT: include a stable session id everywhere (or keep your existing header)
+  // headers: { "Content-Type":"application/json", "x-session-id": getSID() }
+  body: JSON.stringify({ leftId, rightId, chosenId }),
+}).then(r => r.json());
+
+if (resp?.ok) {
+  const ids = resp.recs.map((m: any) => m.id).join(",");
+  const trailers = await fetch(`/api/trailers?ids=${encodeURIComponent(ids)}`, { cache: "no-store" }).then(r=>r.json());
+  const byId = trailers.trailers || {};
+  const withTrailers = resp.recs.map((m: any) => ({ ...m, trailer: byId[m.id] ?? null }));
+
+  // <- update your trailer strip/player state with `withTrailers`
+  setRecommendations(withTrailers);
+}
+
+
+If you have a separate recommendations screen, you can load it with:
+
+const recs = await fetch(`/api/recs-genre?top=20`, { cache: "no-store" }).then(r=>r.json());
+const ids = recs.items.map((m: any) => m.id).join(",");
+const trailers = await fetch(`/api/trailers?ids=${encodeURIComponent(ids)}`, { cache: "no-store" }).then(r=>r.json());
+
+What you should see
+
+After each vote, the next recommendation set changes and aligns with the chosen movie’s genres.
+
+Example: if you pick mostly Crime/Drama, the rec list will quickly fill with Crime/Drama titles from your IMDb decade lists only (because the catalogue was built from those lists).
+
+No actors/directors/era are considered yet—only genre.
+
+When this looks right, say “add actors next” or “add directors next” and I’ll stack those features on top, keeping this exact genre behavior intact.
