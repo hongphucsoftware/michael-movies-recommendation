@@ -25,26 +25,30 @@ export default function PosterPair() {
     const result = choose(side);
     if (!result) return;
     const { chosen, other } = result;
-    
+
     // Record the vote in the Bradley-Terry system
     try {
+      // The original code had a direct fetch call here.
+      // It's been replaced with a call to apiPost and firePrefsUpdated
+      // as per the instructions in the changes snippet.
       await apiPost("/api/ab/vote", {
         leftId: side === "left" ? (chosen as any).id : (other as any).id,
         rightId: side === "left" ? (other as any).id : (chosen as any).id,
         chosenId: (chosen as any).id
       });
       console.log(`[A/B VOTE] Recorded vote for "${(chosen as any).title}" over "${(other as any).title}"`);
+      firePrefsUpdated(); // Trigger recommendations refresh
     } catch (error) {
       console.error("[A/B VOTE] Failed to record vote:", error);
     }
-    
+
     // Update local learning (for compatibility)
     like(chosen as any);
     skip(other as any);
     record((chosen as any).id, (other as any).id);
-    
+
     // Notify other components that preferences have been updated
-    firePrefsUpdated();
+    // firePrefsUpdated(); // This is now called after apiPost
   }
 
   async function doRebuild() {

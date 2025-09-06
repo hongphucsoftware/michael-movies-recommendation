@@ -101,9 +101,8 @@ export default function TrailerPlayer({
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
-        // Add cache-buster and request more recommendations to account for filtering
-        const timestamp = Date.now();
-        const data = await apiGet(`/api/recs?top=60&cache=${timestamp}&v=${Math.random()}`);
+        const { apiGet } = await import('../lib/api');
+        const data = await apiGet(`/api/recs?top=60`);
         if (data.ok && data.items) {
           // Convert API format to Title format
           const recs: Title[] = data.items.map((item: any) => ({
@@ -135,7 +134,7 @@ export default function TrailerPlayer({
     // Listen for preference updates and refetch
     const cleanup = onPrefsUpdated(() => {
       console.log('[TrailerPlayer] Preferences updated, refetching recommendations');
-      setTimeout(fetchRecommendations, 100); // Small delay to ensure server has processed the vote
+      fetchRecommendations(); // Immediate refresh, no delay needed
     });
     
     return cleanup;
@@ -259,6 +258,7 @@ export default function TrailerPlayer({
   useEffect(() => {
     const fetchExplanation = async () => {
       try {
+        const { apiGet } = await import('../lib/api');
         const data = await apiGet('/api/recs?top=5');
         if (data.ok) {
           if (data.rounds === 0) {

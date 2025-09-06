@@ -404,6 +404,12 @@ function sess(req:Request): Profile {
   return p;
 }
 
+function noStore(res: express.Response) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+}
+
 // pick next pair: unseen, far apart in feature space, from AB set only
 function nextPair(p:Profile): [Item, Item] | null {
   const pool = CATALOGUE.filter(x => AB_SET.has(x.id));
@@ -524,6 +530,7 @@ api.get("/ab/next", async (req:Request, res:Response) => {
 
 // Record a vote (left vs right) and update profile
 api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
+  noStore(res);
   const schema = z.object({
     leftId: z.number(), rightId: z.number(), chosenId: z.number()
   });
@@ -538,12 +545,22 @@ api.post("/ab/vote", express.json(), async (req:Request, res:Response) => {
   updateFromVote(p, left, right, chosenId);
   
   console.log(`[A/B VOTE] Session ${req.headers["x-session-id"] || req.query.sid || "anon"}: ${left.title} vs ${right.title} → chose ${chosenId === left.id ? left.title : right.title} (Round ${p.rounds})`);
+  console.log(`[VOTE] Rounds: ${p.rounds}, Features learned: ${Object.keys(p.w).length}`);
   
-  res.json({ ok:true, rounds:p.rounds });
+  // Return fresh recommendations immediately
+  const recs = recommend(p, 20).map(t => ({
+    id: t.id, title: t.title, year: t.year,
+    image: t.posterUrl || t.backdropUrl,
+    posterUrl: t.posterUrl, backdropUrl: t.backdropUrl,
+    genres: t.genres
+  }));
+  
+  res.json({ ok:true, rounds:p.rounds, recs });
 });
 
 // Recommendations ranked for the current user
 api.get("/recs", async (req:Request, res:Response) => {
+  noStore(res);
   await buildAll();
   const p = sess(req);
   const sid = (req.headers["x-session-id"] as string) || (req.query.sid as string) || "anon";
@@ -556,11 +573,6 @@ api.get("/recs", async (req:Request, res:Response) => {
   
   const top = recommend(p, Number(req.query.top||60));
   console.log(`[RECS] Returning ${top.length} recommendations. Top 3:`, top.slice(0,3).map(t => `${t.title} (${t.year})`));
-  
-  // Disable caching to ensure fresh recommendations
-  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.set('Pragma', 'no-cache');
-  res.set('Expires', '0');
   
   res.json({
     ok:true,
@@ -578,6 +590,7 @@ api.get("/recs", async (req:Request, res:Response) => {
 
 // Trailers unchanged (TMDb→YouTube)
 api.get("/trailers", async (req:Request, res:Response) => {
+  noStore(res);
   const ids = String(req.query.ids||"")
     .split(",").map(s=>Number(s.trim())).filter(n=>Number.isFinite(n));
   const out: Record<number,string|null> = {};
