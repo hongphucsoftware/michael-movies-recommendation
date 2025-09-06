@@ -1,49 +1,42 @@
-// Replit/Agent Note (read me):
-// This server builds a catalogue that contains every movie from the three reference pages 
-// (Rotten Tomatoes 2020 editorial list, IMDb Top 250, and the specific IMDb list). 
-// Do not replace this with a "sample" or "curated 50". The product's evaluation requires 
-// the full lists. Any change that reduces coverage violates the test protocol.
 
 import express, { Request, Response } from "express";
 import * as cheerio from "cheerio";
 
-// ============= CONFIG =============
+/** ----------------- Config (keeps your UI/poster/trailer path unchanged) ----------------- **/
 const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "";
-if (!TMDB_API_KEY) {
-  console.warn("[TMDB] Missing TMDB_API_KEY (or TMDB_KEY). Set it in Replit Secrets.");
-}
-const FULL_LISTS_ENFORCED = String(process.env.FULL_LISTS_ENFORCED || "true") === "true"; // keep ON
+if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY / TMDB_KEY");
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMG_BASE = "https://image.tmdb.org/t/p";
 const POSTER_SIZE = "w500";
 const BACKDROP_SIZE = "w780";
-const CATALOGUE_TTL_MS = 1000 * 60 * 60 * 6; // 6 hours
-const CONCURRENCY = 4; // polite to TMDb
 
-// Source URLs (DO NOT CHANGE)
-const CURATED_SOURCES = {
-  rt2020: "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
-  imdbTop: "https://www.imdb.com/chart/top/",
-  imdbList: "https://www.imdb.com/list/ls545836395/",
+// caps to keep memory predictable
+const CONCURRENCY = Number(process.env.TMDB_CONCURRENCY ?? 3);
+const PER_DECADE_LIMIT = Number(process.env.PER_DECADE_LIMIT ?? 100); // take only top 100 from each list
+const AB_PER_DECADE = Number(process.env.AB_PER_DECADE ?? 15);       // choose 15 items for A/B per decade
+const CATALOGUE_TTL_MS = 1000 * 60 * 60 * 24; // rebuild at most daily
+
+// Films101 sources
+const F101: Record<string, string> = {
+  "f101-2020s": "https://www.films101.com/best-movies-of-2020s-by-rank.htm",
+  "f101-2010s": "https://www.films101.com/best-movies-of-2010s-by-rank.htm",
+  "f101-2000s": "https://www.films101.com/best-movies-of-2000s-by-rank.htm",
+  "f101-1990s": "https://www.films101.com/best-movies-of-1990s-by-rank.htm",
+  "f101-1980s": "https://www.films101.com/best-movies-of-1980s-by-rank.htm",
+  "f101-1970s": "https://www.films101.com/best-movies-of-1970s-by-rank.htm",
+  "f101-1960s": "https://www.films101.com/best-movies-of-1960s-by-rank.htm",
+  "f101-1950s": "https://www.films101.com/best-movies-of-1950s-by-rank.htm",
 };
 
-// ============= TYPES =============
+/** ----------------- Types ----------------- **/
+type RawTitle = { title: string; year?: number; src: string };
 type TMDbMovie = {
-  id: number;
-  title?: string;
-  original_title?: string;
-  overview?: string;
-  genre_ids?: number[];
-  release_date?: string;
-  poster_path?: string | null;
-  backdrop_path?: string | null;
-  popularity?: number;
-  vote_average?: number;
-  vote_count?: number;
-  adult?: boolean;
+  id: number; title?: string; original_title?: string; overview?: string;
+  genre_ids?: number[]; release_date?: string; poster_path?: string|null; backdrop_path?: string|null;
+  popularity?: number; vote_average?: number; vote_count?: number; adult?: boolean; original_language?: string;
 };
-
-type CatalogueItem = {
+type Item = {
   id: number;
   title: string;
   overview: string;
@@ -54,361 +47,331 @@ type CatalogueItem = {
   voteCount: number;
   posterUrl: string | null;
   backdropUrl: string | null;
-  sources: string[]; // which list(s) it came from
+  sources: string[];
+  originalLanguage?: string | null;
 };
+type CatalogueCache = { ts: number; catalogue: Item[]; stats: Record<string, any> };
 
-type RawTitle = { title: string; year?: number; src: string };
+/** ----------------- State ----------------- **/
+const cache: CatalogueCache = { ts: 0, catalogue: [], stats: {} };
+let AB_SET_IDS: Set<number> = new Set();
 
-// ============= UTILS =============
+/** ----------------- Utils ----------------- **/
 const norm = (s: string) =>
-  s
-    .replace(/^\d+\.\s*/, "") // Remove ranking numbers FIRST
+  String(s || "")
     .toLowerCase()
-    .replace(/[\u00A0]/g, " ")
-    .replace(/[:!?,."""'']/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&/g, "and")
+    .replace(/[–—-]/g, "-")
+    .replace(/[:!?,.()"']/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
-function parseYear(s: string): number | null {
-  const m = s.match(/(\d{4})/);
-  return m ? Number(m[1]) : null;
+const parseYear = (s?: string) => {
+  const m = String(s || "").match(/(19|20)\d{2}/);
+  return m ? Number(m[0]) : undefined;
+};
+
+function fresh() {
+  return cache.catalogue.length > 0 && Date.now() - cache.ts < CATALOGUE_TTL_MS;
 }
 
-function dedupeRaw(arr: RawTitle[]): RawTitle[] {
-  const seen = new Map<string, RawTitle>();
-  for (const r of arr) {
-    const key = `${norm(r.title)}|${r.year ?? ""}`;
-    if (!seen.has(key)) seen.set(key, r);
+async function httpText(url: string, tries = 3, delayMs = 400): Promise<string> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121 Safari/537.36",
+          "accept-language": "en-US,en;q=0.9",
+        },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.text();
+    } catch (e) {
+      if (i === tries - 1) throw e;
+      await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
+    }
   }
-  return Array.from(seen.values());
+  throw new Error("unreachable");
 }
 
-async function httpText(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-      accept: "text/html,application/xhtml+xml",
-    },
-  });
-  if (!res.ok) throw new Error(`Fetch ${url} failed: ${res.status}`);
-  return res.text();
+async function pLimit<T>(limit: number, fns: (() => Promise<T>)[]) {
+  const results: T[] = [];
+  const executing: Promise<void>[] = [];
+  for (const fn of fns) {
+    const p = (async () => { results.push(await fn()); })();
+    executing.push(p);
+    if (executing.length >= limit) await Promise.race(executing);
+  }
+  await Promise.all(executing);
+  return results;
 }
 
-async function tmdb(path: string, params: Record<string, any> = {}) {
-  const url = new URL(`${TMDB_BASE}${path}`);
-  url.searchParams.set("api_key", TMDB_API_KEY);
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-  });
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`TMDb ${path} ${res.status}`);
-  return res.json();
+/** ----------------- Films101 scrape (cap to first N) ----------------- **/
+async function scrapeFilms101Decade(url: string, src: string, limit: number = PER_DECADE_LIMIT): Promise<RawTitle[]> {
+  const pages = new Set<string>();
+  pages.add(url);
+
+  // follow numbered pagination links (e.g., "2")
+  try {
+    const html = await httpText(url);
+    const $ = cheerio.load(html);
+    $("a").each((_, a) => {
+      const t = ($(a).text() || "").trim();
+      const href = ($(a).attr("href") || "").trim();
+      if (/^\d+$/.test(t) && href && href.includes("by-rank")) {
+        const full = href.startsWith("http") ? href : new URL(href, url).toString();
+        pages.add(full);
+      }
+    });
+  } catch {}
+
+  const out: RawTitle[] = [];
+
+  for (const pg of pages) {
+    if (out.length >= limit) break;
+
+    const html = await httpText(pg);
+    const $ = cheerio.load(html);
+
+    // first table that contains a Title header
+    let table: cheerio.Cheerio | null = null;
+    for (const t of $("table").toArray()) {
+      if ($(t).find("th,td").filter((_, el) => /title/i.test($(el).text())).length) {
+        table = $(t); break;
+      }
+    }
+    if (!table) continue;
+
+    for (const tr of table.find("tr").slice(1).toArray()) {
+      if (out.length >= limit) break;
+      const tds = cheerio.default(tr).find("td");
+      if (tds.length < 8) continue;
+      const title = cheerio.default(tds[3]).text().replace(/\s+/g, " ").trim();
+      const year  = parseYear(cheerio.default(tds[4]).text());
+      if (title) out.push({ title, year, src });
+    }
+  }
+
+  return out.slice(0, limit);
 }
 
-function toItem(m: TMDbMovie, sources: string[]): CatalogueItem {
-  const title = m.title || m.original_title || "(Untitled)";
-  const posterUrl = m.poster_path ? `${IMG_BASE}/${POSTER_SIZE}${m.poster_path}` : null;
-  const backdropUrl = m.backdrop_path ? `${IMG_BASE}/${BACKDROP_SIZE}${m.backdrop_path}` : null;
+/** ----------------- TMDb resolution ----------------- **/
+async function tmdbSearchTitle(q: string, year?: number): Promise<TMDbMovie | null> {
+  const url = `${TMDB_BASE}/search/movie?api_key=${encodeURIComponent(TMDB_API_KEY)}&query=${encodeURIComponent(q)}${year ? `&year=${year}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const j: any = await res.json();
+  const hits: TMDbMovie[] = Array.isArray(j?.results) ? j.results : [];
+  if (!hits.length) return null;
+  const exact = year ? hits.find(h => parseYear(h.release_date) === year) : null;
+  return exact || hits[0] || null;
+}
+
+function toItem(m: TMDbMovie, src: string[]): Item {
   return {
     id: m.id,
-    title,
-    overview: m.overview ?? "",
-    genres: m.genre_ids ?? [],
-    releaseDate: m.release_date ?? null,
-    popularity: m.popularity ?? 0,
-    voteAverage: m.vote_average ?? 0,
-    voteCount: m.vote_count ?? 0,
-    posterUrl,
-    backdropUrl,
-    sources,
+    title: (m.title || m.original_title || "").trim(),
+    overview: (m.overview || "").trim(),
+    genres: (m.genre_ids || []).slice(),
+    releaseDate: m.release_date || null,
+    popularity: m.popularity || 0,
+    voteAverage: m.vote_average || 0,
+    voteCount: m.vote_count || 0,
+    posterUrl: m.poster_path ? `${IMG_BASE}/${POSTER_SIZE}${m.poster_path}` : null,
+    backdropUrl: m.backdrop_path ? `${IMG_BASE}/${BACKDROP_SIZE}${m.backdrop_path}` : null,
+    sources: src.slice(),
+    originalLanguage: m.original_language || null,
   };
 }
 
-// ============= SCRAPERS (ALL TITLES) =============
-// RT 2020: collect every movie on the page; default year=2020 if not present
-async function scrapeRT2020(url: string): Promise<RawTitle[]> {
-  const html = await httpText(url);
-  const $ = cheerio.load(html);
-  const out: RawTitle[] = [];
-
-  // Headings like "Movie (2020)"
-  $("h2,h3,h4").each((_i, el) => {
-    const txt = $(el).text().trim();
-    const m = txt.match(/^(.*)\s+\((\d{4})\)$/);
-    if (m) out.push({ title: m[1].trim(), year: Number(m[2]), src: "rt2020" });
-  });
-
-  // Canonical movie anchors /m/<slug>
-  $("a[href^='/m/']").each((_i, el) => {
-    const t = $(el).text().trim();
-    if (t && t.length > 1) out.push({ title: t, year: 2020, src: "rt2020" }); // assume 2020 if not stated
-  });
-
-  return dedupeRaw(out);
+/** ----------------- AB picker (general for N per decade) ----------------- **/
+function decadeFromSrc(src: string): number {
+  const m = src.match(/f101-(\d{4})s/);
+  return m ? Number(m[1]) : 0;
 }
 
-// IMDb Top 250 (single page)
-async function scrapeImdbTop(url: string): Promise<RawTitle[]> {
-  const html = await httpText(url);
-  const $ = cheerio.load(html);
-  const out: RawTitle[] = [];
+function pickABForDecade(items: Item[], src: string, need: number): number[] {
+  need = Math.min(need, items.length);
+  if (need <= 0) return [];
+  const decade = decadeFromSrc(src); // e.g., 1990
+  const yearOf = (it: Item) => parseYear(it.releaseDate || "") || decade;
+  const bin = (y: number) => (y < decade + 3 ? "early" : y < decade + 7 ? "mid" : "late");
+  const byBin: Record<string, Item[]> = { early: [], mid: [], late: [] };
+  for (const it of items) byBin[bin(yearOf(it))].push(it);
 
-  $("td.titleColumn").each((_i, el) => {
-    const a = $(el).find("a").first();
-    const rawTitle = a.text().trim();
-    const title = rawTitle.replace(/^\d+\.\s*/, ""); // Remove ranking numbers
-    const yearTxt = $(el).find("span.secondaryInfo").first().text().trim(); // "(1972)"
-    const year = parseYear(yearTxt) ?? undefined;
-    if (title) out.push({ title, year, src: "imdbTop" });
-  });
+  // deterministic-ish ordering by popularity with light jitter
+  const jitter = (id: number) => (id * 9301 + 49297) % 233280;
+  for (const k of ["early","mid","late"] as const) {
+    byBin[k].sort((a,b)=> (b.popularity - a.popularity) || (jitter(a.id) - jitter(b.id)));
+  }
 
-  // Some redesigns render as <li> cards; fallback:
-  if (out.length < 200) {
-    $("a.ipc-title-link-wrapper").each((_i, el) => {
-      const rawTitle = $(el).text().trim();
-      const title = rawTitle.replace(/^\d+\.\s*/, ""); // Remove ranking numbers
-      const yearTxt = $(el).closest("li").find("span.ipc-title-link-helper-text").text().trim();
-      const year = parseYear(yearTxt) ?? undefined;
-      if (title) out.push({ title, year, src: "imdbTop" });
+  // divide quota across bins
+  const base = Math.floor(need / 3);
+  const rem = need - base * 3; // 0..2
+  const binNeed: Record<"early"|"mid"|"late", number> = { early: base, mid: base, late: base };
+  const order: ("early"|"mid"|"late")[] = ["mid","early","late"]; // prefer mid-decade first for variety
+  for (let i = 0; i < rem; i++) binNeed[order[i]]++;
+
+  // ensure primary-genre variety in each bin
+  const primary = (it: Item) => (it.genres?.length ? it.genres[0] : -1);
+  const picks: number[] = [];
+  const chosen = new Set<number>();
+
+  for (const k of ["early","mid","late"] as const) {
+    const pool = byBin[k];
+    const needK = binNeed[k];
+    const seenG = new Set<number>();
+    for (const it of pool) {
+      if (picks.length >= need) break;
+      if (picks.filter(id => byBin[k].some(x => x.id === id)).length >= needK) break;
+      const g = primary(it);
+      if (seenG.has(g)) continue;
+      picks.push(it.id); chosen.add(it.id); seenG.add(g);
+    }
+    // top-up for the bin if we still need more from it
+    for (const it of pool) {
+      if (picks.length >= need) break;
+      if (picks.filter(id => byBin[k].some(x => x.id === id)).length >= needK) break;
+      if (!chosen.has(it.id)) { picks.push(it.id); chosen.add(it.id); }
+    }
+  }
+
+  // global top-up if bins were short
+  if (picks.length < need) {
+    const rest = items
+      .slice()
+      .sort((a,b)=> (b.popularity - a.popularity))
+      .map(x=>x.id)
+      .filter(id => !chosen.has(id))
+      .slice(0, need - picks.length);
+    picks.push(...rest);
+  }
+
+  return picks.slice(0, need);
+}
+
+/** ----------------- Build: sequential per-decade (low memory) ----------------- **/
+async function buildAll(): Promise<Item[]> {
+  console.log(`[BUILD] Films101 capped: PER_DECADE_LIMIT=${PER_DECADE_LIMIT}, AB_PER_DECADE=${AB_PER_DECADE}`);
+  const idSet = new Set<number>();
+  const byId = new Map<number, Item>();
+  const abIds: number[] = [];
+  cache.stats = { sources: Object.keys(F101), perDecade: {} as any };
+
+  for (const [src, url] of Object.entries(F101)) {
+    const raw = await scrapeFilms101Decade(url, src, PER_DECADE_LIMIT); // cap to first N
+    const seen = new Set<string>();
+    const trimmed: RawTitle[] = [];
+    for (const r of raw) {
+      const k = `${norm(r.title)}|${r.year ?? ""}`;
+      if (!seen.has(k)) { seen.add(k); trimmed.push(r); }
+    }
+
+    const localItems: Item[] = [];
+    const tasks = trimmed.map((r) => async () => {
+      const hit = await tmdbSearchTitle(r.title, r.year);
+      if (!hit || hit.adult || idSet.has(hit.id)) return;
+      idSet.add(hit.id);
+      localItems.push(toItem(hit, [src]));
     });
-  }
 
-  return dedupeRaw(out);
-}
+    await pLimit(CONCURRENCY, tasks);
 
-// Generic IMDb list (multi-page). Crawl until no items or no "next" detected.
-async function scrapeImdbList(url: string, hardLimit = 1000): Promise<RawTitle[]> {
-  const out: RawTitle[] = [];
-  let page = 1;
-  while (true) {
-    const pageUrl = url.endsWith("/") ? `${url}?page=${page}` : `${url}/?page=${page}`;
-    const html = await httpText(pageUrl);
-    const $ = cheerio.load(html);
-    const before = out.length;
+    const picks = pickABForDecade(localItems, src, AB_PER_DECADE);
+    abIds.push(...picks);
 
-    $("h3.lister-item-header").each((_i, el) => {
-      const a = $(el).find("a").first();
-      const rawTitle = a.text().trim();
-      const title = rawTitle.replace(/^\d+\.\s*/, ""); // Remove ranking numbers
-      const yearTxt = $(el).find(".lister-item-year").first().text().trim();
-      const year = parseYear(yearTxt) ?? undefined;
-      if (title) out.push({ title, year, src: "imdbList" });
-    });
-
-    // Grid fallback:
-    if (out.length === before) {
-      $("a[href^='/title/']").each((_i, el) => {
-        const rawTitle = $(el).text().trim();
-        const title = rawTitle.replace(/^\d+\.\s*/, ""); // Remove ranking numbers
-        if (title) out.push({ title, src: "imdbList" });
-      });
+    // merge into global map (coalesce sources)
+    for (const it of localItems) {
+      const ex = byId.get(it.id);
+      if (!ex) { byId.set(it.id, it); continue; }
+      ex.sources = Array.from(new Set([...ex.sources, ...it.sources]));
     }
 
-    const after = out.length;
-    const next = $("a.lister-page-next.next-page").attr("href"); // old skin
-    const hasNext = !!next || /page=\d+/.test($("a:contains('Next')").attr("href") || "");
-
-    if (after === before || !hasNext || out.length >= hardLimit) break;
-    page++;
+    cache.stats.perDecade[src] = { limit: PER_DECADE_LIMIT, scraped: raw.length, resolved: localItems.length, ab: picks.length };
+    if ((global as any).gc) { try { (global as any).gc(); } catch {} } // if --expose-gc is enabled
   }
-  return dedupeRaw(out);
+
+  AB_SET_IDS = new Set(abIds);
+  const all = Array.from(byId.values());
+  cache.stats.total = all.length;
+  cache.stats.abSet = AB_SET_IDS.size;
+  console.log(`[BUILD] done. total=${all.length} ab=${AB_SET_IDS.size}`);
+  return all;
 }
 
-// ============= TMDb RESOLUTION (STRICT) =============
-async function searchStrictOnTmdb(titleNorm: string, year?: number): Promise<TMDbMovie | null> {
-  const params: any = { query: titleNorm, include_adult: "false", language: "en-US" };
-  if (year) params.year = year;
-
-  const s = await tmdb("/search/movie", params);
-  const cands: TMDbMovie[] = (s.results || []).filter((x: any) => x && !x.adult);
-
-  const exact = cands.find((c) => {
-    const t1 = norm(c.title || "");
-    const t2 = norm(c.original_title || "");
-    const yr = (c.release_date || "").slice(0, 4);
-    const yearOk = year ? String(year) === yr : true;
-    return yearOk && (t1 === titleNorm || t2 === titleNorm);
-  });
-  if (exact) return exact;
-
-  if (year) {
-    const sameYear = cands
-      .filter((c) => (c.release_date || "").startsWith(String(year)))
-      .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
-    if (sameYear) return sameYear;
+/** ----------------- Trailer cache (unchanged behavior) ----------------- **/
+const trailerCache = new Map<number, { at: number; embed: string|null }>();
+async function bestYouTubeEmbedFor(movieId: number): Promise<string|null> {
+  const cached = trailerCache.get(movieId);
+  const now = Date.now();
+  if (cached && now - cached.at < 1000 * 60 * 60 * 24) return cached.embed;
+  const url = `${TMDB_BASE}/movie/${movieId}/videos?api_key=${encodeURIComponent(TMDB_API_KEY)}&language=en-US`;
+  try {
+    const res = await fetch(url);
+    const j: any = await res.json();
+    const vids: any[] = Array.isArray(j?.results) ? j.results : [];
+    const yt = vids.find(v => v.site === "YouTube" && /(Trailer|Teaser)/i.test(v.name)) || vids.find(v => v.site === "YouTube");
+    const embed = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
+    trailerCache.set(movieId, { embed, at: now });
+    return embed;
+  } catch {
+    trailerCache.set(movieId, { embed: null, at: now });
+    return null;
   }
-
-  // Last-resort: very close prefix
-  const best = cands
-    .filter((c) => {
-      const t = norm(c.title || c.original_title || "");
-      return t.startsWith(titleNorm.slice(0, Math.floor(titleNorm.length * 0.85)));
-    })
-    .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
-
-  return best ?? null;
 }
 
-async function pLimit<T>(n: number, tasks: (() => Promise<T>)[]): Promise<T[]> {
-  const out: T[] = [];
-  let i = 0;
-  const workers = new Array(n).fill(0).map(async () => {
-    while (i < tasks.length) {
-      const idx = i++;
-      out[idx] = await tasks[idx]();
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
-
-// ============= CATALOGUE BUILD (ALL TITLES) =============
-const cache = { catalogue: [] as CatalogueItem[], ts: 0, stats: {} as any, misses: [] as RawTitle[] };
-
-async function curatedCatalogueFull(): Promise<CatalogueItem[]> {
-  if (!TMDB_API_KEY) {
-    console.error("[TMDb] No TMDB_API_KEY found! This will cause all resolutions to fail.");
-    return [];
-  }
-  console.log(`[TMDb] Using API key: ${TMDB_API_KEY.substring(0, 8)}...`);
-
-  console.log("[FULL CATALOGUE] Starting build from ALL 3 sources...");
-
-  // 1) Scrape every title from all three sources
-  const [rt, top, list] = await Promise.all([
-    scrapeRT2020(CURATED_SOURCES.rt2020),
-    scrapeImdbTop(CURATED_SOURCES.imdbTop),
-    scrapeImdbList(CURATED_SOURCES.imdbList),
-  ]);
-
-  console.log(`[SCRAPE] RT 2020: ${rt.length}, IMDb Top: ${top.length}, IMDb List: ${list.length}`);
-  
-  // Debug: Show first few titles from each source
-  console.log(`[DEBUG] RT 2020 samples:`, rt.slice(0, 3));
-  console.log(`[DEBUG] IMDb Top samples:`, top.slice(0, 3));
-  console.log(`[DEBUG] IMDb List samples:`, list.slice(0, 3));
-  
-  // Test title normalization
-  if (top.length > 0) {
-    console.log(`[DEBUG] Before norm: "${top[0].title}" -> After norm: "${norm(top[0].title)}"`);
-  }
-
-  const allow = dedupeRaw([...rt, ...top, ...list]); // union
-  console.log(`[SCRAPE] Total unique titles after dedup: ${allow.length}`);
-
-  // 2) Resolve 1:1 onto TMDb (strict), keeping ALL that can be matched
-  const seen = new Set<number>();
-  const tasks = allow.map((r) => async () => {
-    try {
-      const hit = await searchStrictOnTmdb(norm(r.title), r.year);
-      if (!hit || hit.adult) {
-        console.log(`[TMDb] No match for: "${r.title}" (${r.year || 'no year'}) from ${r.src}`);
-        return { item: null as CatalogueItem | null, raw: r };
-      }
-      if (seen.has(hit.id)) return { item: null, raw: null as any }; // already included from another source duplicate
-      seen.add(hit.id);
-      const sources = [r.src];
-      console.log(`[TMDb] Matched: "${r.title}" -> "${hit.title}" (ID: ${hit.id})`);
-      return { item: toItem(hit, sources), raw: null as any };
-    } catch (err: any) {
-      console.error(`[TMDb] Error resolving "${r.title}":`, err.message);
-      return { item: null as CatalogueItem | null, raw: r };
-    }
-  });
-
-  const results = await pLimit(CONCURRENCY, tasks);
-  const items: CatalogueItem[] = [];
-  const misses: RawTitle[] = [];
-
-  for (const r of results) {
-    if (r.item) items.push(r.item);
-    if (r.raw) misses.push(r.raw);
-  }
-
-  // 3) Sort: posters first, then popularity
-  items.sort((a, b) => {
-    const ap = a.posterUrl ? 1 : 0;
-    const bp = b.posterUrl ? 1 : 0;
-    if (bp !== ap) return bp - ap;
-    return (b.popularity ?? 0) - (a.popularity ?? 0);
-  });
-
-  // 4) Stats + enforcement (do NOT silently reduce)
-  const stats = {
-    counts: {
-      rt2020: items.filter(i => i.sources.includes("rt2020")).length,
-      imdbTop: items.filter(i => i.sources.includes("imdbTop")).length,
-      imdbList: items.filter(i => i.sources.includes("imdbList")).length,
-    },
-    total: items.length,
-    misses: misses.length,
-    withPosters: items.filter(i => i.posterUrl).length,
-  };
-
-  console.log(`[FULL CATALOGUE] Built with ${stats.total} movies:`, stats);
-
-  // ENFORCEMENT: Warn if numbers seem too low
-  if (FULL_LISTS_ENFORCED) {
-    if (stats.counts.imdbTop < 200) console.warn(`[ENFORCEMENT] IMDb Top 250 only yielded ${stats.counts.imdbTop} titles - expected ~250`);
-    if (stats.total < 300) console.warn(`[ENFORCEMENT] Total catalogue only ${stats.total} titles - expected 300+`);
-  }
-
-  cache.stats = stats;
-  cache.misses = misses;
-  return items;
-}
-
-function isCatalogueFresh() {
-  return Date.now() - cache.ts < CATALOGUE_TTL_MS && cache.catalogue.length > 0;
-}
-
-// ============= API =============
+/** ----------------- Router ----------------- **/
 const api = express.Router();
+
+api.get("/trailers", async (req: Request, res: Response) => {
+  try {
+    let raw = String(req.query.ids ?? "");
+    try { raw = decodeURIComponent(raw); } catch {}
+    const ids = raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0).slice(0, 200);
+    if (!ids.length) return res.json({ ok: true, trailers: {} });
+    const tasks = ids.map((id) => async () => ({ id, embed: await bestYouTubeEmbedFor(id) }));
+    const pairs = await pLimit(6, tasks);
+    const map: Record<number, string|null> = {};
+    for (const p of pairs) map[p.id] = p.embed;
+    res.json({ ok: true, trailers: map });
+  } catch (e:any) {
+    res.status(500).json({ ok:false, error: e?.message ?? String(e) });
+  }
+});
 
 api.get("/catalogue", async (req: Request, res: Response) => {
   try {
-    if (!isCatalogueFresh()) {
-      cache.catalogue = await curatedCatalogueFull();
+    if (!fresh()) {
+      cache.catalogue = await buildAll();
       cache.ts = Date.now();
     }
-
-    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-    const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? "60"), 10)));
-    const start = (page - 1) * pageSize;
-    const slice = cache.catalogue.slice(start, start + pageSize);
-
-    const normalized = slice.map((m) => ({
-      ...m,
-      image: m.posterUrl || m.backdropUrl || null,
-    }));
-
+    const wantAll = String(req.query.all || "") === "1";
+    const allItems = cache.catalogue.slice();
+    const items = wantAll ? allItems : allItems.filter(x => AB_SET_IDS.has(x.id));
     res.json({
       ok: true,
-      total: cache.catalogue.length,
-      page,
-      pageSize,
-      items: normalized,
-      learnedDims: 12,
-      cacheAgeMs: Date.now() - cache.ts,
-      source: "ALL movies from RT2020 + IMDb Top 250 + IMDb List",
+      total: allItems.length,
+      items: items.map(t => ({ ...t, image: t.posterUrl || t.backdropUrl || null })),
       stats: cache.stats,
+      sources: Object.keys(F101),
+      policy: wantAll ? `ALL_ITEMS_FOR_RECS(limit=${PER_DECADE_LIMIT})` : `AB_SET_PER_DECADE=${AB_PER_DECADE}`,
     });
-  } catch (err: any) {
-    res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  } catch (e:any) {
+    res.status(500).json({ ok:false, error: e?.message ?? String(e) });
   }
 });
 
 api.post("/catalogue/build", async (_req: Request, res: Response) => {
   try {
-    cache.catalogue = await curatedCatalogueFull();
+    cache.catalogue = await buildAll();
     cache.ts = Date.now();
     res.json({ 
       ok: true, 
       total: cache.catalogue.length, 
       rebuiltAt: cache.ts,
       stats: cache.stats,
-      message: "Built complete catalogue from ALL 3 sources"
+      message: "Built Films101 catalogue with caps"
     });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message ?? String(err) });
@@ -419,7 +382,7 @@ api.post("/cache/flush", (_req: Request, res: Response) => {
   cache.catalogue = [];
   cache.ts = 0;
   cache.stats = {};
-  cache.misses = [];
+  AB_SET_IDS = new Set();
   res.json({ ok: true });
 });
 
@@ -430,55 +393,14 @@ api.get("/trailer", async (req: Request, res: Response) => {
     if (!id) return res.status(400).json({ ok: false, error: "Missing id" });
     if (!TMDB_API_KEY) return res.status(400).json({ ok: false, error: "TMDB_API_KEY not set" });
 
-    let vids = await fetchVideos(id, { include_video_language: "en,null", language: "en-US" });
-    if (!vids.length) vids = await fetchVideos(id, {});
+    const embed = await bestYouTubeEmbedFor(id);
+    if (!embed) return res.json({ ok: true, trailer: null });
 
-    const best = scoreVideos(vids)[0];
-    if (!best) return res.json({ ok: true, trailer: null });
-
-    const trailer = {
-      site: (best.site as any) || "Unknown",
-      key: best.key,
-      url:
-        (best.site || "").toLowerCase() === "youtube"
-          ? `https://www.youtube.com/watch?v=${best.key}`
-          : (best.site || "").toLowerCase() === "vimeo"
-          ? `https://vimeo.com/${best.key}`
-          : best.key,
-      name: best.name,
-      size: best.size,
-      official: best.official,
-      type: best.type,
-    };
-
-    res.json({ ok: true, trailer });
+    res.json({ ok: true, trailer: { url: embed } });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message ?? String(err) });
   }
 });
-
-async function fetchVideos(id: number, extra: Record<string, any>) {
-  const json = await tmdb(`/movie/${id}/videos`, extra);
-  return (json?.results || []).filter((v: any) => v && v.key);
-}
-
-function scoreVideos(vids: any[]) {
-  return vids
-    .map((v) => {
-      let score = 0;
-      const type = (v.type || "").toLowerCase();
-      if (type === "trailer") score += 4;
-      else if (type === "teaser") score += 2;
-
-      if (v.official) score += 3;
-      if ((v.site || "").toLowerCase() === "youtube") score += 2;
-      if ((v.name || "").toLowerCase().includes("official")) score += 1;
-      if (v.size) score += Math.min(3, Math.floor((v.size ?? 0) / 360));
-
-      return { ...v, __score: score };
-    })
-    .sort((a, b) => b.__score - a.__score);
-}
 
 // Health
 api.get("/health", (_req, res) => {
@@ -487,7 +409,7 @@ api.get("/health", (_req, res) => {
     cacheItems: cache.catalogue.length,
     cacheAgeMs: Date.now() - cache.ts,
     stats: cache.stats,
-    fullListsEnforced: FULL_LISTS_ENFORCED,
+    abSetSize: AB_SET_IDS.size,
   });
 });
 
