@@ -6,8 +6,6 @@ import React, { useState } from "react";
 import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 import { useQuickPicks } from "../hooks/useQuickPicks";
 import { useABHistory } from "../hooks/useABHistory";
-import { firePrefsUpdated } from "../lib/events";
-import { apiPost } from "../lib/api";
 import TrailerPlayer from "./TrailerPlayer";
 
 export default function PosterPair() {
@@ -21,45 +19,13 @@ export default function PosterPair() {
   if (error) return <div className="text-red-400">Error: {error}</div>;
   if (!items.length) return <div>No titles found.</div>;
 
-  async function pick(side: "left" | "right") {
+  function pick(side: "left" | "right") {
     const result = choose(side);
     if (!result) return;
     const { chosen, other } = result;
-
-    // Record the vote in the Bradley-Terry system
-    try {
-      const { saveW, saveRounds } = await import("../lib/userModel");
-
-      const resp = await fetch("/api/ab/vote", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-session-id": (await import("../lib/session")).getSID()
-        },
-        body: JSON.stringify({
-          leftId: side === "left" ? (chosen as any).id : (other as any).id,
-          rightId: side === "left" ? (other as any).id : (chosen as any).id,
-          chosenId: (chosen as any).id
-        }),
-      }).then(r => r.json());
-
-      if (resp?.ok) {
-        // For genre-only system, we don't need to save complex weights
-        console.log(`[A/B VOTE] Recorded vote for "${(chosen as any).title}" over "${(other as any).title}" - Round ${resp.rounds}`);
-        console.log(`[A/B VOTE] Top genres:`, resp.topGenres, `got ${resp.recs?.length} fresh recs`);
-        firePrefsUpdated(); // Trigger recommendations refresh
-      }
-    } catch (error) {
-      console.error("[A/B VOTE] Failed to record vote:", error);
-    }
-
-    // Update local learning (for compatibility)
     like(chosen as any);
     skip(other as any);
-    record((chosen as any).id, (other as any).id);
-
-    // Notify other components that preferences have been updated
-    // firePrefsUpdated(); // This is now called after apiPost
+    record((chosen as any).id, (other as any).id);  // Track A/B history for personalized reel
   }
 
   async function doRebuild() {

@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { phi } from '@/lib/phi';
 import { dot } from '@/lib/taste';
-import { apiGet } from '@/lib/api';
-import { onPrefsUpdated } from '@/lib/events';
 
 export type Title = {
   id: number;
@@ -42,7 +40,7 @@ function cosine(a: number[], b: number[]): number {
 export default function TrailerPlayer({
   items, learnedVec, recentChosenIds, avoidIds = [], count = 6,
 }: Props) {
-  const [queue, setQueue] = useState<Array<Omit<Title, 'genres'> & { genres: string[], explanation: string }>>([]);
+  const [queue, setQueue] = useState<Array<Title & { genres: string[], explanation: string }>>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
 
@@ -56,11 +54,11 @@ export default function TrailerPlayer({
     const chosen: T[] = [];
     const sim = (a:T,b:T) => {
       const va = vec(a), vb = vec(b);
-      let dot=0, na=0, nb=0;
-      for (let i=0;i<va.length;i++){
-        dot+=va[i]*vb[i];
-        na+=va[i]*va[i];
-        nb+=vb[i]*vb[i];
+      let dot=0, na=0, nb=0; 
+      for (let i=0;i<va.length;i++){ 
+        dot+=va[i]*vb[i]; 
+        na+=va[i]*va[i]; 
+        nb+=vb[i]*vb[i]; 
       }
       const la = Math.sqrt(na)||1, lb=Math.sqrt(nb)||1;
       return dot/(la*lb);
@@ -79,87 +77,68 @@ export default function TrailerPlayer({
     return chosen;
   }
 
-  // Track rounds to force re-renders
-  const [recommendations, setRecommendations] = useState<{rounds: number, items: Title[]}>({rounds: 0, items: []});
-
+  // Fetch personalized recommendations from new Bradley-Terry model
+  const [recommendations, setRecommendations] = useState<Title[]>([]);
+  
   useEffect(() => {
     const fetchRecommendations = async () => {
       try {
-        const { getSID } = await import('../lib/session');
-        
-        const data = await fetch(`/api/recs?top=60&t=${Date.now()}`, {
-          headers: { 
-            "Cache-Control": "no-store",
-            "x-session-id": getSID()
-          },
-          cache: "no-store",
-        }).then(r => r.json());
-
-        if (data.ok && data.items) {
-          // Convert API format to Title format
-          const recs: Title[] = data.items.map((item: any) => ({
-            id: item.id,
-            title: item.title,
-            year: item.year?.toString() || '',
-            genres: item.genres || [],
-            popularity: 50, // Default
-            feature: [], // Not used
-            sources: [],
-          }));
-
-          console.log(`[TrailerPlayer] Fetched ${recs.length} genre-based recommendations`);
-          console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
-          console.log(`[TrailerPlayer] Top genre preferences:`, data.topGenres?.slice(0,3));
-
-          setRecommendations({rounds: data.rounds, items: recs});
+        const response = await fetch('/api/recs?top=12');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ok && data.items) {
+            // Convert API format to Title format
+            const recs: Title[] = data.items.map((item: any) => ({
+              id: item.id,
+              title: item.title,
+              year: item.year?.toString() || '',
+              genres: item.genres || [],
+              popularity: 50, // Default
+              feature: [], // Not used
+              sources: item.sources || [],
+            }));
+            
+            console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations from Bradley-Terry model`);
+            console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
+            if (data.likes?.length > 0) {
+              console.log(`[TrailerPlayer] User preferences:`, data.likes.slice(0, 3));
+            }
+            
+            setRecommendations(recs);
+          }
         }
       } catch (error) {
         console.error('[TrailerPlayer] Failed to fetch recommendations:', error);
-        setRecommendations({rounds: 0, items: []});
+        setRecommendations([]);
       }
     };
 
     fetchRecommendations();
-    
-    // Listen for preference updates and refetch
-    const cleanup = onPrefsUpdated(() => {
-      console.log('[TrailerPlayer] Preferences updated, refetching recommendations');
-      fetchRecommendations(); // Immediate refresh, no delay needed
-    });
-    
-    return cleanup;
-  }, []); // Remove learnedVec dependency since we listen for updates
+  }, [learnedVec]); // Refetch when A/B learning updates
 
   const picks = useMemo(() => {
-    if (recommendations.items.length === 0) return [];
+    if (recommendations.length === 0) return [];
 
-    // Only avoid exact duplicates from recent A/B testing, but allow variety in recommendations
-    const available = recommendations.items.filter(item =>
-      !avoidIds.includes(item.id) // Only filter out items seen in current A/B round
+    // Remove recently chosen to avoid immediate repeats
+    const available = recommendations.filter(item => 
+      !recentChosenIds.includes(item.id) && !avoidIds.includes(item.id)
     );
 
-    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available (from ${recommendations.items.length} total)`);
-    console.log(`[TrailerPlayer] Round ${recommendations.rounds}: Avoiding IDs:`, avoidIds.length);
-    console.log(`[TrailerPlayer] Recent chosen IDs:`, recentChosenIds.length);
-
+    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available`);
+    
     if (available.length === 0) {
-      console.warn('[TrailerPlayer] No available personalized recommendations, using all recommendations');
-      // Fallback to all recommendations if filtering is too aggressive
-      const picks = recommendations.items.slice(0, count);
-      picks.forEach((pick, i) => {
-        console.log(`[FALLBACK PICK ${i+1}] "${pick.title}" (${pick.year})`);
-      });
-      return picks;
+      console.warn('[TrailerPlayer] No available personalized recommendations');
+      return [];
     }
 
-    // Take top recommendations (already ranked by genre-only model with rotation)
+    // Take top recommendations (already ranked by Bradley-Terry model)
     const picks = available.slice(0, count);
-
+    
     picks.forEach((pick, i) => {
-      console.log(`[GENRE PICK ${i+1}] "${pick.title}" (${pick.year}) - Round ${recommendations.rounds}`);
+      console.log(`[PERSONALIZED PICK ${i+1}] "${pick.title}" (${pick.year})`);
     });
 
-    console.log(`[TrailerPlayer] Selected ${picks.length} genre-based recommendations for round ${recommendations.rounds}`);
+    console.log(`[TrailerPlayer] Selected ${picks.length} personalized recommendations`);
     return picks;
   }, [recommendations, recentChosenIds, avoidIds, count]);
 
@@ -211,7 +190,6 @@ export default function TrailerPlayer({
 
       console.log('[TrailerPlayer] Received embeds for:', Object.keys(newEmbeds).length, 'items');
       console.log('[TrailerPlayer] Items with trailers:', Object.values(newEmbeds).filter(Boolean).length);
-      console.log('[TrailerPlayer] Sample embed URLs:', Object.entries(newEmbeds).slice(0, 3));
 
       setEmbeds(newEmbeds);
     };
@@ -237,40 +215,45 @@ export default function TrailerPlayer({
     setIdx(prev => (prev - 1 + queue.length) % queue.length);
   };
 
-  // Helper to set the current index in the queue
-  const setCurrentIndex = (index: number) => {
-    setIdx(index);
-  };
+  if (!currentItem) {
+    return (
+      <div className="flex items-center justify-center h-64 bg-gray-900 rounded-lg">
+        <p className="text-gray-400">Loading personalized recommendations...</p>
+      </div>
+    );
+  }
 
   // Generate explanation based on recommendations API response
   const [explanationText, setExplanationText] = useState("Loading your personalized recommendations...");
-
+  
   useEffect(() => {
     const fetchExplanation = async () => {
       try {
-        const { apiGet } = await import('../lib/api');
-        const data = await apiGet('/api/recs?top=5');
-        if (data.ok) {
-          if (data.rounds === 0) {
-            setExplanationText("Complete the A/B testing to get personalized recommendations!");
-          } else if (data.rounds < 12) {
-            setExplanationText(`Based on ${data.rounds} A/B choices, here are some initial recommendations. Complete more rounds for better personalization!`);
-          } else {
-            // Generate explanation from user preferences
-            const topPrefs = data.likes?.slice(0, 3) || [];
-            if (topPrefs.length > 0) {
-              const prefText = topPrefs.map((pref: [string, number]) => {
-                const [key] = pref;
-                if (key.startsWith('g:')) return `genre preferences`;
-                if (key.startsWith('dir:')) return `director style`;
-                if (key.startsWith('act:')) return `actor preferences`;
-                if (key.startsWith('era:')) return `era preferences`;
-                return 'cinematic taste';
-              }).slice(0, 2).join(' and ');
-
-              setExplanationText(`Based on your A/B testing choices, we've learned your ${prefText}. Here are movies we think you'll love:`);
+        const response = await fetch('/api/recs?top=5');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ok) {
+            if (data.rounds === 0) {
+              setExplanationText("Complete the A/B testing to get personalized recommendations!");
+            } else if (data.rounds < 12) {
+              setExplanationText(`Based on ${data.rounds} A/B choices, here are some initial recommendations. Complete more rounds for better personalization!`);
             } else {
-              setExplanationText("Based on your A/B testing choices, here are personalized recommendations for you:");
+              // Generate explanation from user preferences
+              const topPrefs = data.likes?.slice(0, 3) || [];
+              if (topPrefs.length > 0) {
+                const prefText = topPrefs.map((pref: [string, number]) => {
+                  const [key] = pref;
+                  if (key.startsWith('g:')) return `genre preferences`;
+                  if (key.startsWith('dir:')) return `director style`;
+                  if (key.startsWith('act:')) return `actor preferences`;
+                  if (key.startsWith('era:')) return `era preferences`;
+                  return 'cinematic taste';
+                }).slice(0, 2).join(' and ');
+                
+                setExplanationText(`Based on your A/B testing choices, we've learned your ${prefText}. Here are movies we think you'll love:`);
+              } else {
+                setExplanationText("Based on your A/B testing choices, here are personalized recommendations for you:");
+              }
             }
           }
         }
@@ -280,22 +263,7 @@ export default function TrailerPlayer({
     };
 
     fetchExplanation();
-    
-    // Listen for preference updates and refetch explanation
-    const cleanup = onPrefsUpdated(() => {
-      fetchExplanation();
-    });
-    
-    return cleanup;
-  }, []);
-
-  if (!currentItem) {
-    return (
-      <div className="flex items-center justify-center h-64 bg-gray-900 rounded-lg">
-        <p className="text-gray-400">Loading personalized recommendations...</p>
-      </div>
-    );
-  }
+  }, [learnedVec]);
 
   return (
     <div className="space-y-4">
@@ -311,25 +279,18 @@ export default function TrailerPlayer({
         {currentEmbed ? (
           <div className="aspect-video">
             <iframe
-              key={`iframe-${currentItem.id}-${recommendations.rounds}`}
-              src={`${currentEmbed.includes('youtube.com/embed/') ? currentEmbed : `https://www.youtube.com/embed/${currentEmbed.replace('https://www.youtube.com/watch?v=', '')}`}?rel=0&modestbranding=1&round=${recommendations.rounds}`}
+              src={currentEmbed}
               title={`${currentItem.title} trailer`}
-              className="w-full h-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
-              loading="lazy"
             />
           </div>
         ) : (
           <div className="aspect-video flex items-center justify-center bg-gray-800">
             <div className="text-center">
               <p className="text-white font-semibold">{currentItem.title}</p>
-              <p className="text-gray-400">
-                {Object.keys(embeds).length === 0 ? 'Loading trailer...' : 'No trailer available'}
-              </p>
-              <p className="text-xs text-gray-500 mt-2">
-                Debug: Queue {queue.length}, Index {idx}, Embeds {Object.keys(embeds).length}
-              </p>
+              <p className="text-gray-400">Loading trailer...</p>
             </div>
           </div>
         )}
@@ -365,11 +326,11 @@ export default function TrailerPlayer({
 
       {/* Queue Preview */}
       <div className="mt-6">
-        <h5 className="text-sm font-semibold text-gray-400 mb-2">Up Next (Round {recommendations.rounds}):</h5>
+        <h5 className="text-sm font-semibold text-gray-400 mb-2">Up Next:</h5>
         <div className="flex space-x-2 overflow-x-auto">
           {queue.map((item, i) => (
             <button
-              key={`${item.id}-${recommendations.rounds}`}
+              key={item.id}
               onClick={() => setIdx(i)}
               className={`flex-shrink-0 p-2 rounded text-xs ${
                 i === idx ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
