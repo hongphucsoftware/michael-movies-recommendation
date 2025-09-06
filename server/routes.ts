@@ -351,6 +351,23 @@ router.get("/trailers", async (req: Request, res: Response) => {
   res.json({ ok: true, trailers: out });
 });
 
+// Return two posters for the old PosterPair UI
+router.get("/ab/next", async (req: Request, res: Response) => {
+  noStore(res);
+  const state = await getState();
+  const [left, right] = sample(state.postersFlat, 2);
+  res.json({ ok: true, left, right });
+});
+
+// No-op vote that just returns fresh random recs from the remaining pool
+router.post("/ab/vote", async (req: Request, res: Response) => {
+  noStore(res);
+  const state = await getState();
+  const limit = Number(process.env.TOP_RECS ?? 6);
+  const recs = sample(state.recPool, limit);
+  res.json({ ok: true, rounds: 1, recs });
+});
+
 // Legacy vote endpoint (no-op for compatibility)
 router.post("/vote", async (req: Request, res: Response) => {
   noStore(res);

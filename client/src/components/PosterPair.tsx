@@ -23,6 +23,24 @@ interface PosterPairProps {
 }
 
 export default function PosterPair({ movieA, movieB, onChoice }: PosterPairProps) {
+  // Null guard for loading states
+  if (!movieA || !movieB) {
+    return (
+      <div className="grid md:grid-cols-2 gap-8">
+        <div className="p-6">
+          <div className="w-full h-96 bg-zinc-900 animate-pulse rounded-xl mb-4" />
+          <div className="w-32 h-4 bg-zinc-800 animate-pulse rounded mb-2" />
+          <div className="w-16 h-3 bg-zinc-800 animate-pulse rounded" />
+        </div>
+        <div className="p-6">
+          <div className="w-full h-96 bg-zinc-900 animate-pulse rounded-xl mb-4" />
+          <div className="w-32 h-4 bg-zinc-800 animate-pulse rounded mb-2" />
+          <div className="w-16 h-3 bg-zinc-800 animate-pulse rounded" />
+        </div>
+      </div>
+    );
+  }
+
   const handleChoice = (winner: Movie, loser: Movie) => {
     // Record vote to server
     fetch('/api/vote', {
@@ -53,20 +71,20 @@ export default function PosterPair({ movieA, movieB, onChoice }: PosterPairProps
         <div className="gradient-border relative overflow-hidden">
           <div className="p-6 relative">
             <RobustImage 
-              src={movieA.posterUrl || ''} 
-              alt={`${movieA.title} poster`} 
+              src={movieA?.posterUrl || ''} 
+              alt={`${movieA?.title || ''} poster`} 
               className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
             />
             <div className="space-y-2">
               <h3 className="text-xl font-bold text-white group-hover:text-electric-blue transition-colors">
-                {movieA.title}
+                {movieA?.title || 'Loading...'}
               </h3>
-              {movieA.year && (
+              {movieA?.year && (
                 <p className="text-gray-400 text-sm">{movieA.year}</p>
               )}
-              {movieA.genres && movieA.genres.length > 0 && (
+              {movieA?.genres && movieA.genres.length > 0 && (
                 <div className="flex flex-wrap gap-1">
-                  {movieA.genres.slice(0, 3).map((genre, idx) => (
+                  {movieA?.genres?.slice(0, 3).map((genre, idx) => (
                     <span key={idx} className="text-xs bg-gray-700 px-2 py-1 rounded">
                       {typeof genre === 'string' ? genre : genre.name}
                     </span>
@@ -87,20 +105,20 @@ export default function PosterPair({ movieA, movieB, onChoice }: PosterPairProps
         <div className="gradient-border relative overflow-hidden">
           <div className="p-6 relative">
             <RobustImage 
-              src={movieB.posterUrl || ''} 
-              alt={`${movieB.title} poster`} 
+              src={movieB?.posterUrl || ''} 
+              alt={`${movieB?.title || ''} poster`} 
               className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
             />
             <div className="space-y-2">
               <h3 className="text-xl font-bold text-white group-hover:text-electric-blue transition-colors">
-                {movieB.title}
+                {movieB?.title || 'Loading...'}
               </h3>
-              {movieB.year && (
+              {movieB?.year && (
                 <p className="text-gray-400 text-sm">{movieB.year}</p>
               )}
-              {movieB.genres && movieB.genres.length > 0 && (
+              {movieB?.genres && movieB.genres.length > 0 && (
                 <div className="flex flex-wrap gap-1">
-                  {movieB.genres.slice(0, 3).map((genre, idx) => (
+                  {movieB?.genres?.slice(0, 3).map((genre, idx) => (
                     <span key={idx} className="text-xs bg-gray-700 px-2 py-1 rounded">
                       {typeof genre === 'string' ? genre : genre.name}
                     </span>
