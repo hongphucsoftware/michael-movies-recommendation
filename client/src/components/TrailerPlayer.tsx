@@ -121,26 +121,10 @@ export default function TrailerPlayer({
 
     fetchRecommendations();
     
-    // Listen for preference updates and use fresh recs from A/B vote response
-    const cleanup = onPrefsUpdated((freshRecs?: any[]) => {
-      console.log('[TrailerPlayer] Preferences updated with fresh recs:', freshRecs?.length || 0);
-      if (freshRecs && freshRecs.length > 0) {
-        // Use the fresh recommendations from the A/B vote response
-        const recs: Title[] = freshRecs.map((item: any) => ({
-          id: item.id,
-          title: item.title,
-          year: item.year?.toString() || '',
-          genres: item.genres || [],
-          popularity: 50,
-          feature: [],
-          sources: [],
-        }));
-        
-        setRecommendations(prev => ({rounds: prev.rounds + 1, items: recs}));
-      } else {
-        // Fallback to refetch if no fresh recs provided
-        fetchRecommendations();
-      }
+    // Listen for preference updates and refetch
+    const cleanup = onPrefsUpdated(() => {
+      console.log('[TrailerPlayer] Preferences updated, refetching recommendations');
+      fetchRecommendations(); // Immediate refresh, no delay needed
     });
     
     return cleanup;

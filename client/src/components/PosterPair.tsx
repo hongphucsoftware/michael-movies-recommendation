@@ -17,21 +17,6 @@ export default function PosterPair() {
   const { chosen: chosenIds, seen: seenIds, record, reset: resetAB } = useABHistory();
   const [rebuilding, setRebuilding] = useState(false);
 
-  // These state initializations were not found in the original code but are included based on the provided changes.
-  // const [currentPair, setCurrentPair] = useState<{ left: any; right: any } | null>(null);
-  // const [seenIds, setSeenIds] = useState<Set<number>>(new Set());
-  // const [chosenIds, setChosenIds] = useState<number[]>([]);
-  // const [done, setDone] = useState(false);
-  // const [rounds, setRounds] = useState(0);
-  const [sid] = useState(() => {
-    const stored = localStorage.getItem("paf.sid");
-    if (stored) return stored;
-    const newSid = "sid_" + Math.random().toString(36).slice(2);
-    localStorage.setItem("paf.sid", newSid);
-    return newSid;
-  });
-
-
   if (loading) return <div className="opacity-80">Loading catalogue…</div>;
   if (error) return <div className="text-red-400">Error: {error}</div>;
   if (!items.length) return <div>No titles found.</div>;
@@ -44,7 +29,7 @@ export default function PosterPair() {
     // Record the vote in the Bradley-Terry system
     try {
       const { saveW, saveRounds } = await import("../lib/userModel");
-
+      
       const resp = await fetch("/api/ab/vote", {
         method: "POST",
         headers: { 
@@ -93,84 +78,6 @@ export default function PosterPair() {
     reset(); 
   }
 
-  // The onChoose function below is a complete replacement based on the provided changes.
-  const onChoose = async (chosenId: number) => {
-    if (!pair) return; // Use `pair` from useQuickPicks hook
-
-    try {
-      console.log(`[A/B VOTE] Attempting to record vote: ${pair.left.id} vs ${pair.right.id} → chose ${chosenId}`);
-
-      const voteBody = {
-        leftId: pair.left.id,
-        rightId: pair.right.id,
-        chosenId: chosenId
-      };
-
-      const response = await fetch('/api/ab/vote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-store',
-          'x-session-id': sid
-        },
-        cache: 'no-store',
-        body: JSON.stringify(voteBody)
-      });
-
-      const result = await response.json();
-
-      if (!result.ok) {
-        console.error('[A/B VOTE] Server error:', result.error);
-        return;
-      }
-
-      console.log(`[A/B VOTE] Vote recorded successfully. Round ${result.rounds}, Top genres:`, result.topGenres?.slice(0,3));
-      console.log(`[A/B VOTE] Received ${result.recs?.length || 0} fresh recommendations`);
-
-      // Track the choice
-      setChosenIds(prev => [...prev, chosenId]);
-      setSeenIds(prev => new Set([...prev, pair.left.id, pair.right.id]));
-      setRounds(result.rounds || 0);
-
-      // Update learned preferences
-      const chosenMovie = chosenId === pair.left.id ? pair.left : pair.right;
-      onUpdate(chosenMovie); // Assuming onUpdate is defined elsewhere or meant to be like `like`
-
-      // Trigger preference update event with fresh recommendations
-      firePrefsUpdated(result.recs); // Assuming firePrefsUpdated can accept an argument
-
-    } catch (error) {
-      console.error('[A/B VOTE] Failed to record vote:', error);
-    }
-
-    // Load next pair or finish
-    if (result.rounds >= 11) { // Use result.rounds here
-      setDone(true);
-      console.log('[A/B] A/B testing complete!');
-    } else {
-      await loadNextPair(); // Assuming loadNextPair is defined elsewhere
-    }
-  };
-
-  // Placeholder for onUpdate and loadNextPair, as they were not in original code snippet and not in changes
-  // In a real scenario, these would need to be properly defined or mapped from existing hooks.
-  const onUpdate = (movie: any) => {
-    // This function should likely be `like` from useLearnedVector
-    like(movie);
-  };
-
-  const loadNextPair = async () => {
-    // This function should likely call `reset` or similar from useQuickPicks to load next pair
-    // or handle the logic to fetch the next pair.
-    // For now, we'll simulate by potentially calling reset if there's a way to trigger it.
-    // The original code structure implies `choose` might be called again implicitly or `useQuickPicks` handles this.
-    // As a fallback, we will just refresh.
-    console.log("Attempting to load next pair...");
-    // A more robust solution would involve re-fetching or managing state within useQuickPicks.
-    // For this fix, we'll assume the component will re-render and get the next pair if available.
-  };
-
-
   return (
     <div className="space-y-4 sm:space-y-6 px-4 sm:px-6 lg:px-8">
       {/* Progress + controls */}
@@ -190,7 +97,7 @@ export default function PosterPair() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
           <button
             className="rounded-xl sm:rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition-all duration-200 active:scale-[0.98]"
-            onClick={() => onChoose(pair.left.id)} // Use onChoose here
+            onClick={() => pick("left")}
           >
             <img
               src={bestImageUrl(pair.left as any) || ""}
@@ -206,7 +113,7 @@ export default function PosterPair() {
 
           <button
             className="rounded-xl sm:rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition-all duration-200 active:scale-[0.98]"
-            onClick={() => onChoose(pair.right.id)} // Use onChoose here
+            onClick={() => pick("right")}
           >
             <img
               src={bestImageUrl(pair.right as any) || ""}
