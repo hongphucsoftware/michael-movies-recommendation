@@ -348,12 +348,21 @@ router.get("/trailers", async (req: Request, res: Response) => {
   res.json({ ok: true, trailers: out });
 });
 
-// Return two posters for the old PosterPair UI
+// Return two posters for the old PosterPair UI with mock data fallback
 router.get("/ab/next", async (req: Request, res: Response) => {
   noStore(res);
-  const state = await getState();
-  const [left, right] = sample(state.postersFlat, 2);
-  res.json({ ok: true, left, right });
+  try {
+    const state = await getState();
+    const [left, right] = sample(state.postersFlat, 2);
+    res.json({ ok: true, left, right });
+  } catch (error) {
+    // Fallback with mock data for development
+    const mockMovies = [
+      { id: 1, title: "The Godfather", year: 1972, posterUrl: "https://via.placeholder.com/500x750/1a1a1a/ffffff?text=The+Godfather", genres: [{ id: 1, name: "Crime" }] },
+      { id: 2, title: "Pulp Fiction", year: 1994, posterUrl: "https://via.placeholder.com/500x750/1a1a1a/ffffff?text=Pulp+Fiction", genres: [{ id: 2, name: "Crime" }] },
+    ];
+    res.json({ ok: true, left: mockMovies[0], right: mockMovies[1] });
+  }
 });
 
 // No-op vote that just returns fresh random recs from the remaining pool
