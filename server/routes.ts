@@ -14,14 +14,6 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "";
 if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY.");
 
 const SOURCES = {
-  rt2020: "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
-  imdbTop: "https://www.imdb.com/chart/top/",
-  imdbList: "https://www.imdb.com/list/ls565399909/", // Added list 1
-  imdbList2: "https://www.imdb.com/list/ls064708279/", // Added list 2
-  imdbList3: "https://www.imdb.com/list/ls057670103/", // Added list 3
-  imdbThrillers: "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc", // Added Thriller list
-  imdbList4: "https://www.imdb.com/list/ls005762897/", // Added list 4
-  imdbList5: "https://www.imdb.com/list/ls545836395/", // Original list 3
   decade2020s: "https://www.imdb.com/list/ls094921320/",
   decade2010s: "https://www.imdb.com/list/ls003501243/",
   decade2000s: "https://www.imdb.com/list/ls002065120/",
@@ -601,34 +593,23 @@ const cache = { catalogue: [] as Item[], ts: 0, stats: {} as any, misses: [] as 
 async function buildAll(): Promise<Item[]> {
   console.log("[BUILD ALL] Starting comprehensive scrape from all sources...");
 
-  // Scrape all sources in parallel
-  const [rt, top, list, list2, list3, list4, thrillers, list5, decade2020s, decade2010s, decade2000s, decade1990s, decade1980s] = await Promise.all([
-    scrapeRT2020(SOURCES.rt2020),
-    scrapeImdbTop(SOURCES.imdbTop),
-    scrapeImdbList(SOURCES.imdbList, 1000),
-    scrapeImdbList(SOURCES.imdbList2, 1000),
-    scrapeImdbList(SOURCES.imdbList3, 1000),
-    scrapeImdbList(SOURCES.imdbList4, 1000),
-    scrapeImdbSearchResults(SOURCES.imdbThrillers, 1000),
-    scrapeImdbList(SOURCES.imdbList5, 1000),
-    scrapeImdbList(SOURCES.decade2020s, 15), // Get 15 from each decade
-    scrapeImdbList(SOURCES.decade2010s, 15),
-    scrapeImdbList(SOURCES.decade2000s, 15),
-    scrapeImdbList(SOURCES.decade1990s, 15),
-    scrapeImdbList(SOURCES.decade1980s, 15),
+  // Scrape only the 5 decade lists
+  const [decade2020s, decade2010s, decade2000s, decade1990s, decade1980s] = await Promise.all([
+    scrapeImdbList(SOURCES.decade2020s, 1000),
+    scrapeImdbList(SOURCES.decade2010s, 1000),
+    scrapeImdbList(SOURCES.decade2000s, 1000),
+    scrapeImdbList(SOURCES.decade1990s, 1000),
+    scrapeImdbList(SOURCES.decade1980s, 1000),
   ]);
 
-  const union = dedupeRaw([...rt, ...top, ...list, ...list2, ...list3, ...list4, ...thrillers, ...list5, ...decade2020s, ...decade2010s, ...decade2000s, ...decade1990s, ...decade1980s]);
-  console.log(`[SCRAPE TOTALS] RT:${rt.length}, IMDb Top:${top.length}, IMDb List:${list.length}, List2:${list2.length}, List3:${list3.length}, List4:${list4.length}, Thrillers:${thrillers.length}, List5:${list5.length}, 20s:${decade2020s.length}, 10s:${decade2010s.length}, 00s:${decade2000s.length}, 90s:${decade1990s.length}, 80s:${decade1980s.length}, Union:${union.length}`);
+  const union = dedupeRaw([...decade2020s, ...decade2010s, ...decade2000s, ...decade1990s, ...decade1980s]);
+  console.log(`[SCRAPE TOTALS] 20s:${decade2020s.length}, 10s:${decade2010s.length}, 00s:${decade2000s.length}, 90s:${decade1990s.length}, 80s:${decade1980s.length}, Union:${union.length}`);
 
   // Enforcement check - refuse to continue with low counts
-  if (top.length < 200) {
-    console.warn(`[ENFORCEMENT] IMDb Top 250 only yielded ${top.length} titles - expected ~250. Continuing anyway.`);
+  if (union.length < 200) {
+    console.warn(`[ENFORCEMENT] Total scraped only ${union.length} titles - expected 200+ from 5 decade lists. Need to capture MORE from the sources.`);
   }
-  if (union.length < 400) {
-    console.warn(`[ENFORCEMENT] Total scraped only ${union.length} titles - expected 500+. Need to capture MORE from the sources.`);
-  }
-  if (union.length < 100) {
+  if (union.length < 50) {
     throw new Error(`[ENFORCEMENT FAILURE] Only ${union.length} titles scraped - this is too low. Check scraper selectors.`);
   }
 
@@ -706,7 +687,7 @@ async function buildAll(): Promise<Item[]> {
   });
 
   cache.stats = {
-    counts: { rt2020: rt.length, imdbTop: top.length, imdbList: list.length, list2: list2.length, list3: list3.length, list4: list4.length, thrillers: thrillers.length, list5: list5.length, decade2020s: decade2020s.length, decade2010s: decade2010s.length, decade2000s: decade2000s.length, decade1990s: decade1990s.length, decade1980s: decade1980s.length, totalScraped: union.length },
+    counts: { decade2020s: decade2020s.length, decade2010s: decade2010s.length, decade2000s: decade2000s.length, decade1990s: decade1990s.length, decade1980s: decade1980s.length, totalScraped: union.length },
     resolved: items.length,
     missed: union.length - items.length,
     withPosters: items.filter(i => i.posterUrl).length,
@@ -782,14 +763,6 @@ api.post("/cache/flush", (_req, res) => {
 
 api.get("/catalogue/stats", (_req, res) => {
   const sourceBreakdown = {
-    rt2020: cache.catalogue.filter(item => item.sources.includes("rt2020")).length,
-    imdbTop: cache.catalogue.filter(item => item.sources.includes("imdbTop")).length,
-    imdbList: cache.catalogue.filter(item => item.sources.includes("imdbList")).length,
-    imdbList2: cache.catalogue.filter(item => item.sources.includes("imdbList2")).length,
-    imdbList3: cache.catalogue.filter(item => item.sources.includes("imdbList3")).length,
-    imdbList4: cache.catalogue.filter(item => item.sources.includes("imdbList4")).length,
-    imdbThrillers: cache.catalogue.filter(item => item.sources.includes("imdbSearch")).length,
-    imdbList5: cache.catalogue.filter(item => item.sources.includes("imdbList5")).length,
     decade2020s: cache.catalogue.filter(item => item.sources.includes("decade2020s")).length,
     decade2010s: cache.catalogue.filter(item => item.sources.includes("decade2010s")).length,
     decade2000s: cache.catalogue.filter(item => item.sources.includes("decade2000s")).length,
@@ -806,14 +779,6 @@ api.get("/catalogue/stats", (_req, res) => {
     enforcementWarning: cache.catalogue.length < 300 ? "Collection too small - check scraper selectors" : null,
     mandate: "MUST_USE_ALL_MOVIES_FROM_ALL_SOURCES",
     sources: [
-      "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
-      "https://www.imdb.com/chart/top/",
-      "https://www.imdb.com/list/ls565399909/",
-      "https://www.imdb.com/list/ls064708279/",
-      "https://www.imdb.com/list/ls057670103/",
-      "https://www.imdb.com/search/title/?title_type=feature&genres=thriller&sort=num_votes,desc",
-      "https://www.imdb.com/list/ls005762897/",
-      "https://www.imdb.com/list/ls545836395/",
       "https://www.imdb.com/list/ls094921320/",
       "https://www.imdb.com/list/ls003501243/",
       "https://www.imdb.com/list/ls002065120/",
@@ -835,14 +800,6 @@ api.get("/catalogue/verify", (_req, res) => {
   const verification = {
     totalMovies: cache.catalogue.length,
     sourceMovies: {
-      rt2020: cache.catalogue.filter(item => item.sources.includes("rt2020")).length,
-      imdbTop: cache.catalogue.filter(item => item.sources.includes("imdbTop")).length,
-      imdbList: cache.catalogue.filter(item => item.sources.includes("imdbList")).length,
-      imdbList2: cache.catalogue.filter(item => item.sources.includes("imdbList2")).length,
-      imdbList3: cache.catalogue.filter(item => item.sources.includes("imdbList3")).length,
-      imdbList4: cache.catalogue.filter(item => item.sources.includes("imdbList4")).length,
-      imdbThrillers: cache.catalogue.filter(item => item.sources.includes("imdbSearch")).length,
-      imdbList5: cache.catalogue.filter(item => item.sources.includes("imdbList5")).length,
       decade2020s: cache.catalogue.filter(item => item.sources.includes("decade2020s")).length,
       decade2010s: cache.catalogue.filter(item => item.sources.includes("decade2010s")).length,
       decade2000s: cache.catalogue.filter(item => item.sources.includes("decade2000s")).length,
@@ -851,8 +808,8 @@ api.get("/catalogue/verify", (_req, res) => {
     },
     compliance: {
       usingAllSources: true,
-      minimumMet: cache.catalogue.length >= 800, // Increased minimum for more sources
-      policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS_NO_LIMITS"
+      minimumMet: cache.catalogue.length >= 200, // Adjusted minimum for 5 decade sources
+      policy: "ONLY_5_DECADE_LISTS - NO_OTHER_SOURCES"
     },
     mandatorySources: [
       "https://www.imdb.com/list/ls094921320/",
@@ -1114,49 +1071,25 @@ api.get("/health", (_req, res) => {
   const stats = cache.stats || {};
   const enforcementWarnings = [];
 
-  if (cache.catalogue.length < 800) {
-    enforcementWarnings.push(`Total catalogue only ${cache.catalogue.length} movies - expected 800+ from all 8 sources`);
+  if (cache.catalogue.length < 200) {
+    enforcementWarnings.push(`Total catalogue only ${cache.catalogue.length} movies - expected 200+ from 5 decade sources`);
   }
 
   if (stats.counts) {
-    if (stats.counts.imdbTop < 200) {
-      enforcementWarnings.push(`IMDb Top 250 only ${stats.counts.imdbTop} titles - expected ~250`);
+    if (stats.counts.decade2020s < 50) {
+      enforcementWarnings.push(`IMDb 2020s List only ${stats.counts.decade2020s} titles - expected 50+`);
     }
-    if (stats.counts.rt2020 < 10) {
-      enforcementWarnings.push(`RT 2020 only ${stats.counts.rt2020} titles - expected 30+`);
+    if (stats.counts.decade2010s < 50) {
+      enforcementWarnings.push(`IMDb 2010s List only ${stats.counts.decade2010s} titles - expected 50+`);
     }
-    if (stats.counts.imdbList < 200) {
-      enforcementWarnings.push(`IMDb List 1 only ${stats.counts.imdbList} titles - expected 300+`);
+    if (stats.counts.decade2000s < 50) {
+      enforcementWarnings.push(`IMDb 2000s List only ${stats.counts.decade2000s} titles - expected 50+`);
     }
-    if (stats.counts.imdbList2 < 200) {
-      enforcementWarnings.push(`IMDb List 2 only ${stats.counts.imdbList2} titles - expected 300+`);
+    if (stats.counts.decade1990s < 50) {
+      enforcementWarnings.push(`IMDb 1990s List only ${stats.counts.decade1990s} titles - expected 50+`);
     }
-    if (stats.counts.imdbList3 < 200) {
-      enforcementWarnings.push(`IMDb List 3 only ${stats.counts.imdbList3} titles - expected 300+`);
-    }
-    if (stats.counts.imdbList4 < 200) {
-      enforcementWarnings.push(`IMDb List 4 only ${stats.counts.imdbList4} titles - expected 300+`);
-    }
-    if (stats.counts.thrillers < 200) {
-      enforcementWarnings.push(`IMDb Thrillers only ${stats.counts.thrillers} titles - expected 300+`);
-    }
-     if (stats.counts.imdbList5 < 200) {
-      enforcementWarnings.push(`IMDb List 5 only ${stats.counts.imdbList5} titles - expected 300+`);
-    }
-    if (stats.counts.decade2020s < 10) {
-      enforcementWarnings.push(`IMDb 2020s List only ${stats.counts.decade2020s} titles - expected 15+`);
-    }
-    if (stats.counts.decade2010s < 10) {
-      enforcementWarnings.push(`IMDb 2010s List only ${stats.counts.decade2010s} titles - expected 15+`);
-    }
-    if (stats.counts.decade2000s < 10) {
-      enforcementWarnings.push(`IMDb 2000s List only ${stats.counts.decade2000s} titles - expected 15+`);
-    }
-    if (stats.counts.decade1990s < 10) {
-      enforcementWarnings.push(`IMDb 1990s List only ${stats.counts.decade1990s} titles - expected 15+`);
-    }
-    if (stats.counts.decade1980s < 10) {
-      enforcementWarnings.push(`IMDb 1980s List only ${stats.counts.decade1980s} titles - expected 15+`);
+    if (stats.counts.decade1980s < 50) {
+      enforcementWarnings.push(`IMDb 1980s List only ${stats.counts.decade1980s} titles - expected 50+`);
     }
   }
 
@@ -1165,7 +1098,7 @@ api.get("/health", (_req, res) => {
     cacheItems: cache.catalogue.length,
     cacheAgeMs: Date.now() - cache.ts,
     stats: cache.stats,
-    sources: ["rt2020", "imdbTop", "imdbList", "imdbList2", "imdbList3", "imdbList4", "imdbThrillers", "imdbList5", "decade2020s", "decade2010s", "decade2000s", "decade1990s", "decade1980s"],
+    sources: ["decade2020s", "decade2010s", "decade2000s", "decade1990s", "decade1980s"],
     enforcementWarnings: enforcementWarnings.length > 0 ? enforcementWarnings : null,
     policy: "ALL_TITLES_FROM_ALL_SOURCES - NO_CAPS_NO_LIMITS",
   });
