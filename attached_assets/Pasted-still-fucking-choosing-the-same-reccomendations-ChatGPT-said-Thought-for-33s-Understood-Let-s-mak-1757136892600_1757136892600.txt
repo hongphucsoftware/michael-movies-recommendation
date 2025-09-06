@@ -1,0 +1,151 @@
+still fucking choosing the same reccomendations
+ChatGPT said:
+Thought for 33s
+
+Understood. Let’s make the recs change immediately after every vote regardless of Replit restarts or cache weirdness by carrying the learned weights on the client and sending them with the recs request. This removes all “same session” and “server restart” issues.
+
+What you’ll change (precise & minimal)
+A) SERVER — return weights on vote + accept weights override for recs
+1) In server/routes.ts (or equivalent), add a typed alias:
+type Weights = Record<string, number>;
+
+2) Make /api/ab/vote return the updated weights
+
+Replace your vote handler with this (keep your updateFromVote call as-is):
+
+api.post("/api/ab/vote", express.json(), async (req, res) => {
+  const { leftId, rightId, chosenId } = req.body as { leftId: number; rightId: number; chosenId: number };
+  const p = sess(req);
+  const L = CATALOGUE.find(x => x.id === leftId);
+  const R = CATALOGUE.find(x => x.id === rightId);
+  if (!L || !R) return res.status(400).json({ ok: false, error: "bad ids" });
+
+  updateFromVote(p, L, R, chosenId);      // your SGD update
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ ok: true, rounds: p.rounds, w: p.w as Weights });
+});
+
+3) Add a recs endpoint that accepts weights in the body
+
+(Use POST to avoid URL length limits.)
+
+api.post("/api/recs", express.json(), async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  await buildAll();
+
+  // if client sends its own weights, use them; else fall back to session profile
+  const top: number = Number(req.body?.top ?? 20);
+  const roundHint: number | undefined = req.body?.rounds;
+  const wOverride: Weights | undefined = req.body?.w;
+
+  const prof = sess(req);
+  const w: Weights = wOverride ?? prof.w;
+  const rounds = roundHint ?? prof.rounds;
+
+  // preference/prior blend — make preferences dominate quickly
+  const prefWeight = rounds >= 5 ? 0.9 : rounds >= 2 ? 0.8 : 0.7;
+  const priorWeight = 1 - prefWeight;
+
+  const scored = CATALOGUE
+    .filter(x => !AB_SET.has(x.id)) // rec pool only
+    .map(it => {
+      const pref = dot(w, feats(it));
+      const prior = (it.voteAverage || 0) * Math.log(1 + (it.voteCount || 1));
+      return { it, s: prefWeight * pref + priorWeight * (prior / 20) };
+    })
+    .sort((a, b) => b.s - a.s)
+    .slice(0, top)
+    .map(({ it }) => ({
+      id: it.id,
+      title: it.title,
+      year: it.year,
+      image: it.posterUrl || it.backdropUrl,
+      posterUrl: it.posterUrl,
+      backdropUrl: it.backdropUrl,
+      genres: it.genres,
+    }));
+
+  return res.json({ ok: true, rounds, items: scored });
+});
+
+
+That’s it for the server. Your existing /api/trailers?ids=… remains unchanged.
+
+B) CLIENT — store weights locally; send them when asking for recs
+1) Add a tiny local “model” store
+
+client/src/lib/userModel.ts
+
+const K_W = "paf.w";
+const K_R = "paf.rounds";
+
+export function loadW(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(K_W) || "{}"); }
+  catch { return {}; }
+}
+export function saveW(w: Record<string, number>) {
+  localStorage.setItem(K_W, JSON.stringify(w));
+}
+export function loadRounds(): number {
+  return Number(localStorage.getItem(K_R) || 0);
+}
+export function saveRounds(r: number) {
+  localStorage.setItem(K_R, String(r));
+}
+export function clearModel() { localStorage.removeItem(K_W); localStorage.removeItem(K_R); }
+
+2) Make your vote handler save the returned weights
+
+Where you currently post votes, change to:
+
+import { saveW, saveRounds } from "../lib/userModel";
+
+const resp = await fetch("/api/ab/vote", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ leftId, rightId, chosenId }),
+}).then(r => r.json());
+
+if (resp?.ok) {
+  saveW(resp.w || {});
+  saveRounds(resp.rounds || 0);
+  // trigger your existing “refresh” (if you have an event bus, fire it here)
+}
+
+3) When fetching recommendations, POST your weights
+
+Example hook (or wherever you load recs):
+
+import { loadW, loadRounds } from "../lib/userModel";
+
+export async function fetchRecs(top = 20) {
+  const body = { top, w: loadW(), rounds: loadRounds() };
+  const recRes = await fetch("/api/recs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    body: JSON.stringify(body),
+  }).then(r => r.json());
+
+  // then fetch trailers for those ids (unchanged)
+  const ids = (recRes.items || []).map((m:any) => m.id).join(",");
+  const trRes = await fetch(`/api/trailers?ids=${encodeURIComponent(ids)}`, {
+    headers: { "Cache-Control": "no-store" },
+    cache: "no-store",
+  }).then(r => r.json());
+
+  const byId = trRes.trailers || {};
+  return (recRes.items || []).map((m:any) => ({ ...m, trailer: byId[m.id] ?? null }));
+}
+
+
+Call fetchRecs() after each vote (or on your “prefs updated” event) and render.
+
+Why this fixes your “same recs after 2 goes”
+
+No reliance on server memory or SID sharing. The client carries the updated weights (w) and the round count; /api/recs ranks using that exact vector.
+
+No caching issues. We use POST with no-store, so you always get a fresh ranking.
+
+Visible change after each vote. We blend toward preference-heavy scoring as rounds increases (0.8 after 2 votes, 0.9 after 5), so the list reshuffles quickly.
+
+If you still see no movement after doing exactly this, the only remaining cause is the A/B pairs don’t differ in features (rare). In that case, click a couple of pairs with clearly different actors/directors/genres—you’ll see the recs pivot immediately.
