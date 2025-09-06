@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import Header from './components/Header';
@@ -34,6 +33,20 @@ async function fetchWithSession(url: string) {
   });
 }
 
+// Convert server movie format to client Movie format
+function convertServerMovie(serverMovie: any): Movie {
+  return {
+    id: `movie_${serverMovie.id}`,
+    title: serverMovie.title || "Unknown",
+    year: serverMovie.year || 2024,
+    posterUrl: serverMovie.posterUrl || "",
+    backdropUrl: "", // Will be populated when fetching trailers if needed
+    overview: "", // Placeholder
+    genres: (serverMovie.genres || []).slice(0, 3).map((g: any) => g.name || "Genre"),
+    sourceListId: serverMovie.sourceListId,
+  };
+}
+
 export default function AppEnhanced() {
   const [posters, setPosters] = useState<Movie[]>([]);
   const [recommendations, setRecommendations] = useState<Movie[]>([]);
@@ -54,27 +67,29 @@ export default function AppEnhanced() {
       setLoading(true);
       setError(null);
 
-      console.log('[APP] Loading posters...');
+      console.log('[APP] Loading catalogue from server...');
       // Get poster movies (75 total: 15 per list)
       const posterRes = await fetchWithSession(`/api/catalogue?t=${Date.now()}`);
       const posterData = await posterRes.json();
-      
+
       if (!posterData.ok || !Array.isArray(posterData.items)) {
         throw new Error('Failed to load poster catalogue');
       }
-      
+
       console.log(`[APP] Loaded ${posterData.items.length} poster movies`);
-      setPosters(posterData.items);
+      // Convert server format to client format
+      const movies = posterData.items.map(convertServerMovie);
+      setPosters(movies);
 
       // Get recommendations (random 6 from remaining pool)
       console.log('[APP] Loading recommendations...');
       const recRes = await fetchWithSession(`/api/recs?limit=6&t=${Date.now()}`);
       const recData = await recRes.json();
-      
+
       if (!recData.ok || !Array.isArray(recData.recs)) {
         throw new Error('Failed to load recommendations');
       }
-      
+
       console.log(`[APP] Loaded ${recData.recs.length} recommendations from pool of ${recData.total}`);
       setRecommendations(recData.recs);
 
@@ -84,7 +99,7 @@ export default function AppEnhanced() {
         const ids = recData.recs.map((m: Movie) => m.id);
         const trailerRes = await fetchWithSession(`/api/trailers?ids=${ids.join(',')}&t=${Date.now()}`);
         const trailerData = await trailerRes.json();
-        
+
         if (trailerData.ok && trailerData.trailers) {
           console.log(`[APP] Loaded trailers:`, Object.keys(trailerData.trailers).length);
           setTrailers(trailerData.trailers);
@@ -101,7 +116,7 @@ export default function AppEnhanced() {
 
   const handlePosterChoice = (winner: Movie, loser: Movie) => {
     console.log(`[APP] Choice: "${winner.title}" beat "${loser.title}"`);
-    
+
     // Move to next pair
     if (currentPairIndex < Math.floor(posters.length / 2) - 1) {
       setCurrentPairIndex(currentPairIndex + 1);
@@ -184,13 +199,13 @@ export default function AppEnhanced() {
           ></div>
         </div>
         <Header choices={currentPairIndex + 1} onboardingComplete={true} />
-        
+
         <section className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
           <div className="text-center mb-8">
             <h2 className="text-4xl font-bold mb-4 text-gradient">Your Personalized Trailer Reel</h2>
             <p className="text-xl text-gray-300">Random selection from our premium catalogue</p>
           </div>
-          
+
           <TrailerPlayer 
             movies={recommendations} 
             trailers={trailers}
@@ -229,13 +244,13 @@ export default function AppEnhanced() {
           }}
         ></div>
       </div>
-      
+
       <Header 
         choices={currentPairIndex} 
         onboardingComplete={false}
         catalogueSize={posters.length}
       />
-      
+
       <main className="relative z-10 max-w-7xl mx-auto px-6 pb-12">
         <div className="text-center mb-8">
           <h2 className="text-4xl font-bold mb-4 text-gradient">Quick Picks</h2>
