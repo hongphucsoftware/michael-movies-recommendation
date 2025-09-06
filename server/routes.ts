@@ -712,7 +712,8 @@ api.get("/trailer", async (req:Request, res:Response) => {
     const r = await fetch(url);
     const j:any = await r.json();
     const vids:any[] = j?.results || [];
-    const yt = vids.find(v=>v.site==="YouTube" && /(Trailer|Teaser)/i.test(v.name)) || vids.find(v=>v.site==="YouTube");
+    const yt = vids.find(v => v.site === "YouTube" && /(Trailer|Teaser|Official|Clip)/i.test(v.name))
+             || vids.find(v => v.site === "YouTube");
     const trailer = yt ? { url: `https://www.youtube.com/embed/${yt.key}` } : null;
     res.json({ ok:true, trailer });
   } catch {
