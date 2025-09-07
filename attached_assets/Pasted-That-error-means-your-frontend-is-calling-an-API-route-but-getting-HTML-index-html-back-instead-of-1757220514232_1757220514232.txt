@@ -1,0 +1,108 @@
+That error means your frontend is calling an API route but getting HTML (index.html) back instead of JSON. Two common causes:
+
+/api is mounted after the static catch-all → the request falls through to the SPA.
+
+Client fetches use api/... (no leading slash) → the browser requests a relative path (e.g. /some/page/api/...) and hits the SPA.
+
+Fix it with these minimal steps.
+
+1) Make sure the API is mounted before static + catch-all
+
+Replace the entire contents of server/src/index.ts with this (copy-paste):
+
+import express from "express";
+import path from "path";
+import fs from "fs";
+import api from "./routes/api"; // keep your existing api router import
+
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json());
+
+// ✅ 1) API FIRST
+app.use("/api", api);
+
+// ✅ 2) Serve built client (robust path finder)
+const candidates = [
+  path.resolve(__dirname, "../client"),  // typical vite outDir: dist/client
+  path.resolve(__dirname, "../public"),  // some zips use dist/public
+];
+const clientDir =
+  candidates.find(p => fs.existsSync(path.join(p, "index.html"))) || candidates[0];
+
+app.use(express.static(clientDir));
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(clientDir, "index.html"));
+});
+
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, "0.0.0.0", () => console.log("Server on", PORT, "clientDir:", clientDir));
+
+
+If you have a stray server/index.ts (not in src/), delete it so only the compiled dist/server/index.js runs.
+
+2) Ensure the client fetches use absolute /api/... URLs
+
+In your client code, search & fix any relative calls:
+
+Shell (from project root):
+
+# Find bad calls like fetch('api/...') or fetch(`api/...`)
+grep -R "fetch(['\`]api/" -n client || true
+
+# If you see results, change them to start with a slash: /api/...
+# Example quick fix (review diffs):
+sed -i 's/fetch([`'\"']api\\//fetch(\\'\\/api\\//g' client/**/*.ts client/**/*.tsx 2>/dev/null || true
+
+
+Also check any axios/fetch wrappers so the base path includes the leading /.
+
+3) Build the client where the server expects it
+
+Your server now auto-detects dist/client or dist/public. Make sure Vite builds to one of those:
+
+If your zip already outputs to dist/public you’re fine.
+
+If not, set client/vite.config.ts to:
+
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+export default defineConfig({
+  plugins: [react()],
+  build: { outDir: "dist/client", emptyOutDir: true },
+});
+
+
+Either way the server will find it.
+
+4) Start clean
+
+In the Replit Shell:
+
+npm run build
+npm run start:prod
+
+
+(Ensure .replit has run = "npm run start:prod" and you have TMDB_API_KEY in Secrets.)
+
+5) Quick health checks
+
+In the Replit webview (or separate tab):
+
+/api/health → should return JSON (not HTML).
+
+/api/catalogue (or whatever your API returns for posters) → JSON.
+
+If you still see the error, open the browser Network tab and click the failing request; if Status = 200 text/html, it’s still hitting the SPA, which means:
+
+Wrong route path (typo), or
+
+A relative URL (missing leading slash) still exists somewhere.
+
+Why this works
+
+Mounting /api before the static middleware prevents the SPA from swallowing API routes.
+
+Using absolute /api/... URLs prevents the browser from requesting /some/page/api/....
+
+Serving the correct dist/ folder guarantees / returns your built app, not an empty directory.
