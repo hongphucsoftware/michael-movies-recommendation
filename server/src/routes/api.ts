@@ -19,7 +19,12 @@ function getSid(req: any, res: any) {
 }
 
 router.get("/health", (req, res) => {
-  res.json({ ok: true, counts: { catalogue: getCatalogue().length, hydrated: getHydrated().length } });
+  try {
+    res.json({ ok: true, counts: { catalogue: getCatalogue().length, hydrated: getHydrated().length } });
+  } catch (error) {
+    console.error('Health check error:', error);
+    res.status(500).json({ error: 'Health check failed' });
+  }
 });
 
 router.get("/catalogue/status", (req, res) => {
@@ -29,18 +34,23 @@ router.get("/catalogue/status", (req, res) => {
 });
 
 router.get("/pair", (req, res) => {
-  const sid = getSid(req, res);
-  const user = getOrCreateUser(sid);
-  const pool = getHydrated();
-  const pair = chooseNextPair(user, pool);
-  if (!pair) return res.status(400).json({ error: "Not enough items to pair." });
-  const f = (m: any) => ({
-    imdbId: m.imdbId,
-    title: m.title,
-    posterUrl: m.posterPath ? (POSTER_BASE + m.posterPath) : null,
-    trailerKey: m.trailerKey || null
-  });
-  res.json({ a: f(pair.a), b: f(pair.b) });
+  try {
+    const sid = getSid(req, res);
+    const user = getOrCreateUser(sid);
+    const pool = getHydrated();
+    const pair = chooseNextPair(user, pool);
+    if (!pair) return res.status(400).json({ error: "Not enough items to pair." });
+    const f = (m: any) => ({
+      imdbId: m.imdbId,
+      title: m.title,
+      posterUrl: m.posterPath ? (POSTER_BASE + m.posterPath) : null,
+      trailerKey: m.trailerKey || null
+    });
+    res.json({ a: f(pair.a), b: f(pair.b) });
+  } catch (error) {
+    console.error('Pair route error:', error);
+    res.status(500).json({ error: 'Failed to get pair' });
+  }
 });
 
 router.post("/vote", (req, res) => {
@@ -59,11 +69,16 @@ router.post("/vote", (req, res) => {
 });
 
 router.get("/recommendations", (req, res) => {
-  const sid = getSid(req, res);
-  const user = getOrCreateUser(sid);
-  const limit = parseInt((req.query.limit as string) || String(DEFAULT_REC_LIMIT), 10) || DEFAULT_REC_LIMIT;
-  const recs = getTopRecommendations(user, getHydrated(), limit);
-  res.json({ items: recs });
+  try {
+    const sid = getSid(req, res);
+    const user = getOrCreateUser(sid);
+    const limit = parseInt((req.query.limit as string) || String(DEFAULT_REC_LIMIT), 10) || DEFAULT_REC_LIMIT;
+    const recs = getTopRecommendations(user, getHydrated(), limit);
+    res.json({ items: recs });
+  } catch (error) {
+    console.error('Recommendations route error:', error);
+    res.status(500).json({ error: 'Failed to get recommendations' });
+  }
 });
 
 router.post("/feedback", (req, res) => {
