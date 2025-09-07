@@ -7,7 +7,7 @@ export async function hydrateOne(base:MovieLite):Promise<MovieHydrated>{
     const tmdbId=movie.id; const details=await tmdb.get(`/movie/${tmdbId}`,{params:{append_to_response:"videos,keywords,credits"}}); const d=details.data;
     r.tmdbId=tmdbId; r.posterPath=d.poster_path||null; r.backdropPath=d.backdrop_path||null; r.runtime=d.runtime??null; r.decade=(d.release_date&&d.release_date.length>=4)?`${d.release_date.slice(0,3)}0s`:null;
     const vids=d.videos?.results||[]; const trailer=vids.find((v:any)=>v.site==="YouTube"&&/Trailer/i.test(v.type))||vids.find((v:any)=>v.site==="YouTube"); r.trailerKey=trailer?trailer.key:null;
-    const kw=(d.keywords?.keywords||d.keywords||[]).map((k:any)=>(k.name||"").toLowerCase()).filter(Boolean); r.keywords=Array.from(new Set(kw)).slice(0,20);
+    const kw=(d.keywords?.keywords||d.keywords||[]).map((k:any)=>(k.name||"").toLowerCase()).filter(Boolean) as string[]; r.keywords=Array.from(new Set(kw)).slice(0,20);
     const cast=(d.credits?.cast||[]).slice(0,5).map((c:any)=>c.name).filter(Boolean); const crew=(d.credits?.crew||[]).filter((c:any)=>c.job==="Director").map((c:any)=>c.name); r.people=Array.from(new Set([...cast,...crew]));
     if(typeof d.runtime==="number"&&d.runtime>0){r.pace=d.runtime<=100?"fast":d.runtime<=130?"medium":"slow";}
     const vibes=new Set<string>(), ks=r.keywords||[], has=(s:string)=>ks.some(k=>k.includes(s));

@@ -1,10 +1,10 @@
-import express from "express"; import cors from "cors"; import cookieParser from "cookie-parser";
+import express from "express"; import cors from "cors"; import cookieParser from "cookie-parser"; import path from "path";
 import { IMDB_LISTS, DEFAULT_REC_LIMIT, POSTER_BASE } from "./constants.js";
 import { fetchImdbList } from "./imdb.js"; import { hydrateOne } from "./tmdb.js"; import { buildFeatures } from "./features.js";
 import { getOrCreateUser, tryLoadCache, getCatalogue, setCatalogue, getHydrated, setHydrated } from "./store.js";
 import { chooseNextPair, updateContentWeights, updateElo, getTopRecommendations } from "./model.js"; import { MovieHydrated } from "./types.js";
 
-const app=express(); app.use(cors({origin:true,credentials:true})); app.use(express.json()); app.use(cookieParser());
+const app=express(); app.disable("x-powered-by"); app.use(express.json()); app.use(cookieParser());
 function getSid(req:any,res:any){let sid=req.cookies["sid"]; if(!sid){sid=Math.random().toString(36).slice(2);res.cookie("sid",sid,{httpOnly:false,sameSite:"lax"});} return sid;}
 
 app.get("/api/health",(req,res)=>{res.json({ok:true,counts:{catalogue:getCatalogue().length,hydrated:getHydrated().length}});});
@@ -19,6 +19,13 @@ app.get("/api/recommendations",(req,res)=>{const sid=getSid(req,res);const user=
 app.post("/api/feedback",(req,res)=>{const sid=getSid(req,res);const user=getOrCreateUser(sid);const {movieId,action}=req.body as {movieId:string;action:'seen'|'block'|'like'|'dislike'};
   if(action==='seen')user.seen.add(movieId); if(action==='block')user.blocked.add(movieId); res.json({ok:true});});
 
+// ✅ Serve the built client  
+const clientDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../dist/public");
+app.use(express.static(clientDir));
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(clientDir, "index.html"));
+});
+
 async function buildCatalogue(){tryLoadCache(); if(getHydrated().length){console.log("[catalogue] Loaded from cache:",getHydrated().length);return;}
   console.log("[catalogue] Fetching IMDb lists…"); const all:Map<string,{imdbId:string;title:string;year?:number}>=new Map();
   for(const url of IMDB_LISTS){try{const items=await fetchImdbList(url); items.forEach(m=>all.set(m.imdbId,m));}catch{console.warn("Failed list",url);}}
@@ -26,4 +33,4 @@ async function buildCatalogue(){tryLoadCache(); if(getHydrated().length){console
   console.log("[hydrate] Hydrating via TMDb…"); const hydrated:MovieHydrated[]=[]; for(const m of basics){try{const h=await hydrateOne(m); h.features=buildFeatures(h); hydrated.push(h);}catch{}}
   setHydrated(hydrated); console.log("[hydrate] Hydrated",hydrated.length,"items.");}
 
-const PORT=process.env.PORT||3001; app.listen(PORT,()=>{console.log("PickAFlick server listening on",PORT); buildCatalogue().catch(()=>{});});
+const PORT=Number(process.env.PORT||5000); app.listen(PORT,"0.0.0.0",()=>{console.log("PickAFlick server listening on",PORT); buildCatalogue().catch(()=>{});});

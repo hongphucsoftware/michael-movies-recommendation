@@ -1,2 +1,2 @@
-// Wrapper to start the new PickaFlick server structure
-import "./src/index.js";
+// Wrapper to run the compiled server
+import "./dist/index.js";
