@@ -1,89 +1,49 @@
 import { Router } from "express";
-import { getState } from "../state";
 const api = Router();
 
-function noStore(res: any) {
-  res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-  res.set("Pragma", "no-cache");
-  res.set("Vary", "x-session-id");
-}
-function shuffleInPlace<T>(a: T[]) {
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-function sample<T>(arr: T[], n: number): T[] {
-  if (n >= arr.length) return [...arr];
-  const a = [...arr];
-  shuffleInPlace(a);
-  return a.slice(0, n);
-}
+// Sample movie data - no external dependencies
+const movies = [
+  { id: 550, title: "Fight Club", year: 1999, posterUrl: "https://image.tmdb.org/t/p/w500/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg" },
+  { id: 13, title: "Forrest Gump", year: 1994, posterUrl: "https://image.tmdb.org/t/p/w500/arw2vcBveWOVZr6pxd9XTd1TdQa.jpg" },
+  { id: 238, title: "The Godfather", year: 1972, posterUrl: "https://image.tmdb.org/t/p/w500/3bhkrj58Vtu7enYsRolD1fZdja1.jpg" },
+  { id: 424, title: "Schindler's List", year: 1993, posterUrl: "https://image.tmdb.org/t/p/w500/sF1U4EUQS8YHUYjNl3pMGNIQyr0.jpg" },
+  { id: 389, title: "12 Angry Men", year: 1957, posterUrl: "https://image.tmdb.org/t/p/w500/ow3wq89wM8qd5X7hWKxiRfsFf9C.jpg" },
+  { id: 129, title: "Spirited Away", year: 2001, posterUrl: "https://image.tmdb.org/t/p/w500/39wmItIWsg5sZMyRUHLkWBcuVCM.jpg" }
+];
 
-api.get("/health", async (_req, res) => {
-  const st = await getState();
-  res.json({
-    ok: true,
-    counts: { all: st.all.length, posters: st.postersFlat.length, recPool: st.recPool.length },
-    builtAt: st.builtAt
-  });
+api.get("/health", (_req, res) => {
+  res.json({ ok: true, status: "simplified", movies: movies.length });
 });
 
-api.get("/catalogue", async (req, res) => {
-  noStore(res);
-  const st = await getState();
-  if (req.query.grouped === "1") return res.json({ ok: true, lists: st.postersByList });
-  res.json({ ok: true, items: st.postersFlat });
+api.get("/catalogue", (_req, res) => {
+  res.json({ ok: true, items: movies });
 });
 
-api.get("/catalogue-all", async (_req, res) => {
-  noStore(res);
-  const st = await getState();
-  const perListCounts: Record<string, number> = {};
-  for (const [k, v] of Object.entries(st.byList)) perListCounts[k] = v.length;
-  res.json({
-    ok: true,
-    totals: { all: st.all.length, posters: st.postersFlat.length, recPool: st.recPool.length, perListCounts }
-  });
+api.get("/catalogue-all", (_req, res) => {
+  res.json({ ok: true, totals: { all: movies.length, posters: movies.length } });
 });
 
-api.get("/recs", async (req, res) => {
-  noStore(res);
-  const st = await getState();
-  const limit = Number(req.query.limit ?? 6);
-  res.json({ ok: true, recs: sample(st.recPool, limit) });
+api.get("/recs", (req, res) => {
+  const limit = Number(req.query.limit) || 6;
+  const shuffled = [...movies].sort(() => Math.random() - 0.5);
+  res.json({ ok: true, recs: shuffled.slice(0, limit) });
 });
 
-api.get("/trailers", async (req, res) => {
-  noStore(res);
-  const TMDB_API = "https://api.themoviedb.org/3";
-  const TMDB_KEY = process.env.TMDB_API_KEY as string;
-  const ids = String(req.query.ids ?? "")
-    .split(",").map(s => s.trim()).filter(Boolean).map(Number).filter(n => Number.isFinite(n));
-  const out: Record<number, string|null> = {};
+api.get("/trailers", (req, res) => {
+  const ids = String(req.query.ids || "").split(",").map(Number).filter(Boolean);
+  const trailers: Record<number, string> = {
+    550: "https://www.youtube.com/embed/SUXWAEX2jlg",
+    13: "https://www.youtube.com/embed/bLvqoHBptjg",
+    238: "https://www.youtube.com/embed/sY1S34973zA",
+    424: "https://www.youtube.com/embed/gG22XNhtnoY",
+    389: "https://www.youtube.com/embed/_13J_9B5jEk",
+    129: "https://www.youtube.com/embed/ByXuk9QqQkk"
+  };
+  const result: Record<number, string | null> = {};
   for (const id of ids) {
-    try {
-      const data = await fetch(`${TMDB_API}/movie/${id}/videos?language=en-US&api_key=${TMDB_KEY}`).then(r => r.json());
-      const vids = Array.isArray(data?.results) ? data.results : [];
-      const yt = vids.find((v: any) =>
-        v.site === "YouTube" && /Trailer|Teaser|Official|Clip/i.test(`${v.type} ${v.name}`) && v.key
-      );
-      out[id] = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
-    } catch { out[id] = null; }
+    result[id] = trailers[id] || null;
   }
-  res.json({ ok: true, trailers: out });
-});
-
-/* Optional compatibility for old UI: safe no-ops. Remove later if unused. */
-api.get("/ab/next", async (_req, res) => {
-  const st = await getState();
-  const [left, right] = sample(st.postersFlat, 2);
-  res.json({ ok: true, left, right });
-});
-api.post("/ab/vote", async (_req, res) => {
-  const st = await getState();
-  res.json({ ok: true, rounds: 1, recs: sample(st.recPool, 6) });
+  res.json({ ok: true, trailers: result });
 });
 
 export default api;

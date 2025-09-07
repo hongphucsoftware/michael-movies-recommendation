@@ -1,2 +1,2 @@
-// Simplified server entry point - import the compiled version
-import("./dist/index.js");
+// Direct server without compilation - run source directly
+import("./src/index.js");

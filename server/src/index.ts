@@ -11,9 +11,11 @@ app.use(express.json());
 app.use("/api", api);
 
 // auto-detect built client in dist/client or dist/public
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const candidates = [
   path.resolve(__dirname, "../client"),
   path.resolve(__dirname, "../public"),
+  path.resolve(__dirname, "../../dist/public"), // for compiled server
 ];
 const clientDir =
   candidates.find(p => fs.existsSync(path.join(p, "index.html"))) || candidates[0];
