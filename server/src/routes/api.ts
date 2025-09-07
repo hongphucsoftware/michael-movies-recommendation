@@ -1,93 +1,89 @@
-import express from "express";
-import { IMDB_LISTS, DEFAULT_REC_LIMIT, POSTER_BASE } from "../constants.js";
-import { fetchImdbList } from "../imdb.js"; 
-import { hydrateOne } from "../tmdb.js"; 
-import { buildFeatures } from "../features.js";
-import { getOrCreateUser, tryLoadCache, getCatalogue, setCatalogue, getHydrated, setHydrated } from "../store.js";
-import { chooseNextPair, updateContentWeights, updateElo, getTopRecommendations } from "../model.js"; 
-import { MovieHydrated } from "../types.js";
+import { Router } from "express";
+import { getState } from "../state";
+const api = Router();
 
-const router = express.Router();
-
-function getSid(req: any, res: any) {
-  let sid = req.cookies["sid"]; 
-  if (!sid) {
-    sid = Math.random().toString(36).slice(2);
-    res.cookie("sid", sid, { httpOnly: false, sameSite: "lax" });
-  } 
-  return sid;
+function noStore(res: any) {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.set("Pragma", "no-cache");
+  res.set("Vary", "x-session-id");
+}
+function shuffleInPlace<T>(a: T[]) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function sample<T>(arr: T[], n: number): T[] {
+  if (n >= arr.length) return [...arr];
+  const a = [...arr];
+  shuffleInPlace(a);
+  return a.slice(0, n);
 }
 
-router.get("/health", (req, res) => {
-  try {
-    res.json({ ok: true, counts: { catalogue: getCatalogue().length, hydrated: getHydrated().length } });
-  } catch (error) {
-    console.error('Health check error:', error);
-    res.status(500).json({ error: 'Health check failed' });
+api.get("/health", async (_req, res) => {
+  const st = await getState();
+  res.json({
+    ok: true,
+    counts: { all: st.all.length, posters: st.postersFlat.length, recPool: st.recPool.length },
+    builtAt: st.builtAt
+  });
+});
+
+api.get("/catalogue", async (req, res) => {
+  noStore(res);
+  const st = await getState();
+  if (req.query.grouped === "1") return res.json({ ok: true, lists: st.postersByList });
+  res.json({ ok: true, items: st.postersFlat });
+});
+
+api.get("/catalogue-all", async (_req, res) => {
+  noStore(res);
+  const st = await getState();
+  const perListCounts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(st.byList)) perListCounts[k] = v.length;
+  res.json({
+    ok: true,
+    totals: { all: st.all.length, posters: st.postersFlat.length, recPool: st.recPool.length, perListCounts }
+  });
+});
+
+api.get("/recs", async (req, res) => {
+  noStore(res);
+  const st = await getState();
+  const limit = Number(req.query.limit ?? 6);
+  res.json({ ok: true, recs: sample(st.recPool, limit) });
+});
+
+api.get("/trailers", async (req, res) => {
+  noStore(res);
+  const TMDB_API = "https://api.themoviedb.org/3";
+  const TMDB_KEY = process.env.TMDB_API_KEY as string;
+  const ids = String(req.query.ids ?? "")
+    .split(",").map(s => s.trim()).filter(Boolean).map(Number).filter(n => Number.isFinite(n));
+  const out: Record<number, string|null> = {};
+  for (const id of ids) {
+    try {
+      const data = await fetch(`${TMDB_API}/movie/${id}/videos?language=en-US&api_key=${TMDB_KEY}`).then(r => r.json());
+      const vids = Array.isArray(data?.results) ? data.results : [];
+      const yt = vids.find((v: any) =>
+        v.site === "YouTube" && /Trailer|Teaser|Official|Clip/i.test(`${v.type} ${v.name}`) && v.key
+      );
+      out[id] = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
+    } catch { out[id] = null; }
   }
+  res.json({ ok: true, trailers: out });
 });
 
-router.get("/catalogue/status", (req, res) => {
-  const hyd = getHydrated();
-  const ready = hyd.filter(x => x.posterPath || x.trailerKey);
-  res.json({ total: hyd.length, ready: ready.length });
+/* Optional compatibility for old UI: safe no-ops. Remove later if unused. */
+api.get("/ab/next", async (_req, res) => {
+  const st = await getState();
+  const [left, right] = sample(st.postersFlat, 2);
+  res.json({ ok: true, left, right });
+});
+api.post("/ab/vote", async (_req, res) => {
+  const st = await getState();
+  res.json({ ok: true, rounds: 1, recs: sample(st.recPool, 6) });
 });
 
-router.get("/pair", (req, res) => {
-  try {
-    const sid = getSid(req, res);
-    const user = getOrCreateUser(sid);
-    const pool = getHydrated();
-    const pair = chooseNextPair(user, pool);
-    if (!pair) return res.status(400).json({ error: "Not enough items to pair." });
-    const f = (m: any) => ({
-      imdbId: m.imdbId,
-      title: m.title,
-      posterUrl: m.posterPath ? (POSTER_BASE + m.posterPath) : null,
-      trailerKey: m.trailerKey || null
-    });
-    res.json({ a: f(pair.a), b: f(pair.b) });
-  } catch (error) {
-    console.error('Pair route error:', error);
-    res.status(500).json({ error: 'Failed to get pair' });
-  }
-});
-
-router.post("/vote", (req, res) => {
-  const sid = getSid(req, res);
-  const user = getOrCreateUser(sid);
-  const { a, b, winner } = req.body as { a: string; b: string; winner: 'A' | 'B' };
-  const pool = getHydrated();
-  const mA = pool.find(x => x.imdbId === a);
-  const mB = pool.find(x => x.imdbId === b);
-  if (!mA || !mB) return res.status(400).json({ error: "Unknown movie(s)" });
-  if (mA.features && mB.features) updateContentWeights(user, mA.features, mB.features, winner);
-  updateElo(user, a, b, winner);
-  if (winner === 'A') user.winners.add(a); 
-  else user.winners.add(b);
-  res.json({ ok: true });
-});
-
-router.get("/recommendations", (req, res) => {
-  try {
-    const sid = getSid(req, res);
-    const user = getOrCreateUser(sid);
-    const limit = parseInt((req.query.limit as string) || String(DEFAULT_REC_LIMIT), 10) || DEFAULT_REC_LIMIT;
-    const recs = getTopRecommendations(user, getHydrated(), limit);
-    res.json({ items: recs });
-  } catch (error) {
-    console.error('Recommendations route error:', error);
-    res.status(500).json({ error: 'Failed to get recommendations' });
-  }
-});
-
-router.post("/feedback", (req, res) => {
-  const sid = getSid(req, res);
-  const user = getOrCreateUser(sid);
-  const { movieId, action } = req.body as { movieId: string; action: 'seen' | 'block' | 'like' | 'dislike' };
-  if (action === 'seen') user.seen.add(movieId);
-  if (action === 'block') user.blocked.add(movieId);
-  res.json({ ok: true });
-});
-
-export default router;
+export default api;

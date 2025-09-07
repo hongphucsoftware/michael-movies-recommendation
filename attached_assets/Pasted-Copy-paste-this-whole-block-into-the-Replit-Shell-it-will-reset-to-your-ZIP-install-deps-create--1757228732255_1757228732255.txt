@@ -1,0 +1,385 @@
+Copy-paste this whole block into the Replit Shell — it will reset to your ZIP, install deps, create the simple random server, and start it. No A/B, no ML, just your five lists → 15 posters per list (75) + 6 random trailers from the rest.
+
+# 0) Reset to your uploaded ZIP (change the filename if different)
+ZIP=FileVaultb.zip
+find . -maxdepth 1 ! -name '.' ! -name "$ZIP" -exec rm -rf {} +
+unzip -o "$ZIP"
+
+# 1) Ensure dependencies (safe to run even if already present)
+npm i express cheerio
+npm i -D typescript @types/node @types/express
+
+# 2) Create server folder structure (if not already there)
+mkdir -p server/src/config server/src/routes
+
+# 3) Write server/tsconfig.json
+cat > server/tsconfig.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "outDir": "../dist/server",
+    "rootDir": "./src",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": false
+  },
+  "include": ["src"]
+}
+EOF
+
+# 4) server/src/config/lists.ts  (ONLY these 5 lists)
+cat > server/src/config/lists.ts <<'EOF'
+export const IMDB_LISTS = [
+  { id: "ls094921320", url: "https://www.imdb.com/list/ls094921320/" },
+  { id: "ls003501243", url: "https://www.imdb.com/list/ls003501243/" },
+  { id: "ls002065120", url: "https://www.imdb.com/list/ls002065120/" },
+  { id: "ls000873904", url: "https://www.imdb.com/list/ls000873904/" },
+  { id: "ls005747458", url: "https://www.imdb.com/list/ls005747458/" }
+];
+EOF
+
+# 5) server/src/types.ts
+cat > server/src/types.ts <<'EOF'
+export type BasicImdbItem = { title: string; year: number | null };
+
+export type CatalogueMovie = {
+  id: number; // TMDb id
+  title: string;
+  year: number | null;
+  overview: string | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  genres: Array<{ id: number; name: string }>;
+  sourceListId: string;
+  sourceListUrl: string;
+};
+EOF
+
+# 6) server/src/buildCatalogue.ts  (scrape IMDb, hydrate TMDb, sample)
+cat > server/src/buildCatalogue.ts <<'EOF'
+import * as cheerio from "cheerio";
+import { IMDB_LISTS } from "./config/lists";
+import type { BasicImdbItem, CatalogueMovie } from "./types";
+
+const TMDB_API = "https://api.themoviedb.org/3";
+const TMDB_IMG = "https://image.tmdb.org/t/p";
+const TMDB_KEY = process.env.TMDB_API_KEY as string;
+if (!TMDB_KEY) throw new Error("Missing TMDB_API_KEY");
+
+function extractYear(s: string): number | null {
+  const m = s?.match?.(/(19|20)\d{2}/);
+  return m ? Number(m[0]) : null;
+}
+
+async function scrapeImdbListAll(listId: string): Promise<BasicImdbItem[]> {
+  let page = 1;
+  const out: BasicImdbItem[] = [];
+  while (true) {
+    const url = `https://www.imdb.com/list/${listId}/?mode=detail&page=${page}`;
+    const html = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (PickAFlick/1.0)" } }).then(r => r.text());
+    const $ = cheerio.load(html);
+    const oldRows = $(".lister-item").toArray();
+    const newRows = $(".ipc-metadata-list-summary-item").toArray();
+    if (oldRows.length === 0 && newRows.length === 0) break;
+
+    if (oldRows.length) {
+      for (const el of oldRows) {
+        const title = $(el).find(".lister-item-header a").first().text().trim();
+        const year = extractYear($(el).find(".lister-item-year").first().text());
+        if (title) out.push({ title, year });
+      }
+    } else {
+      for (const el of newRows) {
+        const title = $(el).find("a.ipc-title-link-wrapper").first().text().trim();
+        const year = extractYear($(el).find(".cli-title-metadata-item").toArray().map(n => $(n).text().trim()).join(" "));
+        if (title) out.push({ title, year });
+      }
+    }
+    page++;
+  }
+  return out;
+}
+
+async function tmdbSearchOne(title: string, year: number | null) {
+  const q = new URLSearchParams({ query: title, include_adult: "false", language: "en-US", page: "1" });
+  if (year) q.set("year", String(year));
+  const url = `${TMDB_API}/search/movie?${q}&api_key=${TMDB_KEY}`;
+  const json = await fetch(url).then(r => r.json());
+  return json?.results?.[0] ?? null;
+}
+
+async function tmdbDetails(id: number) {
+  const url = `${TMDB_API}/movie/${id}?append_to_response=credits&language=en-US&api_key=${TMDB_KEY}`;
+  return fetch(url).then(r => r.json());
+}
+
+function img(kind: "poster"|"backdrop", path?: string|null) {
+  if (!path) return null;
+  return kind === "poster" ? `${TMDB_IMG}/w500${path}` : `${TMDB_IMG}/w780${path}`;
+}
+
+function shuffleInPlace<T>(a: T[]) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function sample<T>(arr: T[], n: number): T[] {
+  if (n >= arr.length) return [...arr];
+  const copy = [...arr];
+  shuffleInPlace(copy);
+  return copy.slice(0, n);
+}
+
+export type BuiltState = {
+  all: CatalogueMovie[];
+  byList: Record<string, CatalogueMovie[]>;
+  postersByList: Record<string, CatalogueMovie[]>;
+  postersFlat: CatalogueMovie[];
+  recPool: CatalogueMovie[];
+  builtAt: number;
+};
+
+export async function buildCatalogue(): Promise<BuiltState> {
+  const all: CatalogueMovie[] = [];
+  const byList: Record<string, CatalogueMovie[]> = {};
+
+  for (const list of IMDB_LISTS) {
+    const scraped = await scrapeImdbListAll(list.id);
+    const movies: CatalogueMovie[] = [];
+    for (const r of scraped) {
+      const hit = await tmdbSearchOne(r.title, r.year);
+      if (!hit) continue;
+      const det = await tmdbDetails(hit.id);
+      const movie: CatalogueMovie = {
+        id: det.id,
+        title: det.title ?? hit.title ?? "",
+        year: det.release_date ? Number(det.release_date.slice(0, 4)) : r.year,
+        overview: det.overview ?? null,
+        posterUrl: img("poster", det.poster_path ?? hit.poster_path ?? null),
+        backdropUrl: img("backdrop", det.backdrop_path ?? hit.backdrop_path ?? null),
+        genres: Array.isArray(det.genres) ? det.genres.map((g: any) => ({ id: g.id, name: g.name })) : [],
+        sourceListId: list.id,
+        sourceListUrl: list.url,
+      };
+      movies.push(movie);
+      all.push(movie);
+    }
+    byList[list.id] = movies;
+  }
+
+  const postersByList: Record<string, CatalogueMovie[]> = {};
+  for (const l of IMDB_LISTS) postersByList[l.id] = sample(byList[l.id] || [], 15);
+  const postersFlat = Object.values(postersByList).flat();
+  const postersSet = new Set(postersFlat.map(m => m.id));
+  const recPool = all.filter(m => !postersSet.has(m.id));
+
+  return { all, byList, postersByList, postersFlat, recPool, builtAt: Date.now() };
+}
+EOF
+
+# 7) server/src/state.ts  (build on demand + TTL)
+cat > server/src/state.ts <<'EOF'
+import { buildCatalogue, type BuiltState } from "./buildCatalogue";
+let state: BuiltState | null = null;
+const TTL_HOURS = Number(process.env.CATALOGUE_TTL_HOURS ?? 24);
+const TTL_MS = TTL_HOURS * 3600 * 1000;
+
+export async function getState(): Promise<BuiltState> {
+  if (!state || Date.now() - state.builtAt > TTL_MS) {
+    state = await buildCatalogue();
+  }
+  return state;
+}
+EOF
+
+# 8) server/src/routes/api.ts  (random endpoints + trailers)
+cat > server/src/routes/api.ts <<'EOF'
+import { Router } from "express";
+import { getState } from "../state";
+const api = Router();
+
+function noStore(res: any) {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.set("Pragma", "no-cache");
+  res.set("Vary", "x-session-id");
+}
+function shuffleInPlace<T>(a: T[]) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function sample<T>(arr: T[], n: number): T[] {
+  if (n >= arr.length) return [...arr];
+  const a = [...arr];
+  shuffleInPlace(a);
+  return a.slice(0, n);
+}
+
+api.get("/health", async (_req, res) => {
+  const st = await getState();
+  res.json({
+    ok: true,
+    counts: { all: st.all.length, posters: st.postersFlat.length, recPool: st.recPool.length },
+    builtAt: st.builtAt
+  });
+});
+
+api.get("/catalogue", async (req, res) => {
+  noStore(res);
+  const st = await getState();
+  if (req.query.grouped === "1") return res.json({ ok: true, lists: st.postersByList });
+  res.json({ ok: true, items: st.postersFlat });
+});
+
+api.get("/catalogue-all", async (_req, res) => {
+  noStore(res);
+  const st = await getState();
+  const perListCounts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(st.byList)) perListCounts[k] = v.length;
+  res.json({
+    ok: true,
+    totals: { all: st.all.length, posters: st.postersFlat.length, recPool: st.recPool.length, perListCounts }
+  });
+});
+
+api.get("/recs", async (req, res) => {
+  noStore(res);
+  const st = await getState();
+  const limit = Number(req.query.limit ?? 6);
+  res.json({ ok: true, recs: sample(st.recPool, limit) });
+});
+
+api.get("/trailers", async (req, res) => {
+  noStore(res);
+  const TMDB_API = "https://api.themoviedb.org/3";
+  const TMDB_KEY = process.env.TMDB_API_KEY as string;
+  const ids = String(req.query.ids ?? "")
+    .split(",").map(s => s.trim()).filter(Boolean).map(Number).filter(n => Number.isFinite(n));
+  const out: Record<number, string|null> = {};
+  for (const id of ids) {
+    try {
+      const data = await fetch(`${TMDB_API}/movie/${id}/videos?language=en-US&api_key=${TMDB_KEY}`).then(r => r.json());
+      const vids = Array.isArray(data?.results) ? data.results : [];
+      const yt = vids.find((v: any) =>
+        v.site === "YouTube" && /Trailer|Teaser|Official|Clip/i.test(`${v.type} ${v.name}`) && v.key
+      );
+      out[id] = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
+    } catch { out[id] = null; }
+  }
+  res.json({ ok: true, trailers: out });
+});
+
+/* Optional compatibility for old UI: safe no-ops. Remove later if unused. */
+api.get("/ab/next", async (_req, res) => {
+  const st = await getState();
+  const [left, right] = sample(st.postersFlat, 2);
+  res.json({ ok: true, left, right });
+});
+api.post("/ab/vote", async (_req, res) => {
+  const st = await getState();
+  res.json({ ok: true, rounds: 1, recs: sample(st.recPool, 6) });
+});
+
+export default api;
+EOF
+
+# 9) server/src/index.ts  (API FIRST; serve client; auto-detect dist path)
+cat > server/src/index.ts <<'EOF'
+import express from "express";
+import path from "path";
+import fs from "fs";
+import api from "./routes/api";
+
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json());
+
+// API BEFORE static
+app.use("/api", api);
+
+// Detect built client in dist/client OR dist/public
+const candidates = [
+  path.resolve(__dirname, "../client"),
+  path.resolve(__dirname, "../public")
+];
+const clientDir = candidates.find(p => fs.existsSync(path.join(p, "index.html"))) || candidates[0];
+
+app.use(express.static(clientDir));
+app.get("*", (_req, res) => res.sendFile(path.join(clientDir, "index.html")));
+
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, "0.0.0.0", () => console.log("PickAFlick server on", PORT, "clientDir:", clientDir));
+EOF
+
+# 10) Root package.json scripts (minimal + robust)
+# If your package.json already exists, this will merge via jq if available; else overwrite safely.
+if [ -f package.json ] && command -v jq >/dev/null 2>&1; then
+  tmp=$(mktemp)
+  jq '.scripts.build="npm run build:server && npm run build:client"
+      | .scripts["build:server"]="tsc -p server"
+      | .scripts["build:client"]="cd client && npm install && npm run build"
+      | .scripts["start:prod"]="NODE_ENV=production node dist/server/index.js"' package.json > "$tmp" && mv "$tmp" package.json
+else
+  # Fallback simple package.json if missing
+  if [ ! -f package.json ]; then
+cat > package.json <<'EOF'
+{
+  "name": "pickaflick",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "npm run build:server && npm run build:client",
+    "build:server": "tsc -p server",
+    "build:client": "cd client && npm install && npm run build",
+    "start:prod": "NODE_ENV=production node dist/server/index.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.30",
+    "typescript": "^5.4.0"
+  }
+}
+EOF
+  fi
+fi
+
+# 11) Ensure Replit runs the compiled server
+if [ -f .replit ]; then
+  sed -i 's#^run =.*#run = "npm run start:prod"#' .replit 2>/dev/null || true
+else
+  echo 'run = "npm run start:prod"' > .replit
+fi
+
+# 12) Build & start
+npm run build
+npm run start:prod
+
+After it boots
+
+Visit /api/health → should be JSON (not HTML).
+
+Visit /api/catalogue → 75 poster items (15 from each list, random).
+
+Visit /api/recs?limit=6 → 6 random recs from the remaining pool.
+
+The UI should render posters; then call /api/recs → /api/trailers to fill the trailer strip.
+
+If you still see “Unexpected token '<'”
+
+Your client is calling a relative URL like fetch('api/...'). Make them absolute:
+
+# Show any bad calls:
+grep -R "fetch(['\`]api/" -n client || true
+# (then change to fetch('/api/...') in those files)
+
+
+That’s it. This locks the app to your simple random behavior using only the five IMDb lists — no A/B, no ML, no surprises.
