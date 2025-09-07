@@ -1,0 +1,65 @@
+The crash is just “port already in use”. Something is already holding 5000, or your code is hard-coding 5000 instead of using Replit’s PORT env. Do this exactly:
+
+Copy–paste into the Replit Shell
+# 1) Kill any stuck Node servers
+pkill -f node || true
+
+# 2) Make sure the server binds to Replit's PORT (not 5000)
+# (open the file if you want to see it after)
+cat > server/src/index.ts <<'EOF'
+import express from "express";
+import path from "path";
+import fs from "fs";
+import api from "./routes/api"; // keep if you have it; otherwise remove this line and the app.use below
+
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json());
+
+// API FIRST (comment this out if you don't have routes yet)
+// app.use("/api", api);
+
+// auto-detect built client in dist/client or dist/public
+const candidates = [
+  path.resolve(__dirname, "../client"),
+  path.resolve(__dirname, "../public"),
+];
+const clientDir =
+  candidates.find(p => fs.existsSync(path.join(p, "index.html"))) || candidates[0];
+
+app.use(express.static(clientDir));
+app.get("*", (_req, res) => res.sendFile(path.join(clientDir, "index.html")));
+
+const PORT = Number(process.env.PORT || 3000);          // ✅ use Replit PORT
+app.listen(PORT, "0.0.0.0", () => console.log("Server on", PORT, "clientDir:", clientDir));
+EOF
+
+# 3) Ensure run command doesn’t force 5000
+#    (makes Replit run the compiled server without setting PORT=5000)
+printf 'run = "npm run start:prod"\n' > .replit
+
+# 4) Ensure package scripts are correct
+node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.scripts=p.scripts||{};p.scripts["build"]=p.scripts["build"]||"tsc -b && vite build";p.scripts["start:prod"]="NODE_ENV=production node dist/server/index.js";fs.writeFileSync("package.json",JSON.stringify(p,null,2));'
+
+# 5) Rebuild and start
+npm run build
+npm run start:prod
+
+Why this fixes it
+
+Kills any orphan Node that was already listening on 5000.
+
+Forces the server to bind to process.env.PORT (what Replit assigns), not 5000.
+
+Ensures Replit runs the compiled server (start:prod) instead of a dev process that might double-start.
+
+If you still get a port-in-use error after this, run just this once to clear anything lingering:
+
+pkill -f node && npm run start:prod
+
+
+After it boots:
+
+Open /api/health — you should get JSON.
+
+The preview should load instead of “Your app crashed / EADDRINUSE”.
