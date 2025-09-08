@@ -1,0 +1,118 @@
+You’re seeing “Catalogue not ready” because the API returns before the catalogue finishes building. Let’s make the server block until the build is done (so the client never sees that message), and add a tiny build-status endpoint. Copy–paste the steps below into Replit.
+
+1) Replace the build gating (this removes “not ready”)
+
+Shell → paste:
+
+# Replace server/src/state.ts so every API call waits for the build to finish
+cat > server/src/state.ts <<'EOF'
+import { buildCatalogue } from "./buildCatalogue";
+import type { BuiltState } from "./types";
+
+let state: BuiltState | null = null;
+let building: Promise<void> | null = null;
+
+const TTL_HOURS = Number(process.env.CATALOGUE_TTL_HOURS ?? 24);
+const TTL_MS = TTL_HOURS * 3600 * 1000;
+
+function isStale() {
+  return !state || (Date.now() - (state?.builtAt ?? 0) > TTL_MS);
+}
+
+export async function ensureCatalogue(): Promise<void> {
+  if (!isStale()) return;
+  if (!building) {
+    building = (async () => {
+      try {
+        state = await buildCatalogue();
+      } finally {
+        building = null;
+      }
+    })();
+  }
+  await building;
+}
+
+export async function getState(): Promise<BuiltState> {
+  await ensureCatalogue();
+  return state!;
+}
+
+export function getBuildStatus() {
+  return {
+    ok: !!state,
+    building: !!building,
+    builtAt: state?.builtAt ?? null
+  };
+}
+EOF
+
+2) Add a build status endpoint and make all routes use getState()
+
+Shell → paste:
+
+applypatch << 'PATCH'
+*** Begin Patch
+*** Update File: server/src/routes/api.ts
+@@
+-import { Router } from "express";
+-import { getState } from "../state";
++import { Router } from "express";
++import { getState, getBuildStatus } from "../state";
+@@
+ const api = Router();
+@@
+ api.get("/health", async (_req,res)=>{
+-  const st = await getState();
+-  res.json({ ok:true, counts: { all: st.all.length }, builtAt: st.builtAt });
++  const st = await getState();
++  res.json({ ok:true, counts: { all: st.all.length }, builtAt: st.builtAt });
+ });
+ 
++/** Optional: build status for debugging (won't be needed once gating is in place) */
++api.get("/build/status", (_req, res) => {
++  res.json(getBuildStatus());
++});
+*** End Patch
+PATCH
+
+
+If you don’t have applypatch in your Repl, just open server/src/routes/api.ts and add the getBuildStatus import and the /api/build/status route manually.
+
+3) (Optional but recommended) cap work so builds finish quickly
+
+If your build scrapes every item from each IMDb list, it can take ages. Add a soft limit and keep TMDb calls modest.
+
+Shell → paste:
+
+# Limit per-list rows (e.g., 120) — only if not already present in your build
+grep -q "PER_LIST_LIMIT" server/src/buildCatalogue.ts || \
+  awk '1; /scrapeImdb/ && /list.id/ {print "  const PER_LIST_LIMIT = Number(process.env.PER_LIST_LIMIT || 120);"}' server/src/buildCatalogue.ts > t && mv t server/src/buildCatalogue.ts
+
+# (If you already slice, skip this.) Otherwise, after you get the scraped rows, slice them:
+# Find the line like: const scraped = await scrapeImdb(list.id);
+# Immediately after, ensure something like:
+#   const rows = scraped.slice(0, PER_LIST_LIMIT);
+# and then iterate rows instead of scraped.
+
+
+Then set the env knob in Replit Secrets:
+
+PER_LIST_LIMIT = 120
+
+(Keep your TMDB_API_KEY set)
+
+4) Rebuild & run
+
+Shell → paste:
+
+npm run build
+npm run start:prod
+
+5) Quick checks
+
+Open /api/health — should return JSON instantly (no “not ready”).
+
+(Optional) /api/build/status — {"ok":true,"building":false,...} once built.
+
+Load the app: posters/trailers endpoints will wait for build completion instead of erroring.

@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import { generateABPairs, scoreMoviesFromVotes, type Vote } from "./scoring";
+import { getState, getBuildStatus, setBuildFunction, type CatalogueItem } from "./state";
 
 // ---------- Config ----------
 const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "";
@@ -28,18 +29,7 @@ type TMDbMovie = {
   adult?: boolean;
 };
 
-type CatalogueItem = {
-  id: number;
-  title: string;
-  overview: string;
-  genres: number[];
-  releaseDate: string | null;
-  popularity: number;
-  voteAverage: number;
-  voteCount: number;
-  posterUrl: string | null;
-  backdropUrl: string | null;
-};
+// CatalogueItem type is now imported from state.ts
 
 type TrailerInfo = {
   site: "YouTube" | "Vimeo" | "Unknown";
@@ -53,15 +43,8 @@ type TrailerInfo = {
 
 const api = express.Router();
 
-// ---------- In-memory cache ----------
-const cache = {
-  catalogue: [] as CatalogueItem[],
-  ts: 0,
-};
-
-function isCatalogueFresh() {
-  return Date.now() - cache.ts < CATALOGUE_TTL_MS && cache.catalogue.length > 0;
-}
+// Set up the build function for the state management system
+setBuildFunction(buildSimpleCatalogue);
 
 // ---------- Simple curated movie list (known good movies) ----------
 const CURATED_MOVIE_TITLES = [
@@ -207,15 +190,12 @@ async function buildSimpleCatalogue(): Promise<CatalogueItem[]> {
 // ---------- Routes ----------
 api.get("/catalogue", async (req: Request, res: Response) => {
   try {
-    if (!isCatalogueFresh()) {
-      cache.catalogue = await buildSimpleCatalogue();
-      cache.ts = Date.now();
-    }
+    const state = await getState();
 
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
     const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? "60"), 10)));
     const start = (page - 1) * pageSize;
-    const slice = cache.catalogue.slice(start, start + pageSize);
+    const slice = state.catalogue.slice(start, start + pageSize);
 
     const normalized = slice.map((m) => ({
       ...m,
@@ -224,12 +204,12 @@ api.get("/catalogue", async (req: Request, res: Response) => {
 
     res.json({
       ok: true,
-      total: cache.catalogue.length,
+      total: state.catalogue.length,
       page,
       pageSize,
       items: normalized,
       learnedDims: 12,
-      cacheAgeMs: Date.now() - cache.ts,
+      cacheAgeMs: Date.now() - state.builtAt,
       source: "curated classics + recent hits",
     });
   } catch (err: any) {
@@ -239,18 +219,23 @@ api.get("/catalogue", async (req: Request, res: Response) => {
 
 api.post("/catalogue/build", async (_req: Request, res: Response) => {
   try {
-    cache.catalogue = await buildSimpleCatalogue();
-    cache.ts = Date.now();
-    res.json({ ok: true, total: cache.catalogue.length, rebuiltAt: cache.ts });
+    const { forceRebuild } = await import('./state');
+    await forceRebuild();
+    const state = await getState();
+    res.json({ ok: true, total: state.catalogue.length, rebuiltAt: state.builtAt });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message ?? String(err) });
   }
 });
 
-api.post("/cache/flush", (_req: Request, res: Response) => {
-  cache.catalogue = [];
-  cache.ts = 0;
-  res.json({ ok: true });
+api.post("/cache/flush", async (_req: Request, res: Response) => {
+  try {
+    const { clearState } = await import('./state');
+    clearState();
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  }
 });
 
 // Trailer endpoint
@@ -313,14 +298,8 @@ function scoreVideos(vids: any[]) {
 // A/B Testing Round - Get 12 pairs for voting
 api.get("/ab/round", async (req: Request, res: Response) => {
   try {
-    if (!isCatalogueFresh()) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: "Catalogue not ready. Please wait for it to build." 
-      });
-    }
-    
-    const pairs = generateABPairs(cache.catalogue, 12);
+    const state = await getState();
+    const pairs = generateABPairs(state.catalogue, 12);
     res.json({ ok: true, pairs });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message ?? String(err) });
@@ -346,12 +325,7 @@ api.post("/score-round", async (req: Request, res: Response) => {
       });
     }
     
-    if (!isCatalogueFresh()) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: "Catalogue not ready. Please wait for it to build." 
-      });
-    }
+    const state = await getState();
     
     // Validate vote structure
     for (const vote of votes) {
@@ -363,7 +337,7 @@ api.post("/score-round", async (req: Request, res: Response) => {
       }
     }
     
-    const recommendation = scoreMoviesFromVotes(votes, cache.catalogue, excludeIds);
+    const recommendation = scoreMoviesFromVotes(votes, state.catalogue, excludeIds);
     
     // Fetch trailers for recommended movies
     const trailers: Record<number, string | null> = {};
@@ -392,13 +366,23 @@ api.post("/score-round", async (req: Request, res: Response) => {
   }
 });
 
+// Build status endpoint for debugging
+api.get("/build/status", (_req, res) => {
+  res.json(getBuildStatus());
+});
+
 // Health
-api.get("/health", (_req, res) => {
-  res.json({
-    ok: true,
-    cacheItems: cache.catalogue.length,
-    cacheAgeMs: Date.now() - cache.ts,
-  });
+api.get("/health", async (_req, res) => {
+  try {
+    const state = await getState();
+    res.json({
+      ok: true,
+      cacheItems: state.catalogue.length,
+      cacheAgeMs: Date.now() - state.builtAt,
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  }
 });
 
 export default api;
