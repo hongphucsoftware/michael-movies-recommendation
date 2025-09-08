@@ -100,13 +100,12 @@ export default function TrailerReel({ items, learnedVec, onSave, onSkip }: Props
   }, [picks]);
 
   // Get current 5 trailers
-  const visibleTrailers = trailerData
-    .filter(t => !hiddenTrailers.has(t.id))
-    .slice(currentSet * 5, (currentSet + 1) * 5);
+  const filteredTrailers = trailerData.filter(t => !hiddenTrailers.has(t.id));
+  const visibleTrailers = filteredTrailers.slice(currentSet * 5, (currentSet + 1) * 5);
   
-  const totalSets = Math.ceil(trailerData.filter(t => !hiddenTrailers.has(t.id)).length / 5);
+  const totalSets = Math.ceil(filteredTrailers.length / 5);
   const currentTrailerIndex = (currentSet * 5) + 1;
-  const currentTrailerTotal = Math.min((currentSet + 1) * 5, trailerData.filter(t => !hiddenTrailers.has(t.id)).length);
+  const currentTrailerTotal = Math.min((currentSet + 1) * 5, filteredTrailers.length);
 
   // Action handlers
   const handleSkip = (id: number) => {
