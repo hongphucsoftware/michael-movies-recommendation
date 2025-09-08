@@ -8,6 +8,17 @@ if (!TMDB_API_KEY) {
   console.warn("[TMDB] Missing TMDB_API_KEY (or TMDB_KEY). Set it in Replit Secrets.");
 }
 
+// ---------- Allowlist: Only these 5 IMDb lists are permitted ----------
+const ALLOWED_IMDB_LISTS = [
+  { id: "ls094921320", url: "https://www.imdb.com/list/ls094921320/" },
+  { id: "ls003501243", url: "https://www.imdb.com/list/ls003501243/" },
+  { id: "ls002065120", url: "https://www.imdb.com/list/ls002065120/" },
+  { id: "ls000873904", url: "https://www.imdb.com/list/ls000873904/" },
+  { id: "ls005747458", url: "https://www.imdb.com/list/ls005747458/" }
+];
+
+const ALLOWED_LIST_IDS = new Set(ALLOWED_IMDB_LISTS.map(list => list.id));
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMG_BASE = "https://image.tmdb.org/t/p";
 const POSTER_SIZE = "w500";
