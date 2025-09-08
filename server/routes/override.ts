@@ -48,16 +48,20 @@ r.post("/score-round", async (req, res) => {
     const ex = new Set<number>((req.body?.excludeIds || []) as number[]);
     const pool = st.catalogue.filter(m => !ex.has(m.id));
     const recs = sample(pool, 6);
-    const trailers: Record<number, string | null> = {};
     
+    // Add trailer URLs to each movie
+    const moviesWithTrailers = [];
     for (const m of recs) {
-      trailers[m.id] = await trailerUrl(m.id);
+      const trailerEmbedUrl = await trailerUrl(m.id);
+      moviesWithTrailers.push({
+        ...m,
+        trailerUrl: trailerEmbedUrl
+      });
     }
     
     res.json({
       ok: true,
-      movies: recs,
-      trailers,
+      movies: moviesWithTrailers,
       explanation: { summaryText: "6 picks from your five IMDb lists." },
       reasonsPerMovie: {}
     });
