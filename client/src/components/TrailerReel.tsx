@@ -110,7 +110,7 @@ export default function TrailerReel({ items, learnedVec, onSave, onSkip }: Props
   // Action handlers
   const handleSkip = (id: number) => {
     onSkip?.(id);
-    setHiddenTrailers(prev => new Set([...prev, id]));
+    setHiddenTrailers(prev => new Set([...Array.from(prev), id]));
   };
 
   const handleSelect = (id: number, title: string, year: string) => {
@@ -124,7 +124,7 @@ export default function TrailerReel({ items, learnedVec, onSave, onSkip }: Props
   };
 
   const handleHide = (id: number) => {
-    setHiddenTrailers(prev => new Set([...prev, id]));
+    setHiddenTrailers(prev => new Set([...Array.from(prev), id]));
   };
 
   const handleMoreInfo = (id: number) => {

@@ -92,7 +92,18 @@ export default function PosterPair() {
             </button>
           </div>
 
-          <TrailerReel items={items} learnedVec={learned} />
+          <TrailerReel 
+            items={items} 
+            learnedVec={learned} 
+            onSave={(movieId) => {
+              const movie = items.find(item => item.id === movieId);
+              if (movie) like(movie);
+            }}
+            onSkip={(movieId) => {
+              const movie = items.find(item => item.id === movieId);
+              if (movie) skip(movie);
+            }}
+          />
         </div>
       )}
     </div>
