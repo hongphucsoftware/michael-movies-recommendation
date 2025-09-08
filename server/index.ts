@@ -1,7 +1,9 @@
 import express, { type Request, Response, NextFunction } from "express";
+import { Router } from "express";
 import api from "./routes-simple";
 import { setupVite, serveStatic, log } from "./vite";
 import * as cheerio from "cheerio";
+import { noStore } from "next/cache";
 
 const IMDB_LISTS = [
   { id: "ls094921320", name: "Best Movies of All Time" },
@@ -13,7 +15,46 @@ const IMDB_LISTS = [
 
 const PER_LIST_LIMIT = 200;
 const TMDB_API = "https://api.themoviedb.org/3";
-const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
+const TMDB_KEY = process.env.TMDB_API_KEY as string;
+
+/* ---------- Robust trailer resolver (YouTube only) ---------- */
+type Vid = { site?: string; type?: string; name?: string; key?: string };
+function pickBestVideo(vs: Vid[]): Vid | null {
+  const ys = vs.filter(v => (v.site||"").toLowerCase()==="youtube" && v.key);
+  if (!ys.length) return null;
+  // Score: Official Trailer > Trailer > Teaser > Clip ; "Official" in name boosts
+  const rank = (v: Vid) => {
+    const t = (v.type||"").toLowerCase();
+    const n = (v.name||"").toLowerCase();
+    let s = 0;
+    if (t.includes("trailer")) s += 100;
+    if (t.includes("teaser"))  s += 60;
+    if (t.includes("clip"))    s += 40;
+    if (n.includes("official")) s += 10;
+    return s;
+  };
+  ys.sort((a,b)=>rank(b)-rank(a));
+  return ys[0] || null;
+}
+
+async function getTrailerUrl(movieId: number): Promise<string|null> {
+  const tryFetch = async (path: string) => {
+    try {
+      const j = await fetch(`${TMDB_API}${path}&api_key=${TMDB_KEY}`).then(r=>r.json());
+      if (Array.isArray(j?.results)) return j.results as Vid[];
+      if (Array.isArray(j?.videos?.results)) return j.videos.results as Vid[];
+      return [];
+    } catch { return []; }
+  };
+  // 1) EN only
+  let vids = await tryFetch(`/movie/${movieId}/videos?language=en-US`);
+  // 2) any language
+  if (!vids.length) vids = await tryFetch(`/movie/${movieId}/videos?`);
+  // 3) appended with include_video_language
+  if (!vids.length) vids = await tryFetch(`/movie/${movieId}?append_to_response=videos&language=en-US&include_video_language=en,null`);
+  const best = pickBestVideo(vids);
+  return best?.key ? `https://www.youtube.com/embed/${best.key}` : null;
+}
 
 type Row = { imdbId: string | null; title: string; year: number | null };
 
@@ -153,7 +194,7 @@ app.use((req, res, next) => {
 
 (async () => {
   // CRITICAL: All API routes must be defined BEFORE any catch-all middleware
-  
+
   // Health check endpoint
   app.get("/api/health", (req, res) => {
     res.json({ ok: true, timestamp: new Date().toISOString() });
