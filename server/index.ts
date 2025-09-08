@@ -1,7 +1,11 @@
 import express, { type Request, Response, NextFunction } from "express";
-import api from "./routes-simple";
+import apiRoutes from './routes';
+import simpleRoutes from './routes-simple';
+import overrideRoutes from './routes-override';
 import { setupVite, serveStatic, log } from "./vite";
 import * as cheerio from "cheerio";
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const IMDB_LISTS = [
   { id: "ls094921320", name: "Best Movies of All Time" },
@@ -118,6 +122,8 @@ function img(type: "poster" | "backdrop", path: string | null) {
 
 
 const app = express();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -152,7 +158,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  app.use("/api", api);
+  // OVERRIDE FIRST (wins), then the rest of API
+  app.use('/api', overrideRoutes);
+  app.use('/api', simpleRoutes);
   const server = app;
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
