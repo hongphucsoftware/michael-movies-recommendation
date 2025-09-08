@@ -152,21 +152,27 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Health check endpoint FIRST
+  // CRITICAL: All API routes must be defined BEFORE any catch-all middleware
+  
+  // Health check endpoint
   app.get("/api/health", (req, res) => {
     res.json({ ok: true, timestamp: new Date().toISOString() });
   });
 
-  // Mount ALL API routes before Vite middleware
-  app.use("/api", api);
+  // Mount API routes with explicit path protection
+  app.use("/api", (req, res, next) => {
+    // Force JSON responses for all /api/* routes
+    res.setHeader('Content-Type', 'application/json');
+    next();
+  }, api);
 
-  // Catch-all for unknown API routes
-  app.use("/api/*", (req, res) => {
-    log(`Unknown API endpoint: ${req.method} ${req.path}`);
+  // Explicit catch-all for unknown API routes (must come before Vite)
+  app.all("/api/*", (req, res) => {
+    log(`404 API endpoint: ${req.method} ${req.path}`);
     res.status(404).json({ ok: false, error: "API endpoint not found" });
   });
 
-  // Setup Vite/static serving ONLY AFTER all API routes are defined
+  // Only now setup static/Vite serving (which has catch-all behavior)
   if (app.get("env") === "development") {
     await setupVite(app, app);
   } else {

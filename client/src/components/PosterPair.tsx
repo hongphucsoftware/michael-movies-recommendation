@@ -1,11 +1,10 @@
-
 import React from "react";
 import { useStatelessAB } from "../hooks/useStatelessAB";
 import TrailerResults from "./TrailerResults";
 
 export default function PosterPair() {
   const hookResult = useStatelessAB();
-  
+
   // Handle case where hook is not ready
   if (!hookResult) {
     return (
