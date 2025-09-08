@@ -349,7 +349,7 @@ api.get("/trailer", async (req: Request, res: Response) => {
   try {
     const id = Number(req.query.id);
     if (!id) return res.status(400).json({ ok: false, error: "Missing id" });
-    if (!TMDB_KEY) return res.status(400).json({ ok: false, error: "TMDB_KEY not set" });
+    if (!TMDB_API_KEY) return res.status(400).json({ ok: false, error: "TMDB_API_KEY not set" });
 
     console.log(`Fetching trailer for TMDb ID: ${id}`);
 
