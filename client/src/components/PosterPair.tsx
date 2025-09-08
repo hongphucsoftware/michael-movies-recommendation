@@ -50,16 +50,20 @@ export default function PosterPair({ onComplete }: { onComplete?: (finalVotes: V
   return (
     <div className="space-y-6">
       {/* Progress + controls */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm">Learning Progress</div>
-        <div className="text-xs opacity-80">{progress.current} / {progress.total}</div>
-      </div>
-      <div className="w-full h-2 rounded bg-gray-800 overflow-hidden">
-        <div
-          className="h-2 bg-cyan-400 transition-all"
-          style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }}
-        />
-      </div>
+      {hookResult && (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="text-sm">Learning Progress</div>
+            <div className="text-xs opacity-80">{progress.current} / {progress.total}</div>
+          </div>
+          <div className="w-full h-2 rounded bg-gray-800 overflow-hidden">
+            <div
+              className="h-2 bg-cyan-400 transition-all"
+              style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }}
+            />
+          </div>
+        </>
+      )}
 
       {/* The A/B cards */}
       {!isComplete && currentPair && (
