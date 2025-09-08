@@ -1,0 +1,342 @@
+I DONT FUCKING GET IT - I ASKED YOU TO PUT A STOP TO THIS. - USE ONLY THE 5 LISTS I GAVE YOU. DELETE EVERYTHING ELSE OR MAKE A STRICT RULE TO NOT USE IT. REPLIT CONTINUES TO USE SHITTY OLD LIST MOVIES 
+ChatGPT said:
+Thought for 1m 3s
+
+I hear you. We’re going to nuke all legacy sources and hard-lock the app to only your 5 IMDb lists. No fallbacks, no cached seeds, no “other lists”. This will NOT change the UI or routes — it only changes what the server feeds them.
+
+Do this in the Replit Shell (copy–paste all of it)
+# 0) Kill anything running + purge old builds/caches that can reintroduce legacy data
+pkill -f node || true
+rm -rf dist server/dist .cache node_modules/.cache 2>/dev/null || true
+find server -type f \( -iname "*catalogue*.json" -o -iname "*seed*.json" \) -delete 2>/dev/null || true
+
+# 1) Ensure folders
+mkdir -p server/src/{config,routes}
+
+# 2) HARD ALLOW-LIST (only these 5 lists)
+cat > server/src/config/lists.ts <<'EOF'
+export const IMDB_LISTS = [
+  { id: "ls094921320", url: "https://www.imdb.com/list/ls094921320/" },
+  { id: "ls003501243", url: "https://www.imdb.com/list/ls003501243/" },
+  { id: "ls002065120", url: "https://www.imdb.com/list/ls002065120/" },
+  { id: "ls000873904", url: "https://www.imdb.com/list/ls000873904/" },
+  { id: "ls005747458", url: "https://www.imdb.com/list/ls005747458/" }
+];
+export const ALLOWED_LIST_IDS = new Set(IMDB_LISTS.map(x => x.id));
+EOF
+
+# 3) Types
+cat > server/src/types.ts <<'EOF'
+export type Person = { id: number; name: string };
+export type Movie = {
+  id: number; title: string; year: number | null; overview: string | null;
+  posterUrl: string | null; backdropUrl: string | null;
+  genres: Array<{ id: number; name: string }>;
+  era: string | null; actors: Person[]; director: Person | null;
+  popularity: number;
+  sourceListId: string; sourceListUrl: string;
+};
+export type BuiltState = {
+  all: Movie[];
+  personNameById: Record<number, string>;
+  genreNameById: Record<number, string>;
+  popularityMin: number; popularityMax: number;
+  builtAt: number;
+};
+EOF
+
+# 4) STRICT catalogue builder: scrape IMDb ttIDs only, resolve via TMDb /find, NO fallback
+cat > server/src/buildCatalogue.ts <<'EOF'
+import * as cheerio from "cheerio";
+import { IMDB_LISTS, ALLOWED_LIST_IDS } from "./config/lists";
+import type { Movie, BuiltState, Person } from "./types";
+
+const TMDB_API = "https://api.themoviedb.org/3";
+const TMDB_IMG = "https://image.tmdb.org/t/p";
+const TMDB_KEY = process.env.TMDB_API_KEY as string;
+if (!TMDB_KEY) throw new Error("Missing TMDB_API_KEY");
+
+const PER_LIST_LIMIT = Number(process.env.PER_LIST_LIMIT || 400); // cap if needed
+
+const assertAllowed = (listId: string) => {
+  if (!ALLOWED_LIST_IDS.has(listId)) throw new Error(`Blocked listId: ${listId}`);
+};
+
+const ua = { headers: { "User-Agent": "Mozilla/5.0 (PickAFlick/1.0)" } };
+const img = (k:"poster"|"backdrop", p?:string|null)=> p ? (k==="poster"?`${TMDB_IMG}/w500${p}`:`${TMDB_IMG}/w780${p}`) : null;
+const extractYear = (s:string)=>{ const m=s?.match?.(/(19|20)\d{2}/); return m?Number(m[0]):null; };
+const eraFromYear = (y:number|null)=> y? `${Math.floor(y/10)*10}s` : null;
+const tt = (href?:string|null)=>{ const m=(href||"").match(/\/title\/(tt\d+)/); return m?m[1]:null; };
+
+async function scrapeList(listId:string){
+  let page=1; const rows: { imdbId:string, title:string, year:number|null }[]=[];
+  while (rows.length<PER_LIST_LIMIT){
+    const html = await fetch(`https://www.imdb.com/list/${listId}/?mode=detail&page=${page}`, ua).then(r=>r.text());
+    const $ = cheerio.load(html);
+    const oldRows = $(".lister-list .lister-item").toArray();
+    const newer = $(".ipc-page-content-container .ipc-metadata-list-summary-item").toArray();
+    if (oldRows.length===0 && newer.length===0) break;
+
+    if (oldRows.length){
+      for (const el of oldRows){
+        const a = $(el).find(".lister-item-header a").first(); const id = tt(a.attr("href")); if(!id) continue;
+        const title = a.text().trim(); const year = extractYear($(el).find(".lister-item-year").first().text());
+        rows.push({ imdbId:id, title, year }); if (rows.length>=PER_LIST_LIMIT) break;
+      }
+    } else {
+      for (const el of newer){
+        const a = $(el).find("a.ipc-title-link-wrapper").first(); const id = tt(a.attr("href")); if(!id) continue;
+        const title = a.text().trim();
+        const meta = $(el).find(".cli-title-metadata-item").toArray().map(n=>$(n).text().trim()).join(" ");
+        const year = extractYear(meta);
+        rows.push({ imdbId:id, title, year }); if (rows.length>=PER_LIST_LIMIT) break;
+      }
+    }
+    page++;
+  }
+  return rows;
+}
+
+async function tmdbFindByImdb(id:string){
+  const j = await fetch(`${TMDB_API}/find/${id}?external_source=imdb_id&api_key=${TMDB_KEY}`).then(r=>r.json());
+  const m = Array.isArray(j?.movie_results)? j.movie_results[0] : null;
+  return m ?? null;
+}
+async function tmdbDetails(id:number){
+  return fetch(`${TMDB_API}/movie/${id}?append_to_response=credits&language=en-US&api_key=${TMDB_KEY}`).then(r=>r.json());
+}
+
+export async function buildCatalogue(): Promise<BuiltState> {
+  const all: Movie[] = [];
+  const personNameById: Record<number,string> = {};
+  const genreNameById: Record<number,string> = {};
+
+  for (const list of IMDB_LISTS){
+    assertAllowed(list.id);
+    const rows = await scrapeList(list.id);
+    for (const r of rows){
+      const hit = await tmdbFindByImdb(r.imdbId);   // STRICT: imdb->tmdb only
+      if (!hit) continue;
+      const det = await tmdbDetails(hit.id);
+
+      const genres = Array.isArray(det.genres)? det.genres.map((g:any)=>({id:g.id,name:g.name})) : [];
+      for (const g of genres) genreNameById[g.id]=g.name;
+
+      const cast = Array.isArray(det.credits?.cast)? det.credits.cast : []; cast.sort((a:any,b:any)=>(a.order??0)-(b.order??0));
+      const actors: Person[] = cast.slice(0,3).map((c:any)=>({id:c.id,name:c.name})); for (const a of actors) personNameById[a.id]=a.name;
+
+      const crew = Array.isArray(det.credits?.crew)? det.credits.crew : [];
+      const drow = crew.find((c:any)=>c.job==="Director"); const director: Person|null = drow? {id:drow.id, name:drow.name}: null;
+      if (director) personNameById[director.id]=director.name;
+
+      const year = det.release_date ? Number(det.release_date.slice(0,4)) : r.year;
+
+      all.push({
+        id: det.id,
+        title: det.title ?? hit.title ?? r.title,
+        year, overview: det.overview ?? null,
+        posterUrl: img("poster", det.poster_path ?? hit.poster_path ?? null),
+        backdropUrl: img("backdrop", det.backdrop_path ?? hit.backdrop_path ?? null),
+        genres, era: eraFromYear(year), actors, director,
+        popularity: Number(det.popularity ?? 0),
+        sourceListId: list.id, sourceListUrl: list.url
+      });
+    }
+  }
+
+  // Deduplicate and FINAL allow-list enforcement
+  const seen = new Set<number>();
+  const deduped = all.filter(m => (seen.has(m.id)? false : (seen.add(m.id), true)));
+  const allowed = deduped.filter(m => ALLOWED_LIST_IDS.has(m.sourceListId));
+
+  const pops = allowed.map(m=>m.popularity); const min = pops.length?Math.min(...pops):0; const max = pops.length?Math.max(...pops):1;
+  return { all: allowed, personNameById, genreNameById, popularityMin:min, popularityMax:max, builtAt: Date.now() };
+}
+EOF
+
+# 5) Build gating (waits for catalogue; no partial responses)
+cat > server/src/state.ts <<'EOF'
+import { buildCatalogue } from "./buildCatalogue";
+import type { BuiltState } from "./types";
+
+let state: BuiltState | null = null;
+let building: Promise<void> | null = null;
+
+const TTL_HOURS = Number(process.env.CATALOGUE_TTL_HOURS || 24);
+const TTL_MS = TTL_HOURS * 3600 * 1000;
+
+export async function getState(): Promise<BuiltState> {
+  const stale = !state || (Date.now() - (state?.builtAt ?? 0) > TTL_MS);
+  if (stale) {
+    if (!building) building = (async ()=>{ state = await buildCatalogue(); building = null; })();
+    await building;
+  }
+  return state!;
+}
+EOF
+
+# 6) Routes (same shapes your UI already uses)
+cat > server/src/routes/api.ts <<'EOF'
+import { Router } from "express";
+import { getState } from "../state";
+import type { Movie } from "../types";
+
+const TMDB_API = "https://api.themoviedb.org/3";
+const TMDB_KEY = process.env.TMDB_API_KEY as string;
+
+const api = Router();
+const noStore = (res:any)=>{ res.set("Cache-Control","no-store, no-cache, must-revalidate, max-age=0"); res.set("Pragma","no-cache"); res.set("Vary","x-session-id"); };
+const shuffle = <T>(a:T[]) => { for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
+const sample  = <T>(arr:T[], n:number)=> shuffle([...arr]).slice(0, Math.min(n, arr.length));
+const normPop = (p:number, min:number, max:number)=> max<=min ? 0.5 : (p-min)/(max-min);
+
+const tokens = (m:Movie)=>[
+  ...m.genres.map(g=>`g:${g.id}`),
+  ...(m.era?[`e:${m.era}`]:[]),
+  ...m.actors.map(a=>`a:${a.id}`),
+  ...(m.director?[`d:${m.director.id}`]:[])
+];
+
+api.get("/health", async (_req,res)=>{ const st=await getState(); res.json({ok:true,counts:{all:st.all.length},builtAt:st.builtAt}); });
+
+/** Posters grid: 15 per list (75 total when possible) */
+api.get("/catalogue", async (req,res)=>{
+  noStore(res);
+  const st = await getState();
+  const byList: Record<string, Movie[]> = {};
+  for (const m of st.all) (byList[m.sourceListId]??=[]).push(m);
+  const picksPerList: Record<string, Movie[]> = {};
+  for (const [lid, arr] of Object.entries(byList)) picksPerList[lid] = sample(arr.filter(x=>!!x.posterUrl), 15);
+  const flat = Object.values(picksPerList).flat();
+  if (req.query.grouped === "1") return res.json({ ok:true, lists: picksPerList });
+  res.json({ ok:true, items: flat });
+});
+
+/** 12 A/B pairs (24 unique) */
+api.get("/ab/round", async (_req,res)=>{
+  noStore(res);
+  const st = await getState();
+  const pool = st.all.filter(m=>!!m.posterUrl);
+  const picks = sample(pool, 24);
+  const pairs:[Movie,Movie][] = [];
+  for (let i=0;i<picks.length;i+=2) if (i+1<picks.length) pairs.push([picks[i],picks[i+1]]);
+  res.json({ ok:true, pairs, excludeIds: picks.map(m=>m.id) });
+});
+
+/** Stateless scoring from 12 votes → top 6 + trailers */
+api.post("/score-round", async (req,res)=>{
+  noStore(res);
+  const { votes, excludeIds } = req.body as { votes: Array<{winnerId:number,loserId:number}>, excludeIds:number[] };
+  const st = await getState();
+  const byId = Object.fromEntries(st.all.map(m=>[m.id,m]));
+  const excl = new Set<number>(excludeIds||[]);
+
+  const featureScore = new Map<string, number>();
+  const exclusive = (A:Set<string>,B:Set<string>)=>{ const Ao:string[]=[]; const Bo:string[]=[]; for(const t of A) if(!B.has(t)) Ao.push(t); for(const t of B) if(!A.has(t)) Bo.push(t); return {Ao,Bo}; };
+  for (const v of (votes||[])){
+    const w=byId[v.winnerId], l=byId[v.loserId]; if(!w||!l) continue;
+    const {Ao,Bo} = exclusive(new Set(tokens(w)), new Set(tokens(l)));
+    for (const t of Ao) featureScore.set(t,(featureScore.get(t)||0)+1);
+    for (const t of Bo) featureScore.set(t,(featureScore.get(t)||0)-1);
+  }
+
+  const score = (m:Movie)=>{
+    const g = m.genres.map(g=>featureScore.get(`g:${g.id}`)||0);
+    const a = m.actors.map(a=>featureScore.get(`a:${a.id}`)||0);
+    const d = m.director ? (featureScore.get(`d:${m.director.id}`)||0) : 0;
+    const e = m.era ? (featureScore.get(`e:${m.era}`)||0) : 0;
+    const mean=(xs:number[])=> xs.length ? xs.reduce((s,x)=>s+x,0)/xs.length : 0;
+    return 1.0*mean(g) + 0.9*d + 0.7*mean(a) + 0.5*e + 0.10*normPop(m.popularity, st.popularityMin, st.popularityMax);
+  };
+
+  const pool = st.all.filter(m=>!excl.has(m.id));
+  pool.sort((a,b)=>score(b)-score(a));
+  const selected = pool.slice(0,6);
+
+  const trailers: Record<number,string|null> = {};
+  for (const m of selected){
+    try{
+      const r = await fetch(`${TMDB_API}/movie/${m.id}/videos?language=en-US&api_key=${TMDB_KEY}`).then(r=>r.json());
+      const vids = Array.isArray(r?.results)? r.results : [];
+      const yt = vids.find((v:any)=> v.site==="YouTube" && /Trailer|Teaser|Official|Clip/i.test(`${v.type} ${v.name}`) && v.key);
+      trailers[m.id] = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
+    }catch{ trailers[m.id]=null; }
+  }
+  res.json({ ok:true, recs:selected, trailers });
+});
+
+/** Trailers by ids (compat) */
+api.get("/trailers", async (req,res)=>{
+  noStore(res);
+  const ids = String(req.query.ids||"").split(",").map(s=>Number(s.trim())).filter(n=>Number.isFinite(n));
+  const out: Record<number,string|null> = {};
+  for (const id of ids){
+    try{
+      const r = await fetch(`${TMDB_API}/movie/${id}/videos?language=en-US&api_key=${TMDB_KEY}`).then(r=>r.json());
+      const vids = Array.isArray(r?.results)? r.results : [];
+      const yt = vids.find((v:any)=> v.site==="YouTube" && /Trailer|Teaser|Official|Clip/i.test(`${v.type} ${v.name}`) && v.key);
+      out[id] = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
+    }catch{ out[id]=null; }
+  }
+  res.json({ ok:true, trailers: out });
+});
+
+/** Audit */
+api.get("/audit/summary", async (_req,res)=>{
+  const st = await getState();
+  const per:Record<string,number> = {};
+  for (const m of st.all) per[m.sourceListId]=(per[m.sourceListId]||0)+1;
+  res.json({ ok:true, perList: per, total: st.all.length });
+});
+api.get("/audit/find", async (req,res)=>{
+  const st = await getState(); const q=String(req.query.title||"").toLowerCase();
+  res.json({ ok:true, matches: st.all.filter(m=>m.title.toLowerCase().includes(q)).map(m=>({id:m.id,title:m.title,sourceListId:m.sourceListId})) });
+});
+
+export default api;
+EOF
+
+# 7) Server index (API first; serve built client; bind to Replit PORT)
+cat > server/src/index.ts <<'EOF'
+import express from "express";
+import path from "path";
+import fs from "fs";
+import api from "./routes/api";
+
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json());
+app.use("/api", api);
+
+const candidates = [path.resolve(__dirname,"../client"), path.resolve(__dirname,"../public")];
+const clientDir = candidates.find(p=>fs.existsSync(path.join(p,"index.html"))) || candidates[0];
+app.use(express.static(clientDir));
+app.get("*", (_req,res)=>res.sendFile(path.join(clientDir,"index.html")));
+
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT,"0.0.0.0", ()=>console.log("PickAFlick server on", PORT, "clientDir:", clientDir));
+EOF
+
+# 8) Build & run
+npm run build
+npm run start:prod
+
+Verify (2 quick checks)
+
+/api/audit/summary → exactly 5 keys (those list IDs) with healthy counts.
+
+/api/ab/round → returns 12 pairs; every movie object has sourceListId equal to one of the five.
+
+What this does
+
+Deletes any cached/seed catalogue files so nothing old can leak back.
+
+Scrapes ONLY the five IMDb lists, pulls the ttID for each row, and maps by TMDb /find/{imdb_id} (no fuzzy text search, no TV specials).
+
+Filters by the allow-list again after build.
+
+All endpoints (/catalogue, /ab/round, /score-round, /trailers) serve only those movies.
+
+UI/route shapes are unchanged; posters and trailer strip come back once the catalogue rebuilds.
+
+If /api/audit/summary still shows fewer than expected, paste the JSON it returns and I’ll zero in immediately.
