@@ -60,6 +60,7 @@ export function useStatelessAB() {
         const response = await fetch('/api/ab/round', {
           headers: {
             'Accept': 'application/json',
+            'Content-Type': 'application/json',
           }
         });
         
@@ -77,14 +78,14 @@ export function useStatelessAB() {
           throw new Error(`Server returned HTML instead of JSON. Check server logs.`);
         }
         
-        const rawText = await response.text();
         let data;
         try {
-          data = JSON.parse(rawText);
+          data = await response.json();
         } catch (parseError) {
           console.error('Failed to parse JSON:', parseError);
-          console.error('Invalid JSON response:', rawText.substring(0, 500));
-          throw new Error('Invalid JSON response from server');
+          const text = await response.text();
+          console.error('Invalid JSON response:', text.substring(0, 500));
+          throw new Error('Server returned invalid JSON. Check server logs.');
         }
         console.log('A/B pairs response:', data);
         
@@ -160,8 +161,10 @@ export function useStatelessAB() {
           try {
             data = await response.json();
           } catch (parseError) {
-            console.error('Failed to parse JSON:', parseError);
-            throw new Error('Invalid JSON response from scoring API');
+            console.error('Failed to parse scoring JSON:', parseError);
+            const text = await response.text();
+            console.error('Invalid scoring response:', text.substring(0, 500));
+            throw new Error('Scoring API returned invalid JSON. Check server logs.');
           }
           console.log('Scoring response:', data);
           
@@ -248,14 +251,14 @@ export function useStatelessAB() {
         throw new Error(`Expected JSON response but got ${contentType}`);
       }
       
-      const rawText = await response.text();
       let data;
       try {
-        data = JSON.parse(rawText);
+        data = await response.json();
       } catch (parseError) {
         console.error('Reset JSON parse failed:', parseError);
-        console.error('Invalid JSON response:', rawText.substring(0, 500));
-        throw new Error('Invalid JSON response from server');
+        const text = await response.text();
+        console.error('Invalid reset response:', text.substring(0, 500));
+        throw new Error('Reset API returned invalid JSON. Check server logs.');
       }
       console.log('Reset A/B pairs response:', data);
       

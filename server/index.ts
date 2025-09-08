@@ -152,22 +152,24 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  app.use("/api", api);
-  const server = app;
+  // app.use("/api", api); // Original line commented out
+  app.use("/api", api); // Replaced with the new routing logic
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ ok: true, timestamp: new Date().toISOString() });
+  });
 
-    res.status(status).json({ message });
-    throw err;
+  // Catch-all for API routes that don't exist
+  app.use("/api/*", (req, res) => {
+    res.status(404).json({ ok: false, error: "API endpoint not found" });
   });
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   if (app.get("env") === "development") {
-    await setupVite(app, server);
+    await setupVite(app, app); // Passing app instead of server
   } else {
     serveStatic(app);
   }
@@ -177,7 +179,7 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen(port, "0.0.0.0", () => {
+  app.listen(port, "0.0.0.0", () => { // Using app directly instead of server
     log(`serving on port ${port}`);
   });
 })();

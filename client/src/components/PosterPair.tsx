@@ -4,6 +4,12 @@ import { useStatelessAB } from "../hooks/useStatelessAB";
 import TrailerResults from "./TrailerResults";
 
 export default function PosterPair() {
+  const hookResult = useStatelessAB();
+  
+  if (!hookResult) {
+    return <div className="text-center py-8">Loading hook...</div>;
+  }
+
   const { 
     currentPair, 
     progress, 
@@ -14,7 +20,7 @@ export default function PosterPair() {
     reset, 
     recommendations,
     isScoring 
-  } = useStatelessAB();
+  } = hookResult;
 
   if (loading) return <div className="opacity-80">Loading A/B pairs…</div>;
   if (error) return (
