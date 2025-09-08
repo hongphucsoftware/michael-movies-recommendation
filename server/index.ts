@@ -15,7 +15,7 @@ const IMDB_LISTS = [
 
 const PER_LIST_LIMIT = 200;
 const TMDB_API = "https://api.themoviedb.org/3";
-const TMDB_KEY = process.env.TMDB_API_KEY as string;
+const TMDB_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "5806f2f63f3875fd9e1755ce864ee15f";
 
 /* ---------- Robust trailer resolver (YouTube only) ---------- */
 type Vid = { site?: string; type?: string; name?: string; key?: string };
@@ -198,6 +198,32 @@ app.use((req, res, next) => {
   // Health check endpoint
   app.get("/api/health", (req, res) => {
     res.json({ ok: true, timestamp: new Date().toISOString() });
+  });
+
+  // Robust trailer endpoint
+  app.get("/api/trailer", async (req, res) => {
+    try {
+      const id = Number(req.query.id);
+      if (!id) return res.status(400).json({ ok: false, error: "Missing id" });
+      
+      const trailerUrl = await getTrailerUrl(id);
+      if (!trailerUrl) return res.json({ ok: true, trailer: null });
+      
+      const key = trailerUrl.split('/').pop()?.split('?')[0];
+      res.json({ 
+        ok: true, 
+        trailer: {
+          site: "YouTube",
+          key,
+          url: trailerUrl,
+          name: "Trailer",
+          official: true,
+          type: "Trailer"
+        }
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message ?? String(err) });
+    }
   });
 
   // Mount API routes with explicit path protection
