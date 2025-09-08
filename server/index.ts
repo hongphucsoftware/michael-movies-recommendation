@@ -152,21 +152,21 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Mount API routes FIRST before any catch-all routes
-  app.use("/api", api);
-
-  // Error handler for API routes
-  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith('/api')) {
-      const status = err.status || err.statusCode || 500;
-      const message = err.message || "Internal Server Error";
-      res.status(status).json({ ok: false, error: message });
-    } else {
-      next(err);
-    }
+  // Health check endpoint FIRST
+  app.get("/api/health", (req, res) => {
+    res.json({ ok: true, timestamp: new Date().toISOString() });
   });
 
-  // Setup Vite/static serving AFTER API routes
+  // Mount ALL API routes before Vite middleware
+  app.use("/api", api);
+
+  // Catch-all for unknown API routes
+  app.use("/api/*", (req, res) => {
+    log(`Unknown API endpoint: ${req.method} ${req.path}`);
+    res.status(404).json({ ok: false, error: "API endpoint not found" });
+  });
+
+  // Setup Vite/static serving ONLY AFTER all API routes are defined
   if (app.get("env") === "development") {
     await setupVite(app, app);
   } else {
@@ -175,6 +175,7 @@ app.use((req, res, next) => {
 
   const port = parseInt(process.env.PORT || '5000', 10);
   app.listen(port, "0.0.0.0", () => {
-    log(`serving on port ${port}`);
+    log(`Server running on port ${port}`);
+    log(`API endpoints: /api/health, /api/ab/round, /api/score-round`);
   });
 })();

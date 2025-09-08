@@ -62,7 +62,8 @@ export function useStatelessAB() {
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
-          }
+          },
+          cache: 'no-cache'
         });
         
         if (!response.ok) {
@@ -75,8 +76,9 @@ export function useStatelessAB() {
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
           const text = await response.text();
-          console.error('Expected JSON but got:', contentType, text.substring(0, 200));
-          throw new Error(`Server returned HTML instead of JSON. Check server logs.`);
+          console.error('Expected JSON but got:', contentType);
+          console.error('Response preview:', text.substring(0, 300));
+          throw new Error(`API endpoint returned HTML (${contentType}) instead of JSON. Server routing issue.`);
         }
         
         let data;
