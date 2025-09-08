@@ -1,11 +1,33 @@
-
 import React, { useState, useEffect } from "react";
-import { useStatelessAB } from "../hooks/useStatelessAB";
+import { useStatelessAB, Vote } from "../hooks/useStatelessAB"; // Assuming Vote type is exported
 import TrailerResults from "./TrailerResults";
 
-export default function PosterPair() {
+export default function PosterPair({ onComplete }: { onComplete?: (finalVotes: Vote[]) => void }) {
+  const [votes, setVotes] = useState<Vote[]>([]); // State to store votes
+
+  const hookResult = useStatelessAB({
+    onVote: (vote: Vote) => {
+      console.log("Vote recorded:", vote);
+      setVotes(prev => [...prev, vote]);
+    },
+    onComplete: (finalVotes: Vote[]) => {
+      console.log("Learning complete, submitting votes:", finalVotes);
+      onComplete?.(finalVotes);
+    }
+  });
+
+  if (!hookResult) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="text-lg text-muted-foreground mb-2">Loading preferences...</div>
+        </div>
+      </div>
+    );
+  }
+
   const { 
-    currentPair, 
+    currentPair,
     progress, 
     isComplete, 
     loading, 
@@ -14,7 +36,8 @@ export default function PosterPair() {
     reset, 
     recommendations,
     isScoring 
-  } = useStatelessAB();
+  } = hookResult;
+
 
   if (loading) return <div className="opacity-80">Loading A/B pairs…</div>;
   if (error) return <div className="text-red-400">Error: {error}</div>;
