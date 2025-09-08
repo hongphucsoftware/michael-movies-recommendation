@@ -1,0 +1,100 @@
+the ui of the testing section is working now but the trailers part is not with the 5 lists we gave it. Want to get back to the ui we had using the 5 lists then we can work on the link between the selections and recommendations 
+ChatGPT said:
+Thought for 39s
+
+Got it — let’s get the trailers showing again right now, with no UI changes, still using only your 5 IMDb lists.
+
+Below is a tiny server patch that makes /api/score-round always return 6 movies + trailer URLs, even if the scorer finds too few or the pool is small. It fills with random picks from the allowed pool minus the 24 A/B movies. Your client can keep doing the same calls.
+
+Paste this in Replit Shell
+# Make /api/score-round bullet-proof: always return 6 recs + trailers
+applypatch << 'PATCH'
+*** Begin Patch
+*** Update File: server/src/routes/api.ts
+@@
+-/* ---------- Similarity helpers ---------- */
++/* ---------- Similarity helpers ---------- */
+@@
+ api.post("/score-round", async (req,res)=>{
+   noStore(res);
+   const { votes, excludeIds } = req.body as {
+     votes: Array<{winnerId:number, loserId:number}>;
+     excludeIds: number[];
+   };
+ 
+   const st = await getState();
+   const byId = Object.fromEntries(st.all.map(m => [m.id, m]));
+   const excluded = new Set<number>(excludeIds || []);
+ 
+   // 1) Seed set = 12 winners (deduped)
+   const seedIds = Array.from(new Set((votes||[]).map(v => v.winnerId))).filter(id => byId[id]);
+   const seeds: Movie[] = seedIds.map(id => byId[id]);
+ 
+-  // If somehow no seeds (shouldn't happen), just return 6 popular
+-  if (!seeds.length) {
+-    const fallback = st.all.filter(m=>!excluded.has(m.id)).sort((a,b)=>b.popularity-a.popularity).slice(0,6);
+-    const trailers: Record<number,string|null> = {};
+-    for (const m of fallback) {
+-      try {
+-        const r = await fetch(`${TMDB_API}/movie/${m.id}/videos?language=en-US&api_key=${TMDB_KEY}`).then(r=>r.json());
+-        const vids = Array.isArray(r?.results) ? r.results : [];
+-        const yt = vids.find((v:any)=> v.site==="YouTube" && /Trailer|Teaser|Official|Clip/i.test(`${v.type} ${v.name}`) && v.key);
+-        trailers[m.id] = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
+-      } catch { trailers[m.id] = null; }
+-    }
+-    return res.json({ ok:true, recs: fallback, trailers, rationale: { summaryText: "Mixed picks, showing popular options." }, reasonsPerMovie: {} });
+-  }
++  // Helper: sample N random items from pool
++  const rand = <T,>(arr: T[], n: number) => {
++    const a = [...arr];
++    for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
++    return a.slice(0, Math.min(n, a.length));
++  };
+ 
+   // 2) Candidate pool = allowed catalogue minus the 24 used in A/B
+   const candidates = st.all.filter(m => !excluded.has(m.id));
+ 
+-  // 3) For each candidate, compute best seed similarity (max over seeds)
++  // If no seeds (or seeds somehow missing), we still want 6 trailers — use random from candidates
++  if (!seeds.length) {
++    const picks = rand(candidates, 6);
++    const trailers: Record<number,string|null> = {};
++    for (const m of picks) {
++      try {
++        const r = await fetch(`${TMDB_API}/movie/${m.id}/videos?language=en-US&api_key=${TMDB_KEY}`).then(r=>r.json());
++        const vids = Array.isArray(r?.results) ? r.results : [];
++        const yt = vids.find((v:any)=> v.site==="YouTube" && /Trailer|Teaser|Official|Clip/i.test(`${v.type} ${v.name}`) && v.key);
++        trailers[m.id] = yt ? `https://www.youtube.com/embed/${yt.key}` : null;
++      } catch { trailers[m.id] = null; }
++    }
++    return res.json({ ok:true, recs: picks, trailers, rationale: { summaryText: "Here are 6 picks from your lists." }, reasonsPerMovie: {} });
++  }
++
++  // 3) For each candidate, compute best seed similarity (max over seeds)
+@@
+-  for (const x of scored) { if (picks.length<6) { // fill if diversity blocked us
+-      if (!taken.has(x.movie.id)) { picks.push(x.movie); taken.add(x.movie.id); }
+-    } }
++  for (const x of scored) { if (picks.length<6) { // fill if diversity blocked us
++      if (!taken.has(x.movie.id)) { picks.push(x.movie); taken.add(x.movie.id); }
++    } }
++  // Absolute fallback: if still <6 (tiny pool), top up with random from candidates
++  if (picks.length < 6) {
++    for (const m of rand(candidates.filter(c=>!taken.has(c.id)), 6 - picks.length)) {
++      picks.push(m); taken.add(m.id);
++    }
++  }
+*** End Patch
+PATCH
+
+# Rebuild & run
+npm run build
+npm run start:prod
+
+Why this fixes the stuck trailers
+
+Even if similarity scoring returns too few items (small pool, strict diversity, missing seeds), we top up to 6 from the same 5-list catalogue (excluding the 24 A/B posters).
+
+The endpoint always returns JSON with { recs: 6, trailers: {...} }, so your trailer strip renders again.
+
+We didn’t touch any client code or UI.
