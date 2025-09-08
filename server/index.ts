@@ -1,7 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
-import apiRoutes from './routes';
-import simpleRoutes from './routes-simple';
-import overrideRoutes from './routes-override';
+import override from "./routes/override";
+import api from "./routes-simple";
 import { setupVite, serveStatic, log } from "./vite";
 import * as cheerio from "cheerio";
 import path from 'path';
@@ -159,8 +158,8 @@ app.use((req, res, next) => {
 
 (async () => {
   // OVERRIDE FIRST (wins), then the rest of API
-  app.use('/api', overrideRoutes);
-  app.use('/api', simpleRoutes);
+  app.use('/api', override);
+  app.use('/api', api);
   const server = app;
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
