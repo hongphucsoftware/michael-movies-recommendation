@@ -57,7 +57,11 @@ export function useStatelessAB() {
         setError(null);
         
         console.log('Fetching A/B pairs from /api/ab/round...');
-        const response = await fetch('/api/ab/round');
+        const response = await fetch('/api/ab/round', {
+          headers: {
+            'Accept': 'application/json',
+          }
+        });
         
         if (!response.ok) {
           console.error('A/B round response not OK:', response.status, response.statusText);
@@ -73,11 +77,13 @@ export function useStatelessAB() {
           throw new Error(`Server returned HTML instead of JSON. Check server logs.`);
         }
         
+        const rawText = await response.text();
         let data;
         try {
-          data = await response.json();
+          data = JSON.parse(rawText);
         } catch (parseError) {
           console.error('Failed to parse JSON:', parseError);
+          console.error('Invalid JSON response:', rawText.substring(0, 500));
           throw new Error('Invalid JSON response from server');
         }
         console.log('A/B pairs response:', data);
@@ -96,6 +102,7 @@ export function useStatelessAB() {
         setCurrentPairIndex(0);
         setVotes([]);
         setRecommendations(null);
+        setIsScoring(false);
       } catch (err: any) {
         console.error('Failed to fetch A/B pairs:', err);
         if (!cancelled) {
@@ -222,7 +229,11 @@ export function useStatelessAB() {
     
     try {
       console.log('Resetting - fetching new A/B pairs...');
-      const response = await fetch('/api/ab/round');
+      const response = await fetch('/api/ab/round', {
+        headers: {
+          'Accept': 'application/json',
+        }
+      });
       
       if (!response.ok) {
         const text = await response.text();
@@ -237,14 +248,27 @@ export function useStatelessAB() {
         throw new Error(`Expected JSON response but got ${contentType}`);
       }
       
-      const data = await response.json();
+      const rawText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch (parseError) {
+        console.error('Reset JSON parse failed:', parseError);
+        console.error('Invalid JSON response:', rawText.substring(0, 500));
+        throw new Error('Invalid JSON response from server');
+      }
       console.log('Reset A/B pairs response:', data);
       
       if (!data.ok) {
         throw new Error(data.error || 'API returned error');
       }
       
-      setPairs(data.pairs || []);
+      if (!Array.isArray(data.pairs) || data.pairs.length === 0) {
+        throw new Error('No pairs received from reset API');
+      }
+      
+      setPairs(data.pairs);
+      setCurrentPairIndex(0);
     } catch (err: any) {
       console.error('Reset failed:', err);
       setError(err.message || String(err));

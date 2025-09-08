@@ -1,4 +1,3 @@
-
 import express, { Request, Response } from "express";
 import { generateABPairs, scoreMoviesFromVotes, type Vote } from "./scoring";
 import { getState, getBuildStatus, setBuildFunction, type CatalogueItem } from "./state";
@@ -74,31 +73,31 @@ async function scrapeImdbListWithIds(listId: string): Promise<Array<{ imdbId: st
   const PER_LIST_LIMIT = 200;
   let page = 1;
   const rows: Array<{ imdbId: string; title: string; year: number | null }> = [];
-  
+
   while (rows.length < PER_LIST_LIMIT) {
     const url = `https://www.imdb.com/list/${listId}/?mode=detail&page=${page}`;
-    
+
     try {
       const response = await fetch(url, {
         headers: { "User-Agent": "Mozilla/5.0 (PickAFlick/1.0)" }
       });
-      
+
       if (!response.ok) {
         console.warn(`Failed to fetch IMDb list ${listId} page ${page}:`, response.status);
         break;
       }
-      
+
       const html = await response.text();
       const $ = cheerio.load(html);
-      
+
       // Handle both old and new IMDb layouts
       const oldRows = $(".lister-list .lister-item").toArray();
       const newRows = $(".ipc-page-content-container .ipc-metadata-list-summary-item").toArray();
-      
+
       if (oldRows.length === 0 && newRows.length === 0) {
         break; // No more content
       }
-      
+
       if (oldRows.length > 0) {
         // Old layout
         for (const el of oldRows) {
@@ -106,13 +105,13 @@ async function scrapeImdbListWithIds(listId: string): Promise<Array<{ imdbId: st
           const a = $el.find(".lister-item-header a").first();
           const href = a.attr("href") || "";
           const imdbId = pickImdbId(href);
-          
+
           if (!imdbId) continue; // Skip if no valid IMDb ID
-          
+
           const title = a.text().trim();
           const yearText = $el.find(".lister-item-year").first().text();
           const year = extractYear(yearText);
-          
+
           if (title) {
             rows.push({ imdbId, title, year });
             if (rows.length >= PER_LIST_LIMIT) break;
@@ -125,34 +124,34 @@ async function scrapeImdbListWithIds(listId: string): Promise<Array<{ imdbId: st
           const a = $el.find("a.ipc-title-link-wrapper").first();
           const href = a.attr("href") || "";
           const imdbId = pickImdbId(href);
-          
+
           if (!imdbId) continue; // Skip if no valid IMDb ID
-          
+
           const title = a.text().trim();
           const metaItems = $el.find(".cli-title-metadata-item")
             .toArray()
             .map(n => $(n).text().trim())
             .join(" ");
           const year = extractYear(metaItems);
-          
+
           if (title) {
             rows.push({ imdbId, title, year });
             if (rows.length >= PER_LIST_LIMIT) break;
           }
         }
       }
-      
+
       page++;
-      
+
       // Small delay to be respectful
       await sleep(100);
-      
+
     } catch (error) {
       console.warn(`Failed to scrape IMDb list ${listId} page ${page}:`, error);
       break;
     }
   }
-  
+
   console.log(`Scraped ${rows.length} titles with IMDb IDs from list ${listId}`);
   return rows;
 }
@@ -162,21 +161,21 @@ async function tmdbFindByImdbId(imdbId: string): Promise<TMDbMovie | null> {
   try {
     const url = `${TMDB_BASE}/find/${imdbId}?external_source=imdb_id&api_key=${TMDB_API_KEY}`;
     const response = await fetch(url);
-    
+
     if (!response.ok) {
       console.warn(`TMDb /find failed for ${imdbId}:`, response.status);
       return null;
     }
-    
+
     const data = await response.json();
     const movies = data.movie_results;
-    
+
     if (Array.isArray(movies) && movies.length > 0) {
       const movie = movies[0]; // Take the first (and usually only) result
       if (movie.adult) return null; // Skip adult content
       return movie;
     }
-    
+
     return null;
   } catch (error) {
     console.warn(`Failed to map IMDb ID ${imdbId} to TMDb:`, error);
@@ -236,13 +235,13 @@ async function buildStrictCatalogue(): Promise<CatalogueItem[]> {
   // Process each approved IMDb list
   for (const list of ALLOWED_IMDB_LISTS) {
     console.log(`Processing IMDb list ${list.id}...`);
-    
+
     try {
       // Scrape titles and IMDb IDs from this IMDb list
       const scrapedData = await scrapeImdbListWithIds(list.id);
-      
+
       let addedFromThisList = 0;
-      
+
       // Map each IMDb ID directly to TMDb using /find endpoint
       for (const { imdbId, title, year } of scrapedData) {
         try {
@@ -253,21 +252,21 @@ async function buildStrictCatalogue(): Promise<CatalogueItem[]> {
           }
           if (movie.adult) continue;
           if (seen.has(movie.id)) continue; // Skip duplicates across lists
-          
+
           seen.add(movie.id);
           allItems.push(toItem(movie, list.id));
           addedFromThisList++;
-          
+
           // Small delay to be respectful to TMDb
           await sleep(100);
-          
+
         } catch (error) {
           console.warn(`Failed to process IMDb ID ${imdbId} (${title}) from list ${list.id}:`, error);
         }
       }
-      
+
       console.log(`Added ${addedFromThisList} movies from list ${list.id}`);
-      
+
     } catch (error) {
       console.error(`Failed to process IMDb list ${list.id}:`, error);
     }
@@ -275,14 +274,14 @@ async function buildStrictCatalogue(): Promise<CatalogueItem[]> {
 
   // FINAL ENFORCEMENT: Only keep movies with allowed sourceListId
   const allowedItems = allItems.filter(item => ALLOWED_LIST_IDS.has(item.sourceListId));
-  
+
   console.log(`Total movies before filtering: ${allItems.length}`);
   console.log(`Total movies after allowlist filtering: ${allowedItems.length}`);
-  
+
   if (allowedItems.length === 0) {
     console.error("WARNING: No movies found after strict filtering! Check TMDb API key and list accessibility.");
   }
-  
+
   // Sort: posters first, then popularity
   allowedItems.sort((a, b) => {
     const ap = a.posterUrl ? 1 : 0;
@@ -406,14 +405,14 @@ function scoreVideos(vids: any[]) {
 api.get("/ab/round", async (req: Request, res: Response) => {
   try {
     const state = await getState();
-    
+
     // STRICT: Filter to only allowed sourceListIds  
     const allowedCatalogue = state.catalogue.filter(movie => 
       movie.sourceListId && ALLOWED_LIST_IDS.has(movie.sourceListId)
     );
-    
+
     console.log(`A/B pairs: ${allowedCatalogue.length} allowed movies from ${state.catalogue.length} total`);
-    
+
     const pairs = generateABPairs(allowedCatalogue, 12);
     res.json({ ok: true, pairs });
   } catch (err: any) {
@@ -425,30 +424,30 @@ api.get("/ab/round", async (req: Request, res: Response) => {
 api.post("/score-round", async (req: Request, res: Response) => {
   try {
     const { votes, excludeIds } = req.body;
-    
+
     if (!Array.isArray(votes) || votes.length !== 12) {
       return res.status(400).json({ 
         ok: false, 
         error: "Expected exactly 12 votes" 
       });
     }
-    
+
     if (!Array.isArray(excludeIds)) {
       return res.status(400).json({ 
         ok: false, 
         error: "Expected excludeIds array" 
       });
     }
-    
+
     const state = await getState();
-    
+
     // STRICT: Filter to only allowed sourceListIds
     const allowedCatalogue = state.catalogue.filter(movie => 
       movie.sourceListId && ALLOWED_LIST_IDS.has(movie.sourceListId)
     );
-    
+
     console.log(`Scoring: ${allowedCatalogue.length} allowed movies from ${state.catalogue.length} total`);
-    
+
     // Validate vote structure
     for (const vote of votes) {
       if (typeof vote.winnerId !== 'number' || typeof vote.loserId !== 'number') {
@@ -458,9 +457,9 @@ api.post("/score-round", async (req: Request, res: Response) => {
         });
       }
     }
-    
+
     const recommendation = scoreMoviesFromVotes(votes, allowedCatalogue, excludeIds);
-    
+
     // Fetch trailers for recommended movies
     const trailers: Record<number, string | null> = {};
     for (const movie of recommendation.movies) {
@@ -480,14 +479,14 @@ api.post("/score-round", async (req: Request, res: Response) => {
         trailers[movie.id] = null;
       }
     }
-    
+
     const response = {
       ok: true,
       movies: recommendation.movies,
       trailers,
       explanation: recommendation.explanation
     };
-    
+
     console.log(`Scoring complete: ${recommendation.movies.length} movies recommended`);
     res.json(response);
   } catch (err: any) {
@@ -506,14 +505,14 @@ api.get("/audit/summary", async (_req, res) => {
   try {
     const state = await getState();
     const perList: Record<string, number> = {};
-    
+
     // Count movies per sourceListId
     for (const movie of state.catalogue) {
       if (movie.sourceListId) {
         perList[movie.sourceListId] = (perList[movie.sourceListId] || 0) + 1;
       }
     }
-    
+
     res.json({ 
       ok: true, 
       perList, 
@@ -530,11 +529,11 @@ api.get("/audit/find", async (req, res) => {
   try {
     const state = await getState();
     const query = String(req.query.title || "").toLowerCase();
-    
+
     if (!query) {
       return res.status(400).json({ ok: false, error: "Missing title parameter" });
     }
-    
+
     // Find movies matching the title query
     const matches = state.catalogue
       .filter(movie => movie.title.toLowerCase().includes(query))
@@ -544,7 +543,7 @@ api.get("/audit/find", async (req, res) => {
         sourceListId: movie.sourceListId,
         posterUrl: movie.posterUrl
       }));
-    
+
     res.json({ 
       ok: true, 
       query, 
