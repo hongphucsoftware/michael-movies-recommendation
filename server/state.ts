@@ -9,6 +9,7 @@ export type CatalogueItem = {
   voteCount: number;
   posterUrl: string | null;
   backdropUrl: string | null;
+  sourceListId: string;  // Track which IMDb list this movie came from
 };
 
 export type BuiltState = {

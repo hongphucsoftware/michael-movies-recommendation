@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import { generateABPairs, scoreMoviesFromVotes, type Vote } from "./scoring";
 import { getState, getBuildStatus, setBuildFunction, type CatalogueItem } from "./state";
+import * as cheerio from "cheerio";
 
 // ---------- Config ----------
 const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "";
@@ -57,59 +58,125 @@ const api = express.Router();
 // Set up the build function for the state management system
 setBuildFunction(buildSimpleCatalogue);
 
-// ---------- Simple curated movie list (known good movies) ----------
-const CURATED_MOVIE_TITLES = [
-  "The Shawshank Redemption",
-  "The Godfather",
-  "The Dark Knight", 
-  "Pulp Fiction",
-  "Forrest Gump",
-  "Inception",
-  "The Matrix",
-  "Goodfellas",
-  "The Lord of the Rings: The Return of the King",
-  "Fight Club",
-  "Star Wars",
-  "The Lord of the Rings: The Fellowship of the Ring",
-  "Interstellar",
-  "Spirited Away",
-  "Saving Private Ryan",
-  "The Green Mile",
-  "Life Is Beautiful",
-  "Se7en",
-  "The Silence of the Lambs",
-  "Schindler's List",
-  "Parasite",
-  "Soul",
-  "Nomadland",
-  "Sound of Metal",
-  "Minari",
-  "The Trial of the Chicago 7",
-  "Da 5 Bloods",
-  "Ma Rainey's Black Bottom",
-  "Mank",
-  "News of the World",
-  "Wonder Woman 1984",
-  "Mulan",
-  "Hamilton",
-  "Tenet",
-  "Dune",
-  "No Time to Die",
-  "Spider-Man: No Way Home",
-  "The Batman",
-  "Top Gun: Maverick",
-  "Avatar: The Way of Water",
-  "Black Panther: Wakanda Forever",
-  "Elvis",
-  "Tar",
-  "The Banshees of Inisherin",
-  "Everything Everywhere All at Once",
-  "The Whale",
-  "Triangle of Sadness",
-  "Women Talking",
-  "Aftersun",
-  "RRR"
-];
+// ---------- IMDb List Scraping Functions ----------
+function extractYear(s: string): number | null {
+  const m = s?.match?.(/(19|20)\d{2}/);
+  return m ? Number(m[0]) : null;
+}
+
+// Scrape a single IMDb list and return movie titles with years
+async function scrapeImdbList(listId: string): Promise<Array<{ title: string; year: number | null }>> {
+  const PER_LIST_LIMIT = 200; // Cap to keep builds reasonable
+  let page = 1;
+  const rows: Array<{ title: string; year: number | null }> = [];
+  
+  while (rows.length < PER_LIST_LIMIT) {
+    const url = `https://www.imdb.com/list/${listId}/?mode=detail&page=${page}`;
+    
+    try {
+      const response = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (PickAFlick/1.0)" }
+      });
+      
+      if (!response.ok) {
+        console.warn(`Failed to fetch IMDb list ${listId} page ${page}:`, response.status);
+        break;
+      }
+      
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      
+      // Handle both old and new IMDb layouts
+      const oldRows = $(".lister-list .lister-item").toArray();
+      const newRows = $(".ipc-page-content-container .ipc-metadata-list-summary-item").toArray();
+      
+      if (oldRows.length === 0 && newRows.length === 0) {
+        break; // No more content
+      }
+      
+      if (oldRows.length > 0) {
+        // Old layout
+        for (const el of oldRows) {
+          const $el = $(el);
+          const a = $el.find(".lister-item-header a").first();
+          const href = a.attr("href") || "";
+          
+          // Only accept actual title links
+          if (!/^\/title\/tt\d+/.test(href)) continue;
+          
+          const title = a.text().trim();
+          const yearText = $el.find(".lister-item-year").first().text();
+          const year = extractYear(yearText);
+          
+          if (title) {
+            rows.push({ title, year });
+            if (rows.length >= PER_LIST_LIMIT) break;
+          }
+        }
+      } else {
+        // New layout
+        for (const el of newRows) {
+          const $el = $(el);
+          const a = $el.find("a.ipc-title-link-wrapper").first();
+          const href = a.attr("href") || "";
+          
+          // Only accept actual title links
+          if (!/^\/title\/tt\d+/.test(href)) continue;
+          
+          const title = a.text().trim();
+          const metaItems = $el.find(".cli-title-metadata-item")
+            .toArray()
+            .map(n => $(n).text().trim())
+            .join(" ");
+          const year = extractYear(metaItems);
+          
+          if (title) {
+            rows.push({ title, year });
+            if (rows.length >= PER_LIST_LIMIT) break;
+          }
+        }
+      }
+      
+      page++;
+      
+      // Small delay to be respectful
+      await sleep(100);
+      
+    } catch (error) {
+      console.warn(`Failed to scrape IMDb list ${listId} page ${page}:`, error);
+      break;
+    }
+  }
+  
+  console.log(`Scraped ${rows.length} titles from IMDb list ${listId}`);
+  return rows;
+}
+
+// Search TMDb for a specific title and year
+async function searchMovieOnTmdbWithYear(title: string, year: number | null): Promise<TMDbMovie | null> {
+  const params: Record<string, any> = {
+    query: title,
+    include_adult: "false",
+    language: "en-US",
+  };
+  
+  if (year) {
+    params.year = String(year);
+  }
+  
+  try {
+    const s = await tmdb("/search/movie", params);
+    const candidates: TMDbMovie[] = (s.results || []).filter((x: any) => x && !x.adult);
+    
+    if (candidates.length === 0) return null;
+    
+    // Return the most popular match
+    return candidates.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
+  } catch (error) {
+    console.warn(`Failed to search TMDb for "${title}" (${year}):`, error);
+    return null;
+  }
+}
 
 async function tmdb(path: string, params: Record<string, any> = {}) {
   const url = new URL(`${TMDB_BASE}${path}`);
@@ -125,7 +192,7 @@ async function tmdb(path: string, params: Record<string, any> = {}) {
   return res.json();
 }
 
-function toItem(m: TMDbMovie): CatalogueItem {
+function toItem(m: TMDbMovie, sourceListId: string): CatalogueItem {
   const title = m.title || m.original_title || "(Untitled)";
   const posterUrl = m.poster_path ? `${IMG_BASE}/${POSTER_SIZE}${m.poster_path}` : null;
   const backdropUrl = m.backdrop_path ? `${IMG_BASE}/${BACKDROP_SIZE}${m.backdrop_path}` : null;
@@ -140,6 +207,7 @@ function toItem(m: TMDbMovie): CatalogueItem {
     voteCount: m.vote_count ?? 0,
     posterUrl,
     backdropUrl,
+    sourceListId,
   };
 }
 
@@ -163,39 +231,70 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// ---------- Build catalogue from curated list ----------
+// ---------- Build catalogue from 5 approved IMDb lists only ----------
 async function buildSimpleCatalogue(): Promise<CatalogueItem[]> {
-  if (!TMDB_API_KEY) return [];
+  if (!TMDB_API_KEY) {
+    console.warn("No TMDB_API_KEY - returning empty catalogue");
+    return [];
+  }
 
-  const items: CatalogueItem[] = [];
-  const seen = new Set<number>();
+  const allItems: CatalogueItem[] = [];
+  const seen = new Set<number>(); // Dedupe by TMDb ID
 
-  for (const title of CURATED_MOVIE_TITLES) {
+  console.log(`Building catalogue from ${ALLOWED_IMDB_LISTS.length} approved IMDb lists...`);
+
+  // Process each approved IMDb list
+  for (const list of ALLOWED_IMDB_LISTS) {
+    console.log(`Processing IMDb list ${list.id}...`);
+    
     try {
-      const movie = await searchMovieOnTmdb(title);
-      if (!movie) continue;
-      if (movie.adult) continue;
-      if (seen.has(movie.id)) continue;
-      seen.add(movie.id);
+      // Scrape titles from this IMDb list
+      const scrapedTitles = await scrapeImdbList(list.id);
       
-      items.push(toItem(movie));
+      let addedFromThisList = 0;
       
-      // Small delay to be nice to TMDb
-      await sleep(100);
+      // Search each scraped title on TMDb
+      for (const { title, year } of scrapedTitles) {
+        try {
+          const movie = await searchMovieOnTmdbWithYear(title, year);
+          if (!movie) continue;
+          if (movie.adult) continue;
+          if (seen.has(movie.id)) continue; // Skip duplicates across lists
+          
+          seen.add(movie.id);
+          allItems.push(toItem(movie, list.id));
+          addedFromThisList++;
+          
+          // Small delay to be respectful to TMDb
+          await sleep(100);
+          
+        } catch (error) {
+          console.warn(`Failed to process "${title}" from list ${list.id}:`, error);
+        }
+      }
+      
+      console.log(`Added ${addedFromThisList} movies from list ${list.id}`);
+      
     } catch (error) {
-      console.warn(`Failed to fetch ${title}:`, error);
+      console.error(`Failed to process IMDb list ${list.id}:`, error);
     }
   }
 
+  // FINAL ENFORCEMENT: Only keep movies with allowed sourceListId
+  const allowedItems = allItems.filter(item => ALLOWED_LIST_IDS.has(item.sourceListId));
+  
+  console.log(`Total movies before filtering: ${allItems.length}`);
+  console.log(`Total movies after allowlist filtering: ${allowedItems.length}`);
+  
   // Sort: posters first, then popularity
-  items.sort((a, b) => {
+  allowedItems.sort((a, b) => {
     const ap = a.posterUrl ? 1 : 0;
     const bp = b.posterUrl ? 1 : 0;
     if (bp !== ap) return bp - ap;
     return (b.popularity ?? 0) - (a.popularity ?? 0);
   });
 
-  return items;
+  return allowedItems;
 }
 
 // ---------- Routes ----------
