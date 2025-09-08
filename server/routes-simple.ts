@@ -1,4 +1,5 @@
 import express, { Request, Response } from "express";
+import { generateABPairs, scoreMoviesFromVotes, type Vote } from "./scoring";
 
 // ---------- Config ----------
 const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "";
@@ -308,6 +309,88 @@ function scoreVideos(vids: any[]) {
     })
     .sort((a, b) => b.__score - a.__score);
 }
+
+// A/B Testing Round - Get 12 pairs for voting
+api.get("/ab/round", async (req: Request, res: Response) => {
+  try {
+    if (!isCatalogueFresh()) {
+      return res.status(503).json({ 
+        ok: false, 
+        error: "Catalogue not ready. Please wait for it to build." 
+      });
+    }
+    
+    const pairs = generateABPairs(cache.catalogue, 12);
+    res.json({ ok: true, pairs });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  }
+});
+
+// Score Round - Process 12 votes and return 6 recommendations
+api.post("/score-round", async (req: Request, res: Response) => {
+  try {
+    const { votes, excludeIds } = req.body;
+    
+    if (!Array.isArray(votes) || votes.length !== 12) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Expected exactly 12 votes" 
+      });
+    }
+    
+    if (!Array.isArray(excludeIds)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Expected excludeIds array" 
+      });
+    }
+    
+    if (!isCatalogueFresh()) {
+      return res.status(503).json({ 
+        ok: false, 
+        error: "Catalogue not ready. Please wait for it to build." 
+      });
+    }
+    
+    // Validate vote structure
+    for (const vote of votes) {
+      if (typeof vote.winnerId !== 'number' || typeof vote.loserId !== 'number') {
+        return res.status(400).json({ 
+          ok: false, 
+          error: "Invalid vote structure. Expected {winnerId: number, loserId: number}" 
+        });
+      }
+    }
+    
+    const recommendation = scoreMoviesFromVotes(votes, cache.catalogue, excludeIds);
+    
+    // Fetch trailers for recommended movies
+    const trailers: Record<number, string | null> = {};
+    for (const movie of recommendation.movies) {
+      try {
+        const vids = await fetchVideos(movie.id, { include_video_language: "en,null", language: "en-US" });
+        const best = scoreVideos(vids)[0];
+        if (best?.site?.toLowerCase() === "youtube") {
+          trailers[movie.id] = `https://www.youtube.com/embed/${best.key}?rel=0&modestbranding=1&autoplay=0`;
+        } else {
+          trailers[movie.id] = null;
+        }
+      } catch {
+        trailers[movie.id] = null;
+      }
+    }
+    
+    res.json({
+      ok: true,
+      movies: recommendation.movies,
+      trailers,
+      explanation: recommendation.explanation
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  }
+});
 
 // Health
 api.get("/health", (_req, res) => {
