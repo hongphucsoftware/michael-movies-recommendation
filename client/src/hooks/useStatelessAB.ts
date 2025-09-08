@@ -39,7 +39,6 @@ export function useStatelessAB() {
   const [error, setError] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation | null>(null);
   const [isScoring, setIsScoring] = useState(false);
-  const [initialized, setInitialized] = useState(false);
   
   const isComplete = votes.length >= 12;
   const currentPair = pairs[currentPairIndex] || null;
@@ -58,13 +57,7 @@ export function useStatelessAB() {
         setError(null);
         
         console.log('Fetching A/B pairs from /api/ab/round...');
-        const response = await fetch('/api/ab/round', {
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          cache: 'no-cache'
-        });
+        const response = await fetch('/api/ab/round');
         
         if (!response.ok) {
           console.error('A/B round response not OK:', response.status, response.statusText);
@@ -76,20 +69,11 @@ export function useStatelessAB() {
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
           const text = await response.text();
-          console.error('Expected JSON but got:', contentType);
-          console.error('Response preview:', text.substring(0, 300));
-          throw new Error(`API endpoint returned HTML (${contentType}) instead of JSON. Server routing issue.`);
+          console.error('Expected JSON but got:', contentType, text.substring(0, 200));
+          throw new Error(`Expected JSON response but got ${contentType}`);
         }
         
-        let data;
-        try {
-          data = await response.json();
-        } catch (parseError) {
-          console.error('Failed to parse JSON:', parseError);
-          const text = await response.text();
-          console.error('Invalid JSON response:', text.substring(0, 500));
-          throw new Error('Server returned invalid JSON. Check server logs.');
-        }
+        const data = await response.json();
         console.log('A/B pairs response:', data);
         
         if (cancelled) return;
@@ -106,8 +90,6 @@ export function useStatelessAB() {
         setCurrentPairIndex(0);
         setVotes([]);
         setRecommendations(null);
-        setIsScoring(false);
-        setInitialized(true);
       } catch (err: any) {
         console.error('Failed to fetch A/B pairs:', err);
         if (!cancelled) {
@@ -158,18 +140,10 @@ export function useStatelessAB() {
           if (!contentType || !contentType.includes('application/json')) {
             const text = await response.text();
             console.error('Expected JSON but got:', contentType, text.substring(0, 200));
-            throw new Error(`Scoring API returned HTML instead of JSON. Check server logs.`);
+            throw new Error(`Expected JSON response but got ${contentType}`);
           }
           
-          let data;
-          try {
-            data = await response.json();
-          } catch (parseError) {
-            console.error('Failed to parse scoring JSON:', parseError);
-            const text = await response.text();
-            console.error('Invalid scoring response:', text.substring(0, 500));
-            throw new Error('Scoring API returned invalid JSON. Check server logs.');
-          }
+          const data = await response.json();
           console.log('Scoring response:', data);
           
           if (cancelled) return;
@@ -236,11 +210,7 @@ export function useStatelessAB() {
     
     try {
       console.log('Resetting - fetching new A/B pairs...');
-      const response = await fetch('/api/ab/round', {
-        headers: {
-          'Accept': 'application/json',
-        }
-      });
+      const response = await fetch('/api/ab/round');
       
       if (!response.ok) {
         const text = await response.text();
@@ -255,27 +225,14 @@ export function useStatelessAB() {
         throw new Error(`Expected JSON response but got ${contentType}`);
       }
       
-      let data;
-      try {
-        data = await response.json();
-      } catch (parseError) {
-        console.error('Reset JSON parse failed:', parseError);
-        const text = await response.text();
-        console.error('Invalid reset response:', text.substring(0, 500));
-        throw new Error('Reset API returned invalid JSON. Check server logs.');
-      }
+      const data = await response.json();
       console.log('Reset A/B pairs response:', data);
       
       if (!data.ok) {
         throw new Error(data.error || 'API returned error');
       }
       
-      if (!Array.isArray(data.pairs) || data.pairs.length === 0) {
-        throw new Error('No pairs received from reset API');
-      }
-      
-      setPairs(data.pairs);
-      setCurrentPairIndex(0);
+      setPairs(data.pairs || []);
     } catch (err: any) {
       console.error('Reset failed:', err);
       setError(err.message || String(err));
@@ -283,11 +240,6 @@ export function useStatelessAB() {
       setLoading(false);
     }
   }, []);
-
-  // Return null if not properly initialized to prevent hook errors
-  if (!initialized && !loading && !error) {
-    return null;
-  }
 
   return {
     // A/B Testing state

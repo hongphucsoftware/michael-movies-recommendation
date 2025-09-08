@@ -1,9 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { Router } from "express";
 import api from "./routes-simple";
 import { setupVite, serveStatic, log } from "./vite";
 import * as cheerio from "cheerio";
-import { noStore } from "next/cache";
 
 const IMDB_LISTS = [
   { id: "ls094921320", name: "Best Movies of All Time" },
@@ -15,46 +13,7 @@ const IMDB_LISTS = [
 
 const PER_LIST_LIMIT = 200;
 const TMDB_API = "https://api.themoviedb.org/3";
-const TMDB_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "5806f2f63f3875fd9e1755ce864ee15f";
-
-/* ---------- Robust trailer resolver (YouTube only) ---------- */
-type Vid = { site?: string; type?: string; name?: string; key?: string };
-function pickBestVideo(vs: Vid[]): Vid | null {
-  const ys = vs.filter(v => (v.site||"").toLowerCase()==="youtube" && v.key);
-  if (!ys.length) return null;
-  // Score: Official Trailer > Trailer > Teaser > Clip ; "Official" in name boosts
-  const rank = (v: Vid) => {
-    const t = (v.type||"").toLowerCase();
-    const n = (v.name||"").toLowerCase();
-    let s = 0;
-    if (t.includes("trailer")) s += 100;
-    if (t.includes("teaser"))  s += 60;
-    if (t.includes("clip"))    s += 40;
-    if (n.includes("official")) s += 10;
-    return s;
-  };
-  ys.sort((a,b)=>rank(b)-rank(a));
-  return ys[0] || null;
-}
-
-async function getTrailerUrl(movieId: number): Promise<string|null> {
-  const tryFetch = async (path: string) => {
-    try {
-      const j = await fetch(`${TMDB_API}${path}&api_key=${TMDB_KEY}`).then(r=>r.json());
-      if (Array.isArray(j?.results)) return j.results as Vid[];
-      if (Array.isArray(j?.videos?.results)) return j.videos.results as Vid[];
-      return [];
-    } catch { return []; }
-  };
-  // 1) EN only
-  let vids = await tryFetch(`/movie/${movieId}/videos?language=en-US`);
-  // 2) any language
-  if (!vids.length) vids = await tryFetch(`/movie/${movieId}/videos?`);
-  // 3) appended with include_video_language
-  if (!vids.length) vids = await tryFetch(`/movie/${movieId}?append_to_response=videos&language=en-US&include_video_language=en,null`);
-  const best = pickBestVideo(vids);
-  return best?.key ? `https://www.youtube.com/embed/${best.key}` : null;
-}
+const TMDB_KEY = "5806f2f63f3875fd9e1755ce864ee15f";
 
 type Row = { imdbId: string | null; title: string; year: number | null };
 
@@ -193,70 +152,32 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // CRITICAL: All API routes must be defined BEFORE any catch-all middleware
+  app.use("/api", api);
+  const server = app;
 
-  // Health check endpoint
-  app.get("/api/health", (req, res) => {
-    res.json({ ok: true, timestamp: new Date().toISOString() });
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+
+    res.status(status).json({ message });
+    throw err;
   });
 
-  // Robust trailer endpoint
-  app.get("/api/trailer", async (req, res) => {
-    try {
-      const id = Number(req.query.id);
-      if (!id) return res.status(400).json({ ok: false, error: "Missing id" });
-      
-      log(`Fetching trailer for TMDb ID: ${id}`);
-      const trailerUrl = await getTrailerUrl(id);
-      
-      if (!trailerUrl) {
-        log(`No trailer found for TMDb ID: ${id}`);
-        return res.json({ ok: true, trailer: null });
-      }
-      
-      const key = trailerUrl.split('/').pop()?.split('?')[0];
-      log(`Found trailer for TMDb ID ${id}: ${key}`);
-      
-      res.json({ 
-        ok: true, 
-        trailer: {
-          site: "YouTube",
-          key,
-          url: trailerUrl,
-          name: "Trailer",
-          official: true,
-          type: "Trailer"
-        }
-      });
-    } catch (err: any) {
-      log(`Trailer fetch error for ID ${id}: ${err.message}`);
-      res.status(500).json({ ok: false, error: err.message ?? String(err) });
-    }
-  });
-
-  // Mount API routes with explicit path protection
-  app.use("/api", (req, res, next) => {
-    // Force JSON responses for all /api/* routes
-    res.setHeader('Content-Type', 'application/json');
-    next();
-  }, api);
-
-  // Explicit catch-all for unknown API routes (must come before Vite)
-  app.all("/api/*", (req, res) => {
-    log(`404 API endpoint: ${req.method} ${req.path}`);
-    res.status(404).json({ ok: false, error: "API endpoint not found" });
-  });
-
-  // Only now setup static/Vite serving (which has catch-all behavior)
+  // importantly only setup vite in development and after
+  // setting up all the other routes so the catch-all route
+  // doesn't interfere with the other routes
   if (app.get("env") === "development") {
-    await setupVite(app, app);
+    await setupVite(app, server);
   } else {
     serveStatic(app);
   }
 
+  // ALWAYS serve the app on the port specified in the environment variable PORT
+  // Other ports are firewalled. Default to 5000 if not specified.
+  // this serves both the API and the client.
+  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  app.listen(port, "0.0.0.0", () => {
-    log(`Server running on port ${port}`);
-    log(`API endpoints: /api/health, /api/ab/round, /api/score-round`);
+  server.listen(port, "0.0.0.0", () => {
+    log(`serving on port ${port}`);
   });
 })();
