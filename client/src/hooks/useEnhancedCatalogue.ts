@@ -11,13 +11,8 @@ export type Title = {
   voteCount: number;
   posterUrl: string | null;
   backdropUrl: string | null;
-  sources: string[];
   image?: string | null;
   feature?: number[];
-  // Helper computed properties
-  year?: string;
-  embed?: string | null;
-  yt?: string;
 };
 
 type CatalogueResponse = {
@@ -45,21 +40,19 @@ export function bestImageUrl(t: Title): string | null {
 }
 
 // ---- Fetch curated catalogue ----
-export function useEnhancedCatalogue() {
+export function useEnhancedCatalogue(page = 1, pageSize = 60) {
   const [items, setItems] = useState<Title[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
-        setError(null);
-        // Pull ALL items in a single call (server guarantees no downsampling)
-        const res = await fetch(`/api/catalogue?all=1`);
+        setErr(null);
+        const res = await fetch(`/api/catalogue?page=${page}&pageSize=${pageSize}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json: CatalogueResponse = await res.json();
         if (cancelled) return;
@@ -67,23 +60,21 @@ export function useEnhancedCatalogue() {
         const enriched = (json.items || []).map((t) => {
           const image = bestImageUrl(t);
           const feature = toFeatureVector(t);
-          const year = t.releaseDate ? t.releaseDate.slice(0, 4) : '';
-          return { ...t, image, feature, year };
+          return { ...t, image, feature };
         });
 
         setItems(enriched);
         setTotal(json.total || enriched.length);
-        setStats((json as any).stats || null);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message ?? String(e));
+        if (!cancelled) setErr(e?.message ?? String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [page, pageSize]);
 
-  return { items, total, loading, error, stats };
+  return { items, total, loading, error: err };
 }
 
 // ---- Learned vector (with persistence) ----

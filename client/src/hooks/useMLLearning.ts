@@ -11,125 +11,16 @@ import {
   TARGET_CHOICES, 
   EPS_DEFAULT 
 } from "@/lib/mlUtils";
-import { buildABAnchors, getAnchorsForPhase, type Anchor } from "@/lib/abAnchors";
-import { updateBTL } from "@/lib/taste";
-import { phi } from "@/lib/phi";
-import { pickInformativePair } from "@/lib/abNext";
-import { updateBTL as btlUpdate, uncertainty, type BTLState } from "@/utils/btl";
-import { pickNextPair } from "@/utils/pair-picker";
-import { mmrSelect } from "@/utils/mmr";
 
 const DIMENSION = 12;
-const MAX_ROUNDS = 12;
-const ANCHOR_MODE = 'hardlist'; // Lock to hardlist only to prevent random spillover
-
-// Informative pair selection helpers
-const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
-const dot = (a: number[], b: number[]) => {
-  let s = 0; for (let i = 0; i < Math.min(a.length, b.length); i++) s += (a[i]||0)*(b[i]||0);
-  return s;
-};
-const l1dist = (a: number[], b: number[]) => {
-  let s = 0; for (let i = 0; i < Math.min(a.length, b.length); i++) s += Math.abs((a[i]||0)-(b[i]||0));
-  return s;
-};
-
-// Pick the pair that's both uncertain for current weights and far apart in features
-function pickInformativePairLocal(cands: Movie[], w: number[], avoidIds: Set<string>) : [Movie, Movie] {
-  const pool = cands.filter(m => !avoidIds.has(m.id));
-  const S = Math.min(120, pool.length);
-  if (S < 2) return [pool[0], pool[1]];
-
-  let best: {a: Movie, b: Movie, val: number} | null = null;
-  for (let tries = 0; tries < S*6; tries++) {
-    const i = Math.floor(Math.random()*S);
-    let j = Math.floor(Math.random()*S);
-    if (j === i) j = (j+1) % S;
-    const A = pool[i], B = pool[j];
-    const diff = A.features.map((x,k)=> (x||0) - (B.features[k]||0));
-    const p = sigmoid(dot(w, diff));               // model's confidence A > B
-    const uncertainty = 1 - Math.abs(p - 0.5)*2;   // 1 when ~50/50
-    const distance = Math.min(1, l1dist(A.features, B.features) / 6); // scaled contrast
-    const info = 0.6*uncertainty + 0.4*distance;
-    if (!best || info > best.val) best = { a: A, b: B, val: info };
-  }
-  return [best!.a, best!.b];
-}
-
-// Funnel-based A/B Testing Structure
-const FUNNEL_ROUNDS = {
-  BROAD: { start: 1, end: 4, description: "Broad genre exploration" },
-  FOCUSED: { start: 5, end: 8, description: "Genre refinement" },
-  PRECISE: { start: 9, end: 12, description: "Taste precision" }
-};
-
-// Well-known anchor movies for each phase
-const ANCHOR_MOVIES = {
-  // Phase 1: Broad cross-genre pairs (very recognizable)
-  broad: [
-    // Action vs Comedy
-    { action: ["The Dark Knight", "Mad Max: Fury Road", "John Wick"], comedy: ["Groundhog Day", "The Grand Budapest Hotel", "Superbad"] },
-    // Drama vs Sci-Fi
-    { drama: ["The Shawshank Redemption", "Forrest Gump", "The Godfather"], scifi: ["Interstellar", "Blade Runner 2049", "The Matrix"] },
-    // Fantasy vs Thriller
-    { fantasy: ["The Lord of the Rings: The Fellowship of the Ring", "Harry Potter and the Philosopher's Stone", "Pan's Labyrinth"], thriller: ["Se7en", "The Silence of the Lambs", "Gone Girl"] },
-    // Animation vs Crime
-    { animation: ["Spirited Away", "Toy Story", "WALL-E"], crime: ["Pulp Fiction", "Goodfellas", "The Departed"] }
-  ],
-
-  // Phase 2: Genre-focused with decade/style contrasts
-  focused: {
-    action: [
-      { classic: ["Terminator 2: Judgment Day", "Die Hard"], modern: ["John Wick", "Mad Max: Fury Road"] },
-      { grounded: ["Heat", "The Bourne Identity"], fantastical: ["The Matrix", "Guardians of the Galaxy"] }
-    ],
-    drama: [
-      { intense: ["There Will Be Blood", "No Country for Old Men"], uplifting: ["The Pursuit of Happyness", "Good Will Hunting"] },
-      { period: ["Amadeus", "The English Patient"], contemporary: ["Manchester by the Sea", "Lady Bird"] }
-    ],
-    comedy: [
-      { classic: ["Some Like It Hot", "The Pink Panther"], modern: ["Superbad", "The Grand Budapest Hotel"] },
-      { dry: ["Fargo", "In Bruges"], broad: ["Anchorman", "Dumb and Dumber"] }
-    ],
-    scifi: [
-      { cerebral: ["2001: A Space Odyssey", "Arrival"], action: ["Aliens", "Edge of Tomorrow"] },
-      { dystopian: ["Blade Runner", "The Matrix"], optimistic: ["E.T.", "Star Trek"] }
-    ],
-    fantasy: [
-      { epic: ["The Lord of the Rings", "Game of Thrones"], whimsical: ["The Princess Bride", "Big Fish"] },
-      { dark: ["Pan's Labyrinth", "The Dark Crystal"], light: ["Harry Potter", "The Chronicles of Narnia"] }
-    ],
-    thriller: [
-      { psychological: ["The Silence of the Lambs", "Black Swan"], action: ["Mission: Impossible", "Casino Royale"] },
-      { mystery: ["Zodiac", "The Prestige"], suspense: ["No Country for Old Men", "Prisoners"] }
-    ]
-  }
-};
 
 export function useMLLearning(movies: Movie[]) {
-  const [moviesData] = useMovieData();
-  const [anchors, setAnchors] = useState<Anchor[]>([]);
-  const [serverAnchors, setServerAnchors] = useState<any[]>([]);
-
-  // Fetch anchors from the server if ANCHOR_MODE is 'hardlist'
-  useEffect(() => {
-    if (ANCHOR_MODE === 'hardlist') {
-      fetch('/config/paf_anchor_hardlist.json')
-        .then(res => res.json())
-        .then(data => {
-          setServerAnchors(data);
-          console.log('[FUNNEL] Loaded anchors from server:', data.length);
-        })
-        .catch(error => console.error('[FUNNEL] Failed to load anchors:', error));
-    }
-  }, []);
-
   const [state, setState] = useState<MLState>(() => {
-    // Clear all stored data on every app load to treat each reload as a new user
-    ['ts_preferences_funnel_v1', 'pf_ab_chosen_v1', 'pf_ab_seen_v1'].forEach(key => {
-      localStorage.removeItem(key);
-    });
-
+    // Complete fresh start - clear ALL old data for maximum variety
+    const STORAGE_KEY = 'ts_preferences_enhanced_v3_complete_fix';
+    // Clear all old storage that might be restricting variety
+    ['ts_preferences_enhanced_v1', 'ts_preferences_enhanced_v2_fresh', 'ts_recent_pairs', 'ts_likes', 'ts_hidden', 'ts_recent'].forEach(key => localStorage.removeItem(key));
+    const storedPrefs = localStorage.getItem(STORAGE_KEY);
     const defaultPrefs: UserPreferences = {
       w: zeros(DIMENSION),
       explored: new Set<string>(),
@@ -139,79 +30,34 @@ export function useMLLearning(movies: Movie[]) {
       eps: EPS_DEFAULT
     };
 
+    let preferences = defaultPrefs;
+    if (storedPrefs) {
+      try {
+        const parsed = JSON.parse(storedPrefs);
+        preferences = {
+          w: parsed.w || zeros(DIMENSION),
+          explored: new Set(parsed.explored || []),
+          hidden: new Set(parsed.hidden || []),
+          likes: new Set(parsed.likes || []),
+          choices: parsed.choices || 0,
+          eps: parsed.eps || EPS_DEFAULT
+        };
+      } catch (e) {
+        console.error('Failed to parse stored preferences:', e);
+      }
+    }
+
     return {
-      preferences: defaultPrefs,
+      preferences,
       queue: [],
       currentPair: null,
-      onboardingComplete: false
+      onboardingComplete: preferences.choices >= TARGET_CHOICES
     };
   });
 
-  // Initialize anchors when movies are loaded or server anchors are available
+  // Persist to localStorage whenever preferences change - fresh namespace for variety
   useEffect(() => {
-    if (moviesData.length > 0 && anchors.length === 0) {
-      console.log('[FUNNEL] Building A/B anchor pool from', moviesData.length, 'movies');
-      const movieTitles = moviesData.map(m => ({
-        id: m.id,
-        title: m.name,
-        year: m.year,
-        genres: m.tags.map(tag => {
-          // Map string tags to genre IDs for clustering
-          switch (tag.toLowerCase()) {
-            case 'action': return 28;
-            case 'adventure': return 12;
-            case 'comedy': return 35;
-            case 'drama': return 18;
-            case 'horror': return 27;
-            case 'thriller': return 53;
-            case 'sci-fi': case 'science fiction': return 878;
-            case 'fantasy': return 14;
-            case 'romance': return 10749;
-            case 'crime': return 80;
-            case 'mystery': return 9648;
-            case 'animation': return 16;
-            case 'family': return 10751;
-            default: return 18; // Default to drama
-          }
-        }),
-        sources: [m.category || 'unknown'],
-        popularity: 50, // Default popularity
-        vote_count: 1000, // Default vote count
-        poster: m.poster,
-        original_language: 'en' // Assume English for now
-      }));
-
-      let anchorPool: Anchor[];
-      if (ANCHOR_MODE === 'hardlist' && serverAnchors.length > 0) {
-        console.log(`[FUNNEL LOCKED] Using ONLY hardlist anchors for A/B testing: ${serverAnchors.length} movies`);
-        // Resolve server anchors to TMDB IDs - CRITICAL: Only use hardlist movies
-        anchorPool = serverAnchors.map((anchor: any) => {
-          const matchedMovie = moviesData.find(m => m.name.toLowerCase() === anchor.title.toLowerCase() && m.year === anchor.year);
-          if (matchedMovie) {
-            return { ...anchor, id: matchedMovie.id };
-          } else {
-            console.warn(`[FUNNEL] Could not resolve anchor: ${anchor.title} (${anchor.year})`);
-            return null;
-          }
-        }).filter((a: Anchor | null) => a !== null) as Anchor[];
-        
-        console.log(`[FUNNEL LOCKED] Final A/B pool: ${anchorPool.length} hardlist movies (NO catalogue spillover)`);
-        // Critical assertion: A/B testing must ONLY use hardlist
-        if (anchorPool.length === 0) {
-          console.error('[FUNNEL ERROR] No hardlist anchors resolved! A/B testing will fail.');
-        }
-      } else {
-        anchorPool = buildABAnchors(movieTitles, 30);
-      }
-      
-      setAnchors(anchorPool);
-      console.log('[FUNNEL] Built anchor pool with', anchorPool.length, 'movies');
-    }
-  }, [moviesData, anchors.length, serverAnchors]);
-
-  // Persist to localStorage
-  useEffect(() => {
-    const STORAGE_KEY = 'ts_preferences_funnel_v1';
+    const STORAGE_KEY = 'ts_preferences_enhanced_v3_complete_fix';
     const toStore = {
       w: state.preferences.w,
       explored: Array.from(state.preferences.explored),
@@ -223,193 +69,74 @@ export function useMLLearning(movies: Movie[]) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
   }, [state.preferences]);
 
-  // Get current funnel phase
-  const getCurrentPhase = useCallback(() => {
-    const choice = state.preferences.choices + 1;
-    if (choice <= FUNNEL_ROUNDS.BROAD.end) return 'broad';
-    if (choice <= FUNNEL_ROUNDS.FOCUSED.end) return 'focused';
-    return 'precise';
-  }, [state.preferences.choices]);
-
-  // Analyze current preferences to determine top genres
-  const analyzePreferences = useCallback(() => {
-    const w = state.preferences.w;
-    const genreStrengths = {
-      comedy: w[0] || 0,
-      drama: w[1] || 0,
-      action: w[2] || 0,
-      thriller: w[3] || 0,
-      scifi: w[4] || 0,
-      fantasy: w[5] || 0
-    };
-
-    const sorted = Object.entries(genreStrengths)
-      .sort(([,a], [,b]) => b - a)
-      .slice(0, 2);
-
-    return {
-      top: sorted[0]?.[0] || 'drama',
-      second: sorted[1]?.[0] || 'action',
-      strengths: genreStrengths
-    };
-  }, [state.preferences.w]);
-
-  // Find movie by title in catalogue
-  const findMovieByTitle = useCallback((title: string): Movie | null => {
-    const found = moviesData.find(m => 
-      m.name.toLowerCase().includes(title.toLowerCase()) ||
-      title.toLowerCase().includes(m.name.toLowerCase())
-    );
-    return found || null;
-  }, [moviesData]);
-
-  // Informative pair selection that asks strategic questions
   const nextPair = useCallback((): [Movie, Movie] => {
-    // Force use of hardlist anchors during A/B testing if available
-    let candidatePool: Movie[];
-    if (ANCHOR_MODE === 'hardlist' && serverAnchors.length > 0) {
-      console.log('[FUNNEL] Using hardlist anchors for A/B testing. Server anchors:', serverAnchors.length);
-      // Match server anchors to movie data by title and year
-      candidatePool = moviesData.filter(movie => {
-        return serverAnchors.some(anchor => {
-          const titleMatch = movie.name.toLowerCase().trim() === anchor.title.toLowerCase().trim();
-          const yearMatch = movie.year === String(anchor.year);
-          return titleMatch && yearMatch;
-        });
-      });
-      console.log('[FUNNEL] Filtered to', candidatePool.length, 'hardlist movies from', moviesData.length, 'total movies');
-    } else {
-      console.log('[FUNNEL] Using full catalogue for A/B testing');
-      candidatePool = moviesData;
+    if (movies.length < 2) {
+      return [
+        { id: 'loading1', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) },
+        { id: 'loading2', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) }
+      ];
     }
 
-    if (candidatePool.length < 2) {
-      console.warn('[FUNNEL] Not enough hardlist candidates, falling back to full catalogue');
-      candidatePool = moviesData;
-      if (candidatePool.length < 2) {
-        return [
-          { id: 'loading1', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
-          { id: 'loading2', name: 'Loading...', year: '2024', poster: '', youtube: '', isSeries: false, tags: [], features: zeros(DIMENSION) } as unknown as Movie,
-        ];
-      }
-    }
-
-    // build candidate pool (hide hidden; downweight very recent repeats)
+    // Much simpler approach - prioritize variety over complex filtering
     const hidden = new Set(state.preferences.hidden);
-    const recentChoices = state.preferences.choices > 0 ? Array.from(state.preferences.explored).slice(-6) : [];
-    const recentSet = new Set(recentChoices);
+    const explored = new Set(state.preferences.explored);
+    
+    // Get recently shown pairs (last 20 only to allow more variety)
+    const recentPairs = new Set(
+      JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]').slice(-20)
+    );
 
-    const candidates = candidatePool.filter(m => !hidden.has(m.id));
-    if (candidates.length < 2) return [candidatePool[0], candidatePool[1]];
+    // Build available pool - be much more lenient
+    let available = movies.filter(movie => !hidden.has(movie.id));
+    
+    // Only filter out very recently shown if we have plenty of movies
+    if (available.length > 30) {
+      available = available.filter(movie => !recentPairs.has(movie.id));
+    }
+    
+    console.log(`Movie variety check: ${available.length}/${movies.length} available, showing mix of classics (${available.filter(m => m.category === 'classic').length}) and recent (${available.filter(m => m.category === 'recent').length})`);
 
-    return pickInformativePairLocal(candidates, state.preferences.w, recentSet);
-  }, [moviesData, serverAnchors, state.preferences]);
+    // Simple random selection from available pool
+    const shuffled = shuffle([...available]);
+    const result: [Movie, Movie] = [
+      shuffled[0] || movies[0], 
+      shuffled[1] || movies[1]
+    ];
+    
+    // Track recently shown pairs (much shorter list)
+    const recentList = JSON.parse(localStorage.getItem('ts_recent_pairs') || '[]');
+    recentList.push(result[0].id, result[1].id);
+    localStorage.setItem('ts_recent_pairs', JSON.stringify(recentList.slice(-20))); // Keep only last 20
+
+    return result;
+  }, [movies, state.preferences.w, state.preferences.hidden, state.preferences.explored]);
 
   // Update currentPair when movies are loaded
   useEffect(() => {
-    if (moviesData.length >= 2 && !state.onboardingComplete && 
+    if (movies.length >= 2 && !state.onboardingComplete && 
         (!state.currentPair || state.currentPair[0].id === 'loading1')) {
       setState(prev => ({
         ...prev,
         currentPair: nextPair()
       }));
     }
-  }, [moviesData, state.onboardingComplete, state.currentPair, nextPair]);
+  }, [movies, state.onboardingComplete, state.currentPair, nextPair]);
 
   const learnChoice = useCallback((winner: Movie, loser: Movie) => {
     setState(prev => {
-      // Log which movies are being chosen to verify hardlist usage
-      console.log(`[FUNNEL A/B] Choice ${prev.preferences.choices + 1}: "${winner.name}" (${winner.year}) beat "${loser.name}" (${loser.year})`);
-      if (ANCHOR_MODE === 'hardlist') {
-        const winnerInHardlist = serverAnchors.some(a => a.title.toLowerCase() === winner.name.toLowerCase() && a.year === parseInt(winner.year));
-        const loserInHardlist = serverAnchors.some(a => a.title.toLowerCase() === loser.name.toLowerCase() && a.year === parseInt(loser.year));
-        console.log(`[FUNNEL A/B] Winner in hardlist: ${winnerInHardlist}, Loser in hardlist: ${loserInHardlist}`);
-      }
-
-      // Convert movies to proper Title format for phi function
-      const winnerTitle = {
-        id: typeof winner.id === 'string' ? parseInt(winner.id) : winner.id,
-        title: winner.name,
-        year: winner.year,
-        genres: winner.tags.map(tag => {
-          switch (tag.toLowerCase()) {
-            case 'action': return 28;
-            case 'adventure': return 12;
-            case 'comedy': return 35;
-            case 'drama': return 18;
-            case 'horror': return 27;
-            case 'thriller': return 53;
-            case 'sci-fi': case 'science fiction': return 878;
-            case 'fantasy': return 14;
-            case 'romance': return 10749;
-            case 'crime': return 80;
-            case 'mystery': return 9648;
-            case 'animation': return 16;
-            case 'family': return 10751;
-            default: return 18;
-          }
-        }),
-        popularity: 50
-      };
-
-      const loserTitle = {
-        id: typeof loser.id === 'string' ? parseInt(loser.id) : loser.id,
-        title: loser.name,
-        year: loser.year,
-        genres: loser.tags.map(tag => {
-          switch (tag.toLowerCase()) {
-            case 'action': return 28;
-            case 'adventure': return 12;
-            case 'comedy': return 35;
-            case 'drama': return 18;
-            case 'horror': return 27;
-            case 'thriller': return 53;
-            case 'sci-fi': case 'science fiction': return 878;
-            case 'fantasy': return 14;
-            case 'romance': return 10749;
-            case 'crime': return 80;
-            case 'mystery': return 9648;
-            case 'animation': return 16;
-            case 'family': return 10751;
-            default: return 18;
-          }
-        }),
-        popularity: 50
-      };
-
-      // Use BTL pairwise learning
+      const diff = subtract(winner.features, loser.features);
+      const p = logistic(dot(prev.preferences.w, diff));
+      const gradScale = 1 - p;
+      
       const newW = [...prev.preferences.w];
-      const winPhi = phi(winnerTitle);
-      const losePhi = phi(loserTitle);
-
-      // Ensure vectors are same length
-      while (newW.length < Math.max(winPhi.length, losePhi.length)) {
-        newW.push(0);
-      }
-      while (winPhi.length < newW.length) winPhi.push(0);
-      while (losePhi.length < newW.length) losePhi.push(0);
-
-      updateBTL(newW, winPhi, losePhi);
-
-      const choice = prev.preferences.choices + 1;
-      const phase = choice <= 4 ? 'BROAD' : choice <= 8 ? 'FOCUSED' : 'PRECISE';
-
-      console.log(`[FUNNEL LEARN BTL] Round ${choice} (${phase}): "${winner.name}" beat "${loser.name}"`);
-      console.log(`[FUNNEL VECTOR BTL] Updated weights:`, newW.slice(0, 10).map(w => w.toFixed(3)));
+      addInPlace(newW, diff, LEARNING_RATE * gradScale);
 
       const newExplored = new Set(prev.preferences.explored);
       newExplored.add(winner.id);
       newExplored.add(loser.id);
-      
-      // Track chosen IDs to prevent repeats
-      const newChosenIds = [...(prev.preferences as any).chosenIds || []];
-      newChosenIds.push(winner.id, loser.id);
-      // Keep only last 50 to prevent memory bloat
-      if (newChosenIds.length > 50) {
-        newChosenIds.splice(0, newChosenIds.length - 50);
-      }
 
-      const onboardingComplete = choice >= TARGET_CHOICES;
+      const newChoices = prev.preferences.choices + 1;
+      const onboardingComplete = newChoices >= TARGET_CHOICES;
 
       return {
         ...prev,
@@ -417,8 +144,7 @@ export function useMLLearning(movies: Movie[]) {
           ...prev.preferences,
           w: newW,
           explored: newExplored,
-          choices: choice,
-          chosenIds: newChosenIds
+          choices: newChoices
         },
         onboardingComplete,
         currentPair: onboardingComplete ? null : nextPair()
@@ -437,11 +163,11 @@ export function useMLLearning(movies: Movie[]) {
   }, [state.preferences.explored]);
 
   const rankQueue = useCallback((): Movie[] => {
-    if (moviesData.length === 0) {
+    if (movies.length === 0) {
       return [];
     }
-
-    const candidates = moviesData.filter(movie => !state.preferences.hidden.has(movie.id));
+    
+    const candidates = movies.filter(movie => !state.preferences.hidden.has(movie.id));
     const scored = candidates
       .map(movie => ({
         movie,
@@ -458,7 +184,7 @@ export function useMLLearning(movies: Movie[]) {
     }
 
     return scored.map(item => item.movie);
-  }, [moviesData, state.preferences.hidden, state.preferences.eps, baseScore, noveltyBoost]);
+  }, [movies, state.preferences.hidden, state.preferences.eps, baseScore, noveltyBoost]);
 
   const updateQueue = useCallback(() => {
     setState(prev => ({
@@ -517,20 +243,18 @@ export function useMLLearning(movies: Movie[]) {
   }, []);
 
   const hideMovie = useCallback((movieId: string) => {
-    if (state.onboardingComplete) {
-      setState(prev => {
-        const newHidden = new Set(prev.preferences.hidden);
-        newHidden.add(movieId);
-        return {
-          ...prev,
-          preferences: {
-            ...prev.preferences,
-            hidden: newHidden
-          }
-        };
-      });
-    }
-  }, [state.onboardingComplete]);
+    setState(prev => {
+      const newHidden = new Set(prev.preferences.hidden);
+      newHidden.add(movieId);
+      return {
+        ...prev,
+        preferences: {
+          ...prev.preferences,
+          hidden: newHidden
+        }
+      };
+    });
+  }, []);
 
   const surpriseMe = useCallback(() => {
     const prevEps = state.preferences.eps;
@@ -541,9 +265,9 @@ export function useMLLearning(movies: Movie[]) {
         eps: Math.min(0.45, prev.preferences.eps + 0.10)
       }
     }));
-
+    
     updateQueue();
-
+    
     // Reset after a delay
     setTimeout(() => {
       setState(prev => ({
@@ -557,8 +281,6 @@ export function useMLLearning(movies: Movie[]) {
   }, [state.preferences.eps, updateQueue]);
 
   const reset = useCallback(() => {
-    ['ts_preferences_funnel_v1', 'pf_ab_chosen_v1', 'pf_ab_seen_v1'].forEach(key => localStorage.removeItem(key));
-
     setState({
       preferences: {
         w: zeros(DIMENSION),
@@ -566,8 +288,7 @@ export function useMLLearning(movies: Movie[]) {
         hidden: new Set<string>(),
         likes: new Set<string>(),
         choices: 0,
-        eps: EPS_DEFAULT,
-        chosenIds: []
+        eps: EPS_DEFAULT
       },
       queue: [],
       currentPair: null,
@@ -594,7 +315,6 @@ export function useMLLearning(movies: Movie[]) {
 
   return {
     ...state,
-    anchors,
     learnChoice,
     adjustAdventurousness,
     skipPair,
@@ -609,15 +329,6 @@ export function useMLLearning(movies: Movie[]) {
       if (state.preferences.eps <= 0.16) return "Balanced";
       return "Wild";
     },
-    getWatchlist: () => moviesData.filter(movie => state.preferences.likes.has(movie.id)),
-    getCurrentPhase,
-    getFunnelProgress: () => ({
-      phase: getCurrentPhase(),
-      round: state.preferences.choices + 1,
-      description: state.preferences.choices < 4 ? "Exploring broad preferences" : 
-                  state.preferences.choices < 8 ? "Refining genre preferences" : 
-                  "Fine-tuning your taste profile",
-      anchorsLoaded: anchors.length > 0
-    })
+    getWatchlist: () => movies.filter(movie => state.preferences.likes.has(movie.id))
   };
 }
