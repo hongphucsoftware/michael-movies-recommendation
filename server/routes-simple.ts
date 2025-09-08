@@ -405,11 +405,17 @@ function scoreVideos(vids: any[]) {
     .sort((a, b) => b.__score - a.__score);
 }
 
-// A/B Testing Round - Get 12 pairs for voting
+// A/B Testing Round - Get 12 pairs for voting (with allowlist enforcement)
 api.get("/ab/round", async (req: Request, res: Response) => {
   try {
     const state = await getState();
-    const pairs = generateABPairs(state.catalogue, 12);
+    
+    // DEFENSIVE: Filter to only allowed sourceListIds  
+    const allowedCatalogue = state.catalogue.filter(movie => 
+      movie.sourceListId && ALLOWED_LIST_IDS.has(movie.sourceListId)
+    );
+    
+    const pairs = generateABPairs(allowedCatalogue, 12);
     res.json({ ok: true, pairs });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message ?? String(err) });
@@ -437,6 +443,11 @@ api.post("/score-round", async (req: Request, res: Response) => {
     
     const state = await getState();
     
+    // DEFENSIVE: Filter to only allowed sourceListIds
+    const allowedCatalogue = state.catalogue.filter(movie => 
+      movie.sourceListId && ALLOWED_LIST_IDS.has(movie.sourceListId)
+    );
+    
     // Validate vote structure
     for (const vote of votes) {
       if (typeof vote.winnerId !== 'number' || typeof vote.loserId !== 'number') {
@@ -447,7 +458,7 @@ api.post("/score-round", async (req: Request, res: Response) => {
       }
     }
     
-    const recommendation = scoreMoviesFromVotes(votes, state.catalogue, excludeIds);
+    const recommendation = scoreMoviesFromVotes(votes, allowedCatalogue, excludeIds);
     
     // Fetch trailers for recommended movies
     const trailers: Record<number, string | null> = {};
@@ -479,6 +490,62 @@ api.post("/score-round", async (req: Request, res: Response) => {
 // Build status endpoint for debugging
 api.get("/build/status", (_req, res) => {
   res.json(getBuildStatus());
+});
+
+// ---------- Audit Endpoints ----------
+// Audit: summary of movies per sourceListId
+api.get("/audit/summary", async (_req, res) => {
+  try {
+    const state = await getState();
+    const perList: Record<string, number> = {};
+    
+    // Count movies per sourceListId
+    for (const movie of state.catalogue) {
+      if (movie.sourceListId) {
+        perList[movie.sourceListId] = (perList[movie.sourceListId] || 0) + 1;
+      }
+    }
+    
+    res.json({ 
+      ok: true, 
+      perList, 
+      total: state.catalogue.length,
+      allowedListIds: Array.from(ALLOWED_LIST_IDS)
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  }
+});
+
+// Audit: find movies by title
+api.get("/audit/find", async (req, res) => {
+  try {
+    const state = await getState();
+    const query = String(req.query.title || "").toLowerCase();
+    
+    if (!query) {
+      return res.status(400).json({ ok: false, error: "Missing title parameter" });
+    }
+    
+    // Find movies matching the title query
+    const matches = state.catalogue
+      .filter(movie => movie.title.toLowerCase().includes(query))
+      .map(movie => ({
+        id: movie.id,
+        title: movie.title,
+        sourceListId: movie.sourceListId,
+        posterUrl: movie.posterUrl
+      }));
+    
+    res.json({ 
+      ok: true, 
+      query, 
+      matches,
+      total: matches.length
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message ?? String(err) });
+  }
 });
 
 // Health
