@@ -18,18 +18,15 @@ export default function PosterPair() {
   }
 
   const { 
-    currentPair, 
-    progress, 
-    isComplete, 
-    loading, 
-    error, 
-    choose, 
-    reset, 
-    recommendations,
-    isScoring 
-  } = hookResult;
+    abPairs = [], 
+    isLoading = false, 
+    error = null, 
+    recommendations = [], 
+    handleVote, 
+    startNewRound 
+  } = hookResult || {};
 
-  if (loading) return <div className="opacity-80">Loading A/B pairs…</div>;
+  if (isLoading) return <div className="opacity-80">Loading A/B pairs…</div>;
   if (error) return (
     <div className="text-center py-8">
       <div className="text-red-400 mb-4">Error: {error}</div>
