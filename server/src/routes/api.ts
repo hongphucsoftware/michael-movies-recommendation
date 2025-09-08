@@ -16,7 +16,13 @@ api.get("/health", (_req, res) => {
 });
 
 api.get("/catalogue", (_req, res) => {
-  res.json({ ok: true, items: movies });
+  res.json({ 
+    ok: true, 
+    items: movies,
+    total: movies.length,
+    sources: ["sample"],
+    policy: "simplified"
+  });
 });
 
 api.get("/catalogue-all", (_req, res) => {
@@ -24,9 +30,14 @@ api.get("/catalogue-all", (_req, res) => {
 });
 
 api.get("/recs", (req, res) => {
-  const limit = Number(req.query.limit) || 6;
+  const limit = Number(req.query.top || req.query.limit) || 6;
   const shuffled = [...movies].sort(() => Math.random() - 0.5);
-  res.json({ ok: true, recs: shuffled.slice(0, limit) });
+  res.json({ 
+    ok: true, 
+    items: shuffled.slice(0, limit),
+    rounds: 0,
+    likes: []
+  });
 });
 
 api.get("/trailers", (req, res) => {
