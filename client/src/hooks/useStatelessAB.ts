@@ -39,6 +39,7 @@ export function useStatelessAB() {
   const [error, setError] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation | null>(null);
   const [isScoring, setIsScoring] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   
   const isComplete = votes.length >= 12;
   const currentPair = pairs[currentPairIndex] || null;
@@ -104,6 +105,7 @@ export function useStatelessAB() {
         setVotes([]);
         setRecommendations(null);
         setIsScoring(false);
+        setInitialized(true);
       } catch (err: any) {
         console.error('Failed to fetch A/B pairs:', err);
         if (!cancelled) {
@@ -279,6 +281,11 @@ export function useStatelessAB() {
       setLoading(false);
     }
   }, []);
+
+  // Return null if not properly initialized to prevent hook errors
+  if (!initialized && !loading && !error) {
+    return null;
+  }
 
   return {
     // A/B Testing state

@@ -6,8 +6,16 @@ import TrailerResults from "./TrailerResults";
 export default function PosterPair() {
   const hookResult = useStatelessAB();
   
+  // Handle case where hook is not ready
   if (!hookResult) {
-    return <div className="text-center py-8">Loading hook...</div>;
+    return (
+      <div className="text-center py-8">
+        <div className="animate-pulse">
+          <div className="text-lg font-semibold mb-2">Initializing A/B Testing...</div>
+          <div className="text-sm text-gray-400">Setting up movie pairs</div>
+        </div>
+      </div>
+    );
   }
 
   const { 
