@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { useStatelessAB } from "../hooks/useStatelessAB";
 import TrailerResults from "./TrailerResults";
 
@@ -17,7 +17,17 @@ export default function PosterPair() {
   } = useStatelessAB();
 
   if (loading) return <div className="opacity-80">Loading A/B pairs…</div>;
-  if (error) return <div className="text-red-400">Error: {error}</div>;
+  if (error) return (
+    <div className="text-center py-8">
+      <div className="text-red-400 mb-4">Error: {error}</div>
+      <button 
+        onClick={reset}
+        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+      >
+        Try Again
+      </button>
+    </div>
+  );
 
   function pick(side: "left" | "right") {
     if (!currentPair) return;
@@ -47,14 +57,18 @@ export default function PosterPair() {
             data-testid="button-pick-left"
           >
             <img
-              src={currentPair.left.posterUrl || currentPair.left.backdropUrl || ""}
-              alt={currentPair.left.title}
+              src={currentPair.left?.posterUrl || currentPair.left?.backdropUrl || "/placeholder-poster.jpg"}
+              alt={currentPair.left?.title || "Movie"}
               className="w-full h-[520px] object-cover"
               loading="lazy"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.src = "/placeholder-poster.jpg";
+              }}
             />
             <div className="p-3 text-center">
-              <div className="font-medium">{currentPair.left.title}</div>
-              <div className="text-xs opacity-70">{currentPair.left.releaseDate?.slice(0,4) || ""}</div>
+              <div className="font-medium">{currentPair.left?.title || "Unknown"}</div>
+              <div className="text-xs opacity-70">{currentPair.left?.releaseDate?.slice(0,4) || ""}</div>
             </div>
           </button>
 
@@ -64,14 +78,18 @@ export default function PosterPair() {
             data-testid="button-pick-right"
           >
             <img
-              src={currentPair.right.posterUrl || currentPair.right.backdropUrl || ""}
-              alt={currentPair.right.title}
+              src={currentPair.right?.posterUrl || currentPair.right?.backdropUrl || "/placeholder-poster.jpg"}
+              alt={currentPair.right?.title || "Movie"}
               className="w-full h-[520px] object-cover"
               loading="lazy"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.src = "/placeholder-poster.jpg";
+              }}
             />
             <div className="p-3 text-center">
-              <div className="font-medium">{currentPair.right.title}</div>
-              <div className="text-xs opacity-70">{currentPair.right.releaseDate?.slice(0,4) || ""}</div>
+              <div className="font-medium">{currentPair.right?.title || "Unknown"}</div>
+              <div className="text-xs opacity-70">{currentPair.right?.releaseDate?.slice(0,4) || ""}</div>
             </div>
           </button>
         </div>

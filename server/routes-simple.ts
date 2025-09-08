@@ -465,24 +465,31 @@ api.post("/score-round", async (req: Request, res: Response) => {
     const trailers: Record<number, string | null> = {};
     for (const movie of recommendation.movies) {
       try {
+        console.log(`Fetching trailer for movie ${movie.id}: ${movie.title}`);
         const vids = await fetchVideos(movie.id, { include_video_language: "en,null", language: "en-US" });
         const best = scoreVideos(vids)[0];
         if (best?.site?.toLowerCase() === "youtube") {
           trailers[movie.id] = `https://www.youtube.com/embed/${best.key}?rel=0&modestbranding=1&autoplay=0`;
+          console.log(`Found YouTube trailer for ${movie.title}: ${best.key}`);
         } else {
           trailers[movie.id] = null;
+          console.log(`No YouTube trailer found for ${movie.title}`);
         }
-      } catch {
+      } catch (error) {
+        console.warn(`Failed to fetch trailer for ${movie.title}:`, error);
         trailers[movie.id] = null;
       }
     }
     
-    res.json({
+    const response = {
       ok: true,
       movies: recommendation.movies,
       trailers,
       explanation: recommendation.explanation
-    });
+    };
+    
+    console.log(`Scoring complete: ${recommendation.movies.length} movies recommended`);
+    res.json(response);
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message ?? String(err) });
   }

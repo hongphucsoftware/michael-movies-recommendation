@@ -70,10 +70,16 @@ export function useStatelessAB() {
         if (!contentType || !contentType.includes('application/json')) {
           const text = await response.text();
           console.error('Expected JSON but got:', contentType, text.substring(0, 200));
-          throw new Error(`Expected JSON response but got ${contentType}`);
+          throw new Error(`Server returned HTML instead of JSON. Check server logs.`);
         }
         
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch (parseError) {
+          console.error('Failed to parse JSON:', parseError);
+          throw new Error('Invalid JSON response from server');
+        }
         console.log('A/B pairs response:', data);
         
         if (cancelled) return;
@@ -140,10 +146,16 @@ export function useStatelessAB() {
           if (!contentType || !contentType.includes('application/json')) {
             const text = await response.text();
             console.error('Expected JSON but got:', contentType, text.substring(0, 200));
-            throw new Error(`Expected JSON response but got ${contentType}`);
+            throw new Error(`Scoring API returned HTML instead of JSON. Check server logs.`);
           }
           
-          const data = await response.json();
+          let data;
+          try {
+            data = await response.json();
+          } catch (parseError) {
+            console.error('Failed to parse JSON:', parseError);
+            throw new Error('Invalid JSON response from scoring API');
+          }
           console.log('Scoring response:', data);
           
           if (cancelled) return;
