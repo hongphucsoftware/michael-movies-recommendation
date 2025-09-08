@@ -1,4 +1,4 @@
-import * as React from 'react';
+import React, { useState, useEffect } from "react";
 import { useStatelessAB } from "../hooks/useStatelessAB";
 import TrailerResults from "./TrailerResults";
 
