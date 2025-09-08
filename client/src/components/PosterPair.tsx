@@ -19,7 +19,7 @@ export default function PosterPair() {
 
   const { 
     currentPair,
-    progress,
+    progress = { current: 0, total: 12 }, // Add default fallback
     isComplete,
     loading,
     error,

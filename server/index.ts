@@ -206,10 +206,17 @@ app.use((req, res, next) => {
       const id = Number(req.query.id);
       if (!id) return res.status(400).json({ ok: false, error: "Missing id" });
       
+      log(`Fetching trailer for TMDb ID: ${id}`);
       const trailerUrl = await getTrailerUrl(id);
-      if (!trailerUrl) return res.json({ ok: true, trailer: null });
+      
+      if (!trailerUrl) {
+        log(`No trailer found for TMDb ID: ${id}`);
+        return res.json({ ok: true, trailer: null });
+      }
       
       const key = trailerUrl.split('/').pop()?.split('?')[0];
+      log(`Found trailer for TMDb ID ${id}: ${key}`);
+      
       res.json({ 
         ok: true, 
         trailer: {
@@ -222,6 +229,7 @@ app.use((req, res, next) => {
         }
       });
     } catch (err: any) {
+      log(`Trailer fetch error for ID ${id}: ${err.message}`);
       res.status(500).json({ ok: false, error: err.message ?? String(err) });
     }
   });
