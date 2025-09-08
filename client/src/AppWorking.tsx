@@ -1,39 +1,20 @@
-import React from "react";
-import { Shuffle, AlertCircle, RefreshCw } from "lucide-react";
-import { Badge } from "./components/ui/badge";
-import Header from "./components/Header";
-import PosterPair from "./components/PosterPair";
 
-function AppWorking() {
+import React from 'react';
+import PosterPair from './components/PosterPair';
 
-
-
+export default function AppWorking() {
   return (
-    <div className="bg-black text-white min-h-screen">
-      {/* Background Pattern */}
-      <div className="fixed inset-0 opacity-5">
-        <div 
-          className="absolute inset-0" 
-          style={{
-            backgroundImage: "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.3) 1px, transparent 0)",
-            backgroundSize: "20px 20px"
-          }}
-        ></div>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white">
+      <div className="container mx-auto px-4 py-8">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl font-bold mb-2">PickaFlick</h1>
+          <p className="text-gray-300">Choose your preferences to get personalized movie recommendations</p>
+        </header>
+        
+        <main className="max-w-4xl mx-auto">
+          <PosterPair />
+        </main>
       </div>
-
-      {/* Header */}
-      <header className="relative z-10 p-6">
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold">PickaFlick</h1>
-          <p className="text-gray-300">Find Your Next Favourite in Minutes</p>
-        </div>
-      </header>
-
-      <main className="relative z-10 max-w-4xl mx-auto px-6 pb-12">
-        <PosterPair />
-      </main>
     </div>
   );
 }
-
-export default AppWorking;

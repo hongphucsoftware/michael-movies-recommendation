@@ -1,30 +1,23 @@
-import { useState, useEffect, useCallback } from "react";
+
+import { useState, useEffect, useCallback } from 'react';
+
+export type Movie = {
+  id: number;
+  title: string;
+  overview: string;
+  genres: number[];
+  releaseDate: string | null;
+  popularity: number;
+  voteAverage: number;
+  voteCount: number;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  sourceListId: string;
+};
 
 export type ABPair = {
-  left: {
-    id: number;
-    title: string;
-    overview: string;
-    genres: number[];
-    releaseDate: string | null;
-    popularity: number;
-    voteAverage: number;
-    voteCount: number;
-    posterUrl: string | null;
-    backdropUrl: string | null;
-  };
-  right: {
-    id: number;
-    title: string;
-    overview: string;
-    genres: number[];
-    releaseDate: string | null;
-    popularity: number;
-    voteAverage: number;
-    voteCount: number;
-    posterUrl: string | null;
-    backdropUrl: string | null;
-  };
+  left: Movie;
+  right: Movie;
 };
 
 export type Vote = {
@@ -33,25 +26,9 @@ export type Vote = {
 };
 
 export type Recommendation = {
-  movies: Array<{
-    id: number;
-    title: string;
-    overview: string;
-    genres: number[];
-    releaseDate: string | null;
-    popularity: number;
-    voteAverage: number;
-    voteCount: number;
-    posterUrl: string | null;
-    backdropUrl: string | null;
-  }>;
+  movies: Movie[];
   trailers: Record<number, string | null>;
-  explanation: {
-    topGenres: Array<{ id: number; name: string; count: number }>;
-    topActors: Array<{ id: number; name: string; count: number }>;
-    topDirectors: Array<{ id: number; name: string; count: number }>;
-    topEra: { bucket: string; count: number } | null;
-  };
+  explanation: string;
 };
 
 export function useStatelessAB() {
@@ -79,20 +56,42 @@ export function useStatelessAB() {
         setLoading(true);
         setError(null);
         
+        console.log('Fetching A/B pairs from /api/ab/round...');
         const response = await fetch('/api/ab/round');
-        const data = await response.json();
         
         if (!response.ok) {
-          throw new Error(data.error || `HTTP ${response.status}`);
+          console.error('A/B round response not OK:', response.status, response.statusText);
+          const text = await response.text();
+          console.error('Response body:', text.substring(0, 200));
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
+        
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text();
+          console.error('Expected JSON but got:', contentType, text.substring(0, 200));
+          throw new Error(`Expected JSON response but got ${contentType}`);
+        }
+        
+        const data = await response.json();
+        console.log('A/B pairs response:', data);
         
         if (cancelled) return;
         
-        setPairs(data.pairs || []);
+        if (!data.ok) {
+          throw new Error(data.error || 'API returned error');
+        }
+        
+        if (!Array.isArray(data.pairs) || data.pairs.length === 0) {
+          throw new Error('No pairs received from API');
+        }
+        
+        setPairs(data.pairs);
         setCurrentPairIndex(0);
         setVotes([]);
         setRecommendations(null);
       } catch (err: any) {
+        console.error('Failed to fetch A/B pairs:', err);
         if (!cancelled) {
           setError(err.message || String(err));
         }
@@ -107,6 +106,74 @@ export function useStatelessAB() {
     
     return () => { cancelled = true; };
   }, []);
+
+  // Process scoring when we have 12 votes
+  useEffect(() => {
+    if (votes.length === 12 && !isScoring && !recommendations) {
+      let cancelled = false;
+      
+      const processScoring = async () => {
+        try {
+          setIsScoring(true);
+          
+          const excludeIds = votes.flatMap(v => [v.winnerId, v.loserId]);
+          
+          console.log('Submitting votes for scoring:', votes);
+          const response = await fetch('/api/score-round', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              votes,
+              excludeIds
+            })
+          });
+          
+          if (!response.ok) {
+            const text = await response.text();
+            console.error('Score round response not OK:', response.status, text.substring(0, 200));
+            throw new Error(`Scoring failed: ${response.status}`);
+          }
+          
+          const contentType = response.headers.get('content-type');
+          if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            console.error('Expected JSON but got:', contentType, text.substring(0, 200));
+            throw new Error(`Expected JSON response but got ${contentType}`);
+          }
+          
+          const data = await response.json();
+          console.log('Scoring response:', data);
+          
+          if (cancelled) return;
+          
+          if (!data.ok) {
+            throw new Error(data.error || 'Scoring failed');
+          }
+          
+          setRecommendations({
+            movies: data.movies || [],
+            trailers: data.trailers || {},
+            explanation: data.explanation || 'Based on your preferences'
+          });
+        } catch (err: any) {
+          console.error('Scoring failed:', err);
+          if (!cancelled) {
+            setError(`Scoring failed: ${err.message}`);
+          }
+        } finally {
+          if (!cancelled) {
+            setIsScoring(false);
+          }
+        }
+      };
+      
+      processScoring();
+      
+      return () => { cancelled = true; };
+    }
+  }, [votes.length, isScoring, recommendations]);
 
   // Make a choice between left and right
   const choose = useCallback((side: "left" | "right") => {
@@ -132,52 +199,6 @@ export function useStatelessAB() {
     };
   }, [currentPair, votes]);
 
-  // Score the round and get recommendations
-  const scoreRound = useCallback(async () => {
-    if (votes.length !== 12) {
-      setError("Need exactly 12 votes to score");
-      return;
-    }
-    
-    try {
-      setIsScoring(true);
-      setError(null);
-      
-      // Get all movie IDs that were used in A/B testing
-      const excludeIds = pairs.flatMap(pair => [pair.left.id, pair.right.id]);
-      
-      const response = await fetch('/api/score-round', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          votes,
-          excludeIds
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-      
-      setRecommendations(data);
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setIsScoring(false);
-    }
-  }, [votes, pairs]);
-
-  // Auto-score when we have 12 votes
-  useEffect(() => {
-    if (votes.length === 12 && !recommendations && !isScoring) {
-      scoreRound();
-    }
-  }, [votes.length, recommendations, isScoring, scoreRound]);
-
   // Reset everything for a new round
   const reset = useCallback(async () => {
     setLoading(true);
@@ -185,17 +206,35 @@ export function useStatelessAB() {
     setRecommendations(null);
     setVotes([]);
     setCurrentPairIndex(0);
+    setIsScoring(false);
     
     try {
+      console.log('Resetting - fetching new A/B pairs...');
       const response = await fetch('/api/ab/round');
-      const data = await response.json();
       
       if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
+        const text = await response.text();
+        console.error('Reset A/B round response not OK:', response.status, text.substring(0, 200));
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('Expected JSON but got:', contentType, text.substring(0, 200));
+        throw new Error(`Expected JSON response but got ${contentType}`);
+      }
+      
+      const data = await response.json();
+      console.log('Reset A/B pairs response:', data);
+      
+      if (!data.ok) {
+        throw new Error(data.error || 'API returned error');
       }
       
       setPairs(data.pairs || []);
     } catch (err: any) {
+      console.error('Reset failed:', err);
       setError(err.message || String(err));
     } finally {
       setLoading(false);

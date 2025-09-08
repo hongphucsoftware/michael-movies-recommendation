@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { useStatelessAB } from "../hooks/useStatelessAB";
 import TrailerResults from "./TrailerResults";
@@ -19,6 +20,7 @@ export default function PosterPair() {
   if (error) return <div className="text-red-400">Error: {error}</div>;
 
   function pick(side: "left" | "right") {
+    if (!currentPair) return;
     choose(side);
   }
 
@@ -89,6 +91,19 @@ export default function PosterPair() {
           recommendations={recommendations}
           onReset={reset}
         />
+      )}
+
+      {/* Debug info */}
+      {!currentPair && !loading && (
+        <div className="text-center py-8">
+          <div className="text-red-400">No pairs available. Check server logs.</div>
+          <button 
+            onClick={reset}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Try Again
+          </button>
+        </div>
       )}
     </div>
   );
