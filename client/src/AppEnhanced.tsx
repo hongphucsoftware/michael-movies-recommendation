@@ -3,7 +3,7 @@ import { useEnhancedCatalogueNew } from "./hooks/useEnhancedCatalogueNew";
 import { useEnhancedCatalogue } from "./hooks/useEnhancedCatalogue";
 import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
-import TrailerPlayer from "./components/TrailerPlayer";
+import { EnhancedTrailerWheelSection } from "./components/EnhancedTrailerWheelSection";
 import { EnhancedWatchlist } from "./components/EnhancedWatchlist";
 import { RefreshCw, AlertCircle, Shuffle } from "lucide-react";
 import { Badge } from "./components/ui/badge";
@@ -188,27 +188,15 @@ function AppEnhanced() {
                 </div>
               </div>
 
-              <TrailerPlayer
-                items={(() => {
-                  console.log('[AppEnhanced] Mapping finalMovies for TrailerPlayer:', finalMovies.length);
-                  const mapped = finalMovies.map(m => {
-                    const mappedMovie = {
-                      id: typeof m.id === 'string' ? parseInt(m.id.replace(/\D/g, '')) : m.id,
-                      title: m.name || m.title,
-                      year: m.year,
-                      genres: m.genreIds || m.genre_ids || [],
-                      popularity: m.popularity || 0,
-                      feature: m.feature || m.features || [],
-                      sources: m.sources || [m.category] || ['unknown']
-                    };
-                    return mappedMovie;
-                  });
-                  console.log('[AppEnhanced] Sample mapped movie:', mapped[0]);
-                  return mapped;
-                })()}
-                learnedVec={preferences?.w || []}
-                recentChosenIds={Array.from(preferences?.explored || new Set()).map(id => parseInt(String(id).replace(/\D/g, '')))}
-                count={5}
+              <EnhancedTrailerWheelSection
+                movies={movies}
+                preferences={preferences}
+                onSave={saveToWatchlist}
+                onHide={hideItem}
+                onMarkRecent={markAsRecent}
+                getAvailableMovies={getAvailableMovies}
+                explorationRate={preferences.eps}
+                onExplorationChange={adjustAdventurousness}
               />
             </div>
 

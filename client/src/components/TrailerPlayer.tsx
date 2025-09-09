@@ -1,370 +1,360 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { phi } from '@/lib/phi';
-import { dot } from '@/lib/taste';
-import { apiGet } from '@/lib/api';
-import { onPrefsUpdated } from '@/lib/events';
+// UI LOCK — TrailerPlayer shows ONE trailer at a time. No grids, no poster walls.
+// Replit Agent: Do NOT replace this component with a grid view.
+// It must queue 5 trailers chosen by the A/B signal and play them sequentially.
 
-export type Title = {
-  id: number;
-  title: string;
-  year: string;
-  genres: number[];
-  popularity?: number;
-  feature?: number[];
-  sources?: string[];
+import { useEffect, useMemo, useState, useCallback } from "react";
+import type { Title } from "../hooks/useEnhancedCatalogue";
+import { toFeatureVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
+
+// --- Alignment tuning constants (higher correlation, less generic) ---
+const SCORE_WEIGHTS = { cosine: 0.65, genre: 0.35, jitter: 0.0 }; // was 0.55/0.40/0.05
+const MIN_REL = 0.35;                     // minimum cosine for a title to be eligible
+const MIN_COMBO = 0.28;                   // if cosine is lower, allow if 0.5*rel+0.5*genre >= this
+const TOP_SLICE = 120;                    // consider only the top N scored titles (was 250)
+const PICK_TEMPERATURE = 0.45;            // lower temp => tighter to taste (was 0.65)
+const BRAND_CAP_IN_FIVE = 1;              // still prevent duplicate brands in the 5
+
+/* =========================
+   Debug helpers & panel
+   Toggle with "?debug=1" or press "D"
+   ========================= */
+
+function mean(xs: number[]) { return xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : 0; }
+function round(x: number, d = 3) { const k = 10**d; return Math.round(x*k)/k; }
+
+type DebugRow = {
+  id: number; title: string;
+  rel: number; genreBias: number; antiPop: number; final: number;
+  genres: number[]; sources: string[];
 };
 
-type Props = {
-  items: Title[];
-  learnedVec: number[];
-  recentChosenIds: number[];
-  avoidIds?: number[];
-  count?: number;
-};
-
-function bestImageUrl(t: Title): string | null {
-  // Simple fallback for now - in a real app you'd use poster URLs
-  return `https://via.placeholder.com/400x600/1a1a1a/ffffff?text=${encodeURIComponent(t.title)}`;
-}
-
-function cosine(a: number[], b: number[]): number {
-  let dotProd = 0, normA = 0, normB = 0;
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    dotProd += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB) || 1;
-  return dotProd / denom;
-}
-
-export default function TrailerPlayer({
-  items, learnedVec, recentChosenIds, avoidIds = [], count = 6,
-}: Props) {
-  const [queue, setQueue] = useState<Array<Omit<Title, 'genres'> & { genres: string[], explanation: string }>>([]);
-  const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
-  const [idx, setIdx] = useState(0);
-
-  console.log('[TrailerPlayer] Received items:', items.length);
-  console.log('[TrailerPlayer] Learned vector length:', learnedVec.length);
-  console.log('[TrailerPlayer] Recent chosen IDs:', recentChosenIds.length);
-  console.log('[TrailerPlayer] A/B Learned Vector:', learnedVec.slice(0, 12));
-
-  // MMR helper function for diversity selection
-  function mmrSelect<T>(items: T[], k: number, relevance: (x:T)=>number, vec: (x:T)=>number[], lambda=0.75) {
-    const chosen: T[] = [];
-    const sim = (a:T,b:T) => {
-      const va = vec(a), vb = vec(b);
-      let dot=0, na=0, nb=0;
-      for (let i=0;i<va.length;i++){
-        dot+=va[i]*vb[i];
-        na+=va[i]*va[i];
-        nb+=vb[i]*vb[i];
-      }
-      const la = Math.sqrt(na)||1, lb=Math.sqrt(nb)||1;
-      return dot/(la*lb);
-    };
-    const pool = items.slice();
-    while (chosen.length < k && pool.length) {
-      let bestIdx = 0, bestVal = -1e9;
-      for (let i=0;i<pool.length;i++){
-        const rel = relevance(pool[i]);
-        const div = chosen.length ? Math.max(...chosen.map(c=> sim(pool[i], c))) : 0;
-        const val = lambda*rel - (1-lambda)*div;
-        if (val > bestVal){ bestVal = val; bestIdx = i; }
-      }
-      chosen.push(pool.splice(bestIdx,1)[0]);
-    }
-    return chosen;
-  }
-
-  // Fetch personalized recommendations from new Bradley-Terry model
-  const [recommendations, setRecommendations] = useState<Title[]>([]);
-
+function useDebugToggle() {
+  const qp = new URLSearchParams(location.search);
+  const initial = qp.get("debug") === "1";
+  const [on, setOn] = useState(initial);
   useEffect(() => {
-    const fetchRecommendations = async () => {
-      try {
-        // Add cache-buster to avoid client cache
-        const data = await apiGet(`/api/recs?top=12&t=${Date.now()}`);
-        if (data.ok && data.items) {
-          // Convert API format to Title format
-          const recs: Title[] = data.items.map((item: any) => ({
-            id: item.id,
-            title: item.title,
-            year: item.year?.toString() || '',
-            genres: item.genres || [],
-            popularity: 50, // Default
-            feature: [], // Not used
-            sources: item.sources || [],
-          }));
-
-          console.log(`[TrailerPlayer] Fetched ${recs.length} personalized recommendations from Bradley-Terry model`);
-          console.log(`[TrailerPlayer] User completed ${data.rounds} A/B rounds`);
-          if (data.likes?.length > 0) {
-            console.log(`[TrailerPlayer] User preferences:`, data.likes.slice(0, 3));
-          }
-
-          setRecommendations(recs);
-        }
-      } catch (error) {
-        console.error('[TrailerPlayer] Failed to fetch recommendations:', error);
-        setRecommendations([]);
-      }
-    };
-
-    fetchRecommendations();
-    
-    // Listen for preference updates and refetch
-    const cleanup = onPrefsUpdated(() => {
-      console.log('[TrailerPlayer] Preferences updated, refetching recommendations');
-      fetchRecommendations();
-    });
-    
-    return cleanup;
-  }, []); // Remove learnedVec dependency since we listen for updates
-
-  const picks = useMemo(() => {
-    if (recommendations.length === 0) return [];
-
-    // Remove recently chosen to avoid immediate repeats
-    const available = recommendations.filter(item =>
-      !recentChosenIds.includes(item.id) && !avoidIds.includes(item.id)
-    );
-
-    console.log(`[TrailerPlayer] ${available.length} personalized recommendations available`);
-
-    if (available.length === 0) {
-      console.warn('[TrailerPlayer] No available personalized recommendations');
-      return [];
-    }
-
-    // Take top recommendations (already ranked by Bradley-Terry model)
-    const picks = available.slice(0, count);
-
-    picks.forEach((pick, i) => {
-      console.log(`[PERSONALIZED PICK ${i+1}] "${pick.title}" (${pick.year})`);
-    });
-
-    console.log(`[TrailerPlayer] Selected ${picks.length} personalized recommendations`);
-    return picks;
-  }, [recommendations, recentChosenIds, avoidIds, count]);
-
-  // Convert picks to queue format
-  useEffect(() => {
-    const newQueue = picks.map(item => ({
-      ...item,
-      genres: item.genres?.map(g => {
-        // Convert genre IDs to strings
-        const genreMap: Record<number, string> = {
-          28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
-          80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
-          14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
-          9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie',
-          53: 'Thriller', 10752: 'War', 37: 'Western'
-        };
-        return genreMap[g] || 'Unknown';
-      }) || [],
-      explanation: 'Personalized based on your A/B testing preferences'
-    }));
-
-    setQueue(newQueue);
-    setIdx(0);
-  }, [picks]);
-
-  // Fetch trailer embeds
-  useEffect(() => {
-    if (queue.length === 0) return;
-
-    console.log('[TrailerPlayer] Fetching trailers for BTL picks:', queue.length);
-
-    const fetchEmbeds = async () => {
-      const newEmbeds: Record<number, string|null> = {};
-
-      for (const item of queue) {
-        try {
-          const res = await fetch(`/api/trailer?id=${item.id}`);
-          if (res.ok) {
-            const data = await res.json();
-            newEmbeds[item.id] = data.trailer?.url || null;
-          } else {
-            newEmbeds[item.id] = null;
-          }
-        } catch (error) {
-          console.error(`Failed to fetch trailer for ${item.title}:`, error);
-          newEmbeds[item.id] = null;
-        }
-      }
-
-      console.log('[TrailerPlayer] Received embeds for:', Object.keys(newEmbeds).length, 'items');
-      console.log('[TrailerPlayer] Items with trailers:', Object.values(newEmbeds).filter(Boolean).length);
-      console.log('[TrailerPlayer] Sample embed URLs:', Object.entries(newEmbeds).slice(0, 3));
-
-      setEmbeds(newEmbeds);
-    };
-
-    fetchEmbeds();
-  }, [queue]);
-
-  const currentItem = queue[idx];
-  const currentEmbed = currentItem ? embeds[currentItem.id] : null;
-
-  console.log('[TrailerPlayer] Current state:', {
-    queueLength: queue.length,
-    currentIndex: idx,
-    currentTitle: currentItem?.title,
-    hasEmbed: !!currentEmbed
-  });
-
-  const nextItem = () => {
-    setIdx(prev => (prev + 1) % queue.length);
-  };
-
-  const prevItem = () => {
-    setIdx(prev => (prev - 1 + queue.length) % queue.length);
-  };
-
-  // Helper to set the current index in the queue
-  const setCurrentIndex = (index: number) => {
-    setIdx(index);
-  };
-
-  // Generate explanation based on recommendations API response
-  const [explanationText, setExplanationText] = useState("Loading your personalized recommendations...");
-
-  useEffect(() => {
-    const fetchExplanation = async () => {
-      try {
-        const data = await apiGet('/api/recs?top=5');
-        if (data.ok) {
-          if (data.rounds === 0) {
-            setExplanationText("Complete the A/B testing to get personalized recommendations!");
-          } else if (data.rounds < 12) {
-            setExplanationText(`Based on ${data.rounds} A/B choices, here are some initial recommendations. Complete more rounds for better personalization!`);
-          } else {
-            // Generate explanation from user preferences
-            const topPrefs = data.likes?.slice(0, 3) || [];
-            if (topPrefs.length > 0) {
-              const prefText = topPrefs.map((pref: [string, number]) => {
-                const [key] = pref;
-                if (key.startsWith('g:')) return `genre preferences`;
-                if (key.startsWith('dir:')) return `director style`;
-                if (key.startsWith('act:')) return `actor preferences`;
-                if (key.startsWith('era:')) return `era preferences`;
-                return 'cinematic taste';
-              }).slice(0, 2).join(' and ');
-
-              setExplanationText(`Based on your A/B testing choices, we've learned your ${prefText}. Here are movies we think you'll love:`);
-            } else {
-              setExplanationText("Based on your A/B testing choices, here are personalized recommendations for you:");
-            }
-          }
-        }
-      } catch (error) {
-        setExplanationText("These movies are selected based on your preferences:");
-      }
-    };
-
-    fetchExplanation();
-    
-    // Listen for preference updates and refetch explanation
-    const cleanup = onPrefsUpdated(() => {
-      fetchExplanation();
-    });
-    
-    return cleanup;
+    const h = (e: KeyboardEvent) => { if (e.key.toLowerCase() === "d") setOn(v => !v); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
   }, []);
+  return [on, setOn] as const;
+}
 
-  if (!currentItem) {
-    return (
-      <div className="flex items-center justify-center h-64 bg-gray-900 rounded-lg">
-        <p className="text-gray-400">Loading personalized recommendations...</p>
-      </div>
-    );
-  }
+function DebugPanel({ rows }: { rows: DebugRow[] }) {
+  const avgCos = round(mean(rows.map(r => r.rel)));
+  const avgGB  = round(mean(rows.map(r => r.genreBias)));
+  const brands = new Set(rows.map(r =>
+    r.title.toLowerCase().replace(/[^a-z0-9]+/g," ").split(" ").slice(0,2).join(" ")
+  ));
+  const brandDiversity = `${brands.size}/5 brands`;
+  const coverage = rows.reduce((acc, r) => {
+    for (const s of r.sources||[]) acc[s] = (acc[s]||0)+1;
+    return acc;
+  }, {} as Record<string, number>);
+  const verdict =
+    avgCos >= 0.45 || (avgCos >= 0.35 && avgGB >= 0.5) ? "✅ Strong alignment"
+    : avgCos >= 0.25 ? "⚠️ Mild alignment"
+    : "❌ Weak alignment";
 
   return (
-    <div className="space-y-4">
-      <div className="text-center">
-        <h3 className="text-xl font-bold text-white mb-2">Your Personalized Trailer Reel</h3>
-        <p className="text-gray-300 text-sm max-w-2xl mx-auto leading-relaxed">
-          {explanationText}
-        </p>
+    <div className="fixed bottom-4 left-4 z-50 max-w-md p-3 rounded-xl bg-black/70 text-xs text-white border border-white/10">
+      <div className="font-semibold mb-1">Reco Debug</div>
+      <div>Verdict: <span className="font-medium">{verdict}</span></div>
+      <div>Avg cosine: <b>{avgCos}</b> · Avg genre match: <b>{avgGB}</b> · {brandDiversity}</div>
+      <div className="mt-1 opacity-80">
+        Coverage: {Object.entries(coverage).map(([k,v])=>`${k}:${v}`).join(" · ") || "n/a"}
       </div>
-
-      {/* Trailer Player */}
-      <div className="bg-gray-900 rounded-lg overflow-hidden">
-        {currentEmbed ? (
-          <div className="aspect-video">
-            <iframe
-              src={currentEmbed.includes('youtube.com/embed/') ? currentEmbed : `https://www.youtube.com/embed/${currentEmbed.replace('https://www.youtube.com/watch?v=', '')}`}
-              title={`${currentItem.title} trailer`}
-              className="w-full h-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-              loading="lazy"
-            />
+      <div className="mt-2 max-h-40 overflow-auto space-y-1">
+        {rows.map(r => (
+          <div key={r.id} className="border-t border-white/10 pt-1">
+            <div className="font-medium">{r.title}</div>
+            <div>cos={round(r.rel)} · genre={round(r.genreBias)} · antiPop={round(r.antiPop)} · final={round(r.final)}</div>
           </div>
-        ) : (
-          <div className="aspect-video flex items-center justify-center bg-gray-800">
-            <div className="text-center">
-              <p className="text-white font-semibold">{currentItem.title}</p>
-              <p className="text-gray-400">
-                {Object.keys(embeds).length === 0 ? 'Loading trailer...' : 'No trailer available'}
-              </p>
-              <p className="text-xs text-gray-500 mt-2">
-                Debug: Queue {queue.length}, Index {idx}, Embeds {Object.keys(embeds).length}
-              </p>
-            </div>
+        ))}
+      </div>
+      <div className="mt-1 opacity-70">Press <b>D</b> to toggle</div>
+    </div>
+  );
+}
+
+/* =========================
+   Math & scoring helpers
+   ========================= */
+
+const l2 = (x: number[]) => Math.sqrt(x.reduce((s, v) => s + v*v, 0));
+const cosine = (a: number[], b: number[]) => {
+  const la = l2(a), lb = l2(b); if (!la || !lb) return 0;
+  let dot = 0; const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) dot += a[i]*b[i];
+  return dot / (la * lb);
+};
+
+// deterministic jitter to break ties without biasing results
+const jitterById = (id: number) => {
+  const x = Math.sin(id * 99991) * 10000;
+  return (x - Math.floor(x)) * 0.01;
+};
+
+// Weighted sample without replacement using softmax
+function softmaxSample<T>(items: T[], getScore: (t: T)=>number, k: number, temperature = 0.65): T[] {
+  const pool = items.slice();
+  const out: T[] = [];
+  for (let pick = 0; pick < k && pool.length; pick++) {
+    const scores = pool.map(getScore);
+    const max = Math.max(...scores);
+    const exps = scores.map(s => Math.exp((s - max) / Math.max(temperature, 1e-6)));
+    const sum = exps.reduce((a,b)=>a+b, 0) || 1;
+    let r = Math.random() * sum;
+    let idx = 0;
+    for (; idx < exps.length; idx++) { r -= exps[idx]; if (r <= 0) break; }
+    const chosen = pool.splice(Math.min(idx, pool.length-1), 1)[0];
+    out.push(chosen);
+  }
+  return out;
+}
+
+/* =========================
+   Server call for trailer embeds
+   ========================= */
+
+async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|null>> {
+  if (!ids.length) return {};
+  // Keep commas unencoded; server also tolerates encoded commas.
+  const r = await fetch(`/api/trailers?ids=${ids.join(",")}`);
+  if (!r.ok) return {};
+  const j = await r.json();
+  const out: Record<number, string|null> = {};
+  Object.keys(j?.trailers || {}).forEach(k => (out[Number(k)] = j.trailers[k]));
+  return out;
+}
+
+/* =========================
+   User profile from A/B picks
+   ========================= */
+
+type UserProfile = {
+  vec: number[];                      // preference vector (centroid)
+  genreWeight: Record<number, number>; // TMDB genreId -> weight [0..1]
+};
+
+function buildUserProfile(items: Title[], chosenIds: number[]): UserProfile {
+  const byId = new Map<number, Title>(); items.forEach(t => byId.set(t.id, t));
+
+  const chosen: Title[] = chosenIds.map(id => byId.get(id)).filter(Boolean) as Title[];
+
+  // Vector centroid
+  let vec: number[] = [];
+  if (chosen.length) {
+    const dim = (chosen[0].feature || toFeatureVector(chosen[0])).length;
+    vec = new Array(dim).fill(0);
+    for (const t of chosen) {
+      const f = t.feature || toFeatureVector(t);
+      for (let i = 0; i < dim; i++) vec[i] += f[i];
+    }
+    const n = l2(vec) || 1;
+    vec = vec.map(v => v / n);
+  }
+
+  // Genre weights w/ smoothing
+  const counts: Record<number, number> = {};
+  let total = 0;
+  for (const t of chosen) for (const g of (t.genres || [])) { counts[g] = (counts[g] || 0) + 1; total++; }
+  const uniq = Object.keys(counts).length || 1;
+  const alpha = 0.5;
+  const genreWeight: Record<number, number> = {};
+  for (const g of Object.keys(counts).map(Number)) {
+    genreWeight[g] = (counts[g] + alpha) / (total + alpha * uniq);
+  }
+
+  return { vec, genreWeight };
+}
+
+/* =========================
+   TrailerPlayer component
+   ========================= */
+
+type Props = {
+  items: Title[];            // full catalogue from the 3 lists
+  learnedVec: number[];      // from A/B learner
+  recentChosenIds: number[]; // TMDB ids the user picked in A/B
+  avoidIds?: number[];       // optional: avoid repeating
+  count?: number;            // number of trailers to queue (default 5)
+};
+
+export default function TrailerPlayer({
+  items, learnedVec, recentChosenIds, avoidIds = [], count = 5,
+}: Props) {
+  const [queue, setQueue] = useState<Title[]>([]);
+  const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
+  const [idx, setIdx] = useState(0);
+  const [debugOn] = useDebugToggle();
+
+  // Build the same profile the picker uses (for debug panel)
+  const debugProfile = useMemo(
+    () => buildUserProfile(items, recentChosenIds),
+    [items, JSON.stringify(recentChosenIds)]
+  );
+
+  // ------- Build 5 correlated picks from full catalogue -------
+  const picks = useMemo(() => {
+    // Unique pool (image present) & avoid repeats
+    const avoid = new Set<number>(avoidIds);
+    const byId = new Map<number, Title>();
+    for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
+    const pool0 = Array.from(byId.values()).filter(t => !avoid.has(t.id));
+
+    // Build profile and choose final preference vector
+    const profile = buildUserProfile(pool0, recentChosenIds);
+    let u = (learnedVec && l2(learnedVec) > 0.05) ? learnedVec.slice() : profile.vec.slice();
+    const useCosine = l2(u) > 0.05;
+    if (!useCosine) u = []; // fallback to genre-only if no vector learned
+
+    // Scoring components
+    const genreBias = (t: Title) => {
+      const ids = t.genres || []; if (!ids.length) return 0;
+      let s = 0; for (const g of ids) s += profile.genreWeight[g] || 0;
+      return s / ids.length;
+    };
+    const brandKey = (t: Title) =>
+      (t.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ").slice(0, 2).join(" ");
+
+    const scored = pool0.map(t => {
+      const f = t.feature || toFeatureVector(t);
+      const rel = useCosine ? cosine(f, u) : 0;
+      const gb  = genreBias(t);
+      const base = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb + SCORE_WEIGHTS.jitter*jitterById(t.id);
+      
+      // Only penalize popularity if BOTH similarity and genre are weak AND it's very popular
+      const pop = Math.min(1, (t.popularity || 0) / 100);
+      const antiPop = (pop > 0.60 && rel < 0.33 && gb < 0.30) ? -(0.08 * pop) : 0;
+      
+      return { t, s: base + antiPop, rel, gb, antiPop, brand: brandKey(t) };
+    });
+
+    // FILTER by minimum taste and build top slice
+    const eligible = scored.filter(x => (x.rel >= MIN_REL) || ((0.5*x.rel + 0.5*x.gb) >= MIN_COMBO));
+    const topSlice = eligible.sort((a,b)=>b.s-a.s).slice(0, Math.min(TOP_SLICE, eligible.length));
+
+    // Brand diversity cap (no duplicate brands in 5)
+    const filtered: typeof topSlice = [];
+    const brandCount = new Map<string, number>();
+    for (const it of topSlice) {
+      const c = brandCount.get(it.brand) || 0;
+      if (c >= BRAND_CAP_IN_FIVE) continue;
+      brandCount.set(it.brand, c+1);
+      filtered.push(it);
+    }
+
+    // Softmax sample 5 with tighter temperature
+    const sampled = softmaxSample(filtered, x => x.s, count, PICK_TEMPERATURE);
+    
+    // Store for debug (console)
+    console.debug("[Reco] sampled", sampled.map(x => ({
+      id:x.t.id, title:x.t.title, score:round(x.s), cos:round(x.rel), genre:round(x.gb), antiPop:round(x.antiPop)
+    })));
+    
+    return sampled.map(x => x.t);
+  }, [items, JSON.stringify(recentChosenIds), JSON.stringify(avoidIds), JSON.stringify(learnedVec), count]);
+
+  // ⬇️ Debug rows using the same genre weights as the picker
+  const debugRows: DebugRow[] = useMemo(() => {
+    const genreBias = (t: Title) => {
+      const ids = t.genres || [];
+      if (!ids.length) return 0;
+      let s = 0;
+      for (const g of ids) s += debugProfile.genreWeight[g] || 0;
+      return s / ids.length;
+    };
+
+    return queue.map(t => {
+      const f = t.feature || toFeatureVector(t);
+      const rel = learnedVec && l2(learnedVec) > 0.05 ? cosine(f, learnedVec) : 0;
+      const gb  = genreBias(t);
+      const pop = Math.min(1, (t.popularity || 0) / 100);
+      const antiPop = (rel < 0.35 && gb < 0.35) ? -(0.12 * pop) : 0;
+      // jitter omitted in debug final so numbers are stable/readable
+      const final = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb + SCORE_WEIGHTS.jitter*0 + antiPop;
+      return {
+        id: t.id, title: t.title, rel, genreBias: gb, antiPop, final,
+        genres: t.genres || [], sources: (t as any).sources || []
+      };
+    });
+  }, [JSON.stringify(queue.map(q => q.id)), JSON.stringify(learnedVec), JSON.stringify(debugProfile.genreWeight)]);
+
+  // ------- Prefetch embeds and set initial playable trailer -------
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setQueue(picks);
+      const ids = picks.map(p => p.id);
+      const map = await fetchTrailerEmbeds(ids);
+      if (!mounted) return;
+      setEmbeds(map);
+      const first = picks.findIndex(p => map[p.id]);
+      setIdx(first >= 0 ? first : 0);
+    })();
+    return () => { mounted = false; };
+  }, [JSON.stringify(picks.map(p => p.id))]);
+
+  // ------- Controls -------
+  const canPrev = idx > 0;
+  const canNext = idx + 1 < queue.length;
+  const prev = useCallback(() => { if (canPrev) setIdx(i => Math.max(0, i-1)); }, [canPrev]);
+  const next = useCallback(() => { if (canNext) setIdx(i => Math.min(queue.length-1, i+1)); }, [canNext]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "ArrowLeft") prev(); if (e.key === "ArrowRight") next(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prev, next]);
+
+  const current = queue[idx];
+  const embed = current ? embeds[current.id] : null;
+
+  return (
+    <div className="w-full max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xl font-semibold">Your Trailer Reel</h2>
+        <div className="text-xs opacity-60">{idx + 1} / {queue.length}</div>
+      </div>
+
+      {current && (
+        <div className="mb-3">
+          <div className="text-lg font-medium mb-2">{current.title}</div>
+          <div className="aspect-video w-full rounded-xl overflow-hidden bg-black">
+            {embed ? (
+              <iframe
+                className="w-full h-full"
+                src={embed}
+                title={`Trailer: ${current.title}`}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-sm opacity-80">
+                No trailer found for this title
+              </div>
+            )}
           </div>
-        )}
-      </div>
-
-      {/* Movie Info */}
-      <div className="text-center space-y-2">
-        <h4 className="text-lg font-semibold text-white">{currentItem.title}</h4>
-        <p className="text-gray-400">{currentItem.year} • {currentItem.genres.join(', ')}</p>
-        <p className="text-sm text-gray-500">{currentItem.explanation}</p>
-      </div>
-
-      {/* Controls */}
-      <div className="flex justify-center space-x-4">
-        <button
-          onClick={prevItem}
-          className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600"
-          disabled={queue.length <= 1}
-        >
-          Previous
-        </button>
-        <span className="px-4 py-2 text-gray-400">
-          {idx + 1} of {queue.length}
-        </span>
-        <button
-          onClick={nextItem}
-          className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600"
-          disabled={queue.length <= 1}
-        >
-          Next
-        </button>
-      </div>
-
-      {/* Queue Preview */}
-      <div className="mt-6">
-        <h5 className="text-sm font-semibold text-gray-400 mb-2">Up Next:</h5>
-        <div className="flex space-x-2 overflow-x-auto">
-          {queue.map((item, i) => (
-            <button
-              key={item.id}
-              onClick={() => setIdx(i)}
-              className={`flex-shrink-0 p-2 rounded text-xs ${
-                i === idx ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              {item.title}
-            </button>
-          ))}
         </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          onClick={prev}
+          disabled={!canPrev}
+          className={`px-3 py-2 rounded-lg ${canPrev ? "bg-neutral-800 hover:bg-neutral-700" : "bg-neutral-900 opacity-50 cursor-not-allowed"}`}>
+          ← Back
+        </button>
+        <button
+          onClick={next}
+          disabled={!canNext}
+          className={`px-3 py-2 rounded-lg ${canNext ? "bg-neutral-800 hover:bg-neutral-700" : "bg-neutral-900 opacity-50 cursor-not-allowed"}`}>
+          Next →
+        </button>
       </div>
+
+      {/* Debug panel */}
+      {debugOn && <DebugPanel rows={debugRows} />}
     </div>
   );
 }

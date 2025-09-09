@@ -8,21 +8,12 @@ Preferred communication style: Simple, everyday language.
 
 # Recent Changes (September 2025)
 
-- **Fixed Dynamic Catalogue System (Sept 1)**: Removed all hardcoded caps and fixed server to return complete dataset:
-  - **Server Uncapped**: Removed all `.slice()` calls from `/api/catalogue` endpoint - now returns full live dataset
-  - **Dynamic UI Text**: Replaced "432 movies" with live count from server via DataBanner component
-  - **No Client Capping**: Verified no client-side limits on catalogue data
-  - **Health Endpoint**: Added `/api/health/full` to detect future capping issues
-  - **Authentic Data Only**: Uses complete RT 2020 + IMDb Top 250 + IMDb List without artificial limits
-
 - **Enhanced A/B-Based Personalization (Sept 1)**: Fixed recommendation algorithm to properly reflect A/B test choices:
-  - **Tightened Alignment**: Upgraded to 60% cosine + 40% genre scoring with stricter taste filters (MIN_REL=0.42, MIN_COMBO=0.36)
-  - **Genre Quota System**: Enforces at least 3 of 5 picks from user's top genres based on A/B choices
-  - **Stronger Anti-Popularity**: Heavy penalty for off-taste blockbusters (18% popularity penalty when rel<0.40 && genre<0.35)
-  - **Enhanced Diversity**: Source cap (max 2 per source), brand cap, and 4-round repeat cooldown with 50% penalty
-  - **Embed-Aware Selection**: Only picks from 220 top candidates that have verified YouTube trailers
-  - **Mobile-Responsive Design**: Fully responsive layout optimized for both mobile and desktop experiences
-  - **Debug Panel**: Shows alignment metrics with brand/source diversity in console logs
+  - **Genre Weight Learning**: Derives genre preferences from actual A/B picks with Laplace smoothing
+  - **Hybrid Scoring**: 55% cosine similarity + 40% genre bias + 5% jitter for balanced recommendations
+  - **Softmax Sampling**: Takes top 250 by score, then samples 5 with controlled randomness for variety
+  - **Brand Deduplication**: Caps to 1 per brand (no more 3x Batman variants in same queue)
+  - **Single Trailer Player**: Shows ONE trailer at a time with Skip/Next, exactly matching original build
 
 - **Complete Trailer System**: Implemented full personalized recommendation engine:
   - **Full Catalogue Access**: All 432 movies from 3 authentic sources (RT 2020, IMDb Top 250, IMDb List) 

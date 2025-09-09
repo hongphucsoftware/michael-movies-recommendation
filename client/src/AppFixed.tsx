@@ -3,7 +3,7 @@ import { Shuffle, AlertCircle, RefreshCw } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
-import TrailerPlayer from "./components/TrailerPlayer";
+import { EnhancedTrailerWheelSection } from "./components/EnhancedTrailerWheelSection";
 import { EnhancedWatchlist } from "./components/EnhancedWatchlist";
 import { useMLLearning } from "./hooks/useMLLearning";
 import { posterFromTMDbPaths, youtubeThumb } from "./lib/videoPick";
@@ -209,19 +209,14 @@ function AppFixed() {
                 </button>
               </div>
 
-              <TrailerPlayer
-                items={movies.map(m => ({
-                  id: parseInt(String(m.id).replace(/\D/g, '')),
-                  title: m.name,
-                  year: m.year,
-                  genres: m.genre_ids || [],
-                  popularity: 0,
-                  feature: m.features || [],
-                  sources: [m.category]
-                }))}
-                learnedVec={preferences?.w || []}
-                recentChosenIds={Array.from(preferences?.explored || new Set()).map(id => parseInt(String(id).replace(/\D/g, '')))}
-                count={5}
+              <EnhancedTrailerWheelSection
+                movies={movies}
+                preferences={preferences}
+                onSave={() => {}}
+                onHide={() => {}}
+                onMarkRecent={() => {}}
+                getAvailableMovies={() => movies}
+                explorationRate={0.5}
               />
             </div>
 

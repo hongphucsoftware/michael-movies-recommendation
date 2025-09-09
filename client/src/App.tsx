@@ -5,7 +5,6 @@
 
 import React from "react";
 import PosterPair from "./components/PosterPair";
-import DataBanner from "./components/DataBanner";
 
 export default function App() {
   return (
@@ -15,7 +14,6 @@ export default function App() {
         <p className="text-sm opacity-80 mt-1">
           Quick Picks → we learn your taste → then a personalised Trailer Reel.
         </p>
-        <DataBanner />
       </header>
 
       <main className="max-w-6xl mx-auto p-6">

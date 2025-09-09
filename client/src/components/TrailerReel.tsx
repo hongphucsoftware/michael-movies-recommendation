@@ -60,43 +60,59 @@ export default function TrailerReel({ items, learnedVec, count = 12, recentChose
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [urls, setUrls] = useState<Record<number, string|null>>({});
 
-  // PURE RANDOM TRAILER SELECTION - No bias, no clustering, no smart algorithms
-  // The whole point is to break the grouping patterns you're seeing
+  // Build the candidate pool from ALL items (with images), then:
+  // 1) compute preference score (cosine with learnedVec)
+  // 2) soft bias toward "more like" recent A/B choices
+  // 3) remove items we just showed during A/B (avoidIds)
+  // 4) take top-N and run MMR for diversity
   const { picks, poolSize } = useMemo(() => {
-    // Get all movies with posters
+    // Ensure unique TMDB ids in the pool (no duplicates)
     const byId = new Map<number, Title>();
     for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
-    const pool = Array.from(byId.values());
-    
-    // Remove recently shown A/B pairs to avoid immediate repeats
+    const pool0 = Array.from(byId.values());
     const avoid = new Set<number>(avoidIds || []);
-    const available = pool.filter(t => !avoid.has(t.id));
-    
-    console.log(`[TRAILER REEL PURE RANDOM] Selecting ${count} from ${available.length} available movies`);
-    
-    // COMPLETELY RANDOM SELECTION - No scoring, no similarity, no MMR
-    const selected: Title[] = [];
-    const usedIndices = new Set<number>();
-    
-    for (let i = 0; i < Math.min(count, available.length); i++) {
-      let randomIndex;
-      let attempts = 0;
-      
-      // Get a truly random unused index
-      do {
-        randomIndex = Math.floor(Math.random() * available.length);
-        attempts++;
-      } while (usedIndices.has(randomIndex) && attempts < 50);
-      
-      if (attempts < 50) {
-        usedIndices.add(randomIndex);
-        selected.push(available[randomIndex]);
-        console.log(`  [${i+1}] Random pick: "${available[randomIndex].title}" from sources: ${available[randomIndex].sources}`);
-      }
+    const pool = pool0.filter(t => !avoid.has(t.id));                  // don't re-show A/B pair immediately
+
+    // If user vector is almost zero (brand new), sample a large diverse set
+    const strength = l2(learnedVec);
+    const fmap = new Map<number, number[]>();
+    const getF = (t: Title) => fmap.get(t.id) || (fmap.set(t.id, t.feature || toFeatureVector(t)), fmap.get(t.id)!);
+
+    // "More like what you chose" — boost titles similar to recent chosen items
+    const chosenF = recentChosenIds
+      .map(id => pool.find(p => p.id === id))
+      .filter(Boolean)
+      .map(t => getF(t as Title));
+
+    function likeBoost(f: number[]) {
+      if (!chosenF.length) return 0;
+      const s = chosenF.reduce((acc, cf) => acc + Math.max(0, cosine(f, cf)), 0) / chosenF.length;
+      return 0.15 * s; // small nudge toward what you picked
     }
-    
-    return { picks: selected, poolSize: pool.length };
-  }, [items, count, avoidIds]);
+
+    // Score every candidate
+    const scored = pool.map(t => {
+      const f = getF(t);
+      const base = cosine(f, learnedVec);       // -1..1
+      const lb = likeBoost(f);                   // 0..~0.15
+      const pop = Math.min(1, (t.popularity || 0) / 100); // keep a little popularity signal
+      const score = base + lb + 0.05 * pop + seededJitter(t.id);
+      return { t, score };
+    });
+
+    // If very weak signal, don't let popular classics dominate — take a big randomised slice
+    if (strength < 0.15) {
+      const shuffled = scored.sort((a, b) => b.score - a.score);
+      const slice = shuffled.slice(0, Math.min(400, shuffled.length)).map(x => x.t);
+      const mmr = mmrPick(slice, learnedVec, count, 0.65);
+      return { picks: mmr, poolSize: pool.length };
+    }
+
+    // Normal path: take top 400 most relevant, then MMR for diversity
+    const top = scored.sort((a, b) => b.score - a.score).slice(0, Math.min(400, scored.length)).map(x => x.t);
+    const mmr = mmrPick(top, learnedVec, count, 0.75);
+    return { picks: mmr, poolSize: pool.length };
+  }, [items, learnedVec, count, recentChosenIds, avoidIds]);
 
   // Prefetch trailer URLs and auto-select first available
   useEffect(() => {
