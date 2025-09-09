@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 import { getState } from "../state";
 
@@ -41,35 +40,6 @@ async function trailerUrl(id: number) {
   const b = best(v);
   return b?.key ? `https://www.youtube.com/embed/${b.key}` : null;
 }
-
-r.post("/score-round", async (req, res) => {
-  try {
-    const st = await getState();
-    const ex = new Set<number>((req.body?.excludeIds || []) as number[]);
-    const pool = st.catalogue.filter(m => !ex.has(m.id));
-    const recs = sample(pool, 6);
-    
-    // Add trailer URLs to each movie
-    const moviesWithTrailers = [];
-    for (const m of recs) {
-      const trailerEmbedUrl = await trailerUrl(m.id);
-      moviesWithTrailers.push({
-        ...m,
-        trailerUrl: trailerEmbedUrl
-      });
-    }
-    
-    res.json({
-      ok: true,
-      movies: moviesWithTrailers,
-      explanation: { summaryText: "6 picks from your five IMDb lists." },
-      reasonsPerMovie: {}
-    });
-  } catch (error) {
-    console.error("Override score-round error:", error);
-    res.status(500).json({ ok: false, error: "Failed to get recommendations" });
-  }
-});
 
 r.get("/trailers", async (req, res) => {
   try {
