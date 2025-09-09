@@ -8,14 +8,28 @@ Preferred communication style: Simple, everyday language.
 
 # Recent Changes (September 2025)
 
-- **Complete System Overhaul (Sept 1)**: Implemented comprehensive fix addressing all core issues:
-  - **New Catalogue System**: 20 movies with perfect 10 recent (2020-2024) + 10 classic split
-  - **Poster Quality Fixed**: Direct TMDb poster_path URLs through image proxy, eliminating cropping issues  
-  - **Era Classification Working**: 2020+ movies properly categorized as "recent" with era feature vector
-  - **Image Proxy Success**: 83KB+ poster images loading successfully through `/img/t/p/w500/` endpoint
-  - **Recent Movies Active**: Spider-Man: Across Spider-Verse, Super Mario Bros, Nobody, etc. properly displaying
-  - **12D Feature Vectors**: Enhanced ML with era dimension (slot 11) for recent/classic learning
-  - **Interface Compatibility**: OnboardingSection updated to work with new data structure and poster URLs
+- **Fixed Dynamic Catalogue System (Sept 1)**: Removed all hardcoded caps and fixed server to return complete dataset:
+  - **Server Uncapped**: Removed all `.slice()` calls from `/api/catalogue` endpoint - now returns full live dataset
+  - **Dynamic UI Text**: Replaced "432 movies" with live count from server via DataBanner component
+  - **No Client Capping**: Verified no client-side limits on catalogue data
+  - **Health Endpoint**: Added `/api/health/full` to detect future capping issues
+  - **Authentic Data Only**: Uses complete RT 2020 + IMDb Top 250 + IMDb List without artificial limits
+
+- **Enhanced A/B-Based Personalization (Sept 1)**: Fixed recommendation algorithm to properly reflect A/B test choices:
+  - **Tightened Alignment**: Upgraded to 60% cosine + 40% genre scoring with stricter taste filters (MIN_REL=0.42, MIN_COMBO=0.36)
+  - **Genre Quota System**: Enforces at least 3 of 5 picks from user's top genres based on A/B choices
+  - **Stronger Anti-Popularity**: Heavy penalty for off-taste blockbusters (18% popularity penalty when rel<0.40 && genre<0.35)
+  - **Enhanced Diversity**: Source cap (max 2 per source), brand cap, and 4-round repeat cooldown with 50% penalty
+  - **Embed-Aware Selection**: Only picks from 220 top candidates that have verified YouTube trailers
+  - **Mobile-Responsive Design**: Fully responsive layout optimized for both mobile and desktop experiences
+  - **Debug Panel**: Shows alignment metrics with brand/source diversity in console logs
+
+- **Complete Trailer System**: Implemented full personalized recommendation engine:
+  - **Full Catalogue Access**: All 432 movies from 3 authentic sources (RT 2020, IMDb Top 250, IMDb List) 
+  - **A/B History Tracking**: Records user choices during 12-round A/B testing for personalization
+  - **Enhanced Trailer Discovery**: TMDb YouTube videos + RT/IMDb page scraping + YouTube search fallback
+  - **Batch Trailer Fetching**: Prefetches all trailer URLs with 24h caching for smooth playback
+  - **Auto-Play**: Automatically selects and plays first available trailer from personalized set
 
 # Previous Changes (August 2025)
 
@@ -48,19 +62,32 @@ The backend uses Express.js with TypeScript in a minimalist setup. The current i
 - **Build Process**: esbuild for backend bundling and Vite for frontend assets
 
 ## Machine Learning System
-The application implements a custom logistic regression model for learning user preferences based on poster selection data.
+The application implements a sophisticated personalized recommendation system combining preference learning with diversity algorithms.
 
 **Key architectural decisions:**
-- **Feature Engineering**: 12-dimensional feature vectors representing movie characteristics (Comedy, Drama, Action, Thriller, SciFi, Fantasy, Documentary, LightTone, DarkTone, FastPace, SlowPace, EpisodeLengthShort)
-- **Learning Algorithm**: Online logistic regression with configurable learning rate (0.6) and exploration parameter (epsilon-greedy strategy)
-- **Data Persistence**: Browser localStorage for user preferences, exploration history, and watchlist
-- **Recommendation Logic**: Preference-based scoring with exploration/exploitation balance for diverse recommendations
+- **Feature Engineering**: 12-dimensional feature vectors representing movie characteristics (10 genres + era + popularity)
+- **A/B Learning**: Records user choices during poster selection to build preference profile
+- **Personalized Ranking**: Cosine similarity scoring against learned vector + "more like chosen movies" boost
+- **MMR Diversity**: Maximal Marginal Relevance algorithm prevents showing only similar movies
+- **Smart Fallbacks**: For new users with weak signals, uses broader diverse sampling to avoid popular classics dominance
+- **Data Persistence**: Browser localStorage for learned preferences, A/B history, and exploration state
 
 ## Data Storage
 The application currently uses browser localStorage for all user data persistence, with a planned migration path to PostgreSQL database.
 
 ## Data Sources
-The application now uses authentic IMDb Top 250 data sourced from the movie-monk-b0t GitHub repository (auto-updated every 6 hours) instead of TMDb's "top rated" endpoint. This provides real classic movies like "The Shawshank Redemption", "Whiplash", "WALL-E", and "Warrior". YouTube trailers are obtained by cross-referencing IMDb IDs with TMDb's database.
+The application uses three authentic high-quality movie sources with comprehensive scraping and fallback systems:
+
+**Primary Sources:**
+- **Rotten Tomatoes 2020 Editorial List**: Best movies of 2020 for recent quality content
+- **IMDb Top 250**: Classic high-rated movies for timeless recommendations  
+- **IMDb Custom List (ls545836395)**: Curated additional quality titles
+
+**Trailer Discovery:**
+- **Primary**: TMDb video API for official YouTube trailers
+- **Fallback**: Direct YouTube search by movie title + year when TMDb has none
+- **Intelligence**: Smart scoring of trailer quality (official > fan-made, trailer > teaser, HD preference)
+- **Caching**: 24-hour cache to prevent rate limiting and improve performance
 
 **Key architectural decisions:**
 - **Development Storage**: localStorage for immediate functionality without backend dependencies

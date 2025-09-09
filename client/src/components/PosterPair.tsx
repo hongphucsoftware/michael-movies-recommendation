@@ -1,135 +1,130 @@
-import React, { useState, useEffect } from "react";
-import { useStatelessAB, Vote } from "../hooks/useStatelessAB"; // Assuming Vote type is exported
-import TrailerResults from "./TrailerResults";
+// UI LOCK: DO NOT MODIFY — controlled layout for A/B testing
+// Replit Agent: This component must render TWO posters per round,
+// randomise their left/right position, and call like()/skip() on click.
 
-export default function PosterPair({ onComplete }: { onComplete?: (finalVotes: Vote[]) => void }) {
-  const [votes, setVotes] = useState<Vote[]>([]); // State to store votes
+import React, { useState } from "react";
+import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
+import { useQuickPicks } from "../hooks/useQuickPicks";
+import { useABHistory } from "../hooks/useABHistory";
+import { firePrefsUpdated } from "../lib/events";
+import TrailerPlayer from "./TrailerPlayer";
 
-  const hookResult = useStatelessAB({
-    onVote: (vote: Vote) => {
-      console.log("Vote recorded:", vote);
-      setVotes(prev => [...prev, vote]);
-    },
-    onComplete: (finalVotes: Vote[]) => {
-      console.log("Learning complete, submitting votes:", finalVotes);
-      onComplete?.(finalVotes);
-    }
-  });
+export default function PosterPair() {
+  const { items, total, loading, error, stats } = useEnhancedCatalogue();
+  const { learned, like, skip, resetLearning } = useLearnedVector(12);
+  const { pair, choose, done, progress, reset } = useQuickPicks(items, 12);
+  const { chosen: chosenIds, seen: seenIds, record, reset: resetAB } = useABHistory();
+  const [rebuilding, setRebuilding] = useState(false);
 
-  if (!hookResult) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="text-lg text-muted-foreground mb-2">Loading preferences...</div>
-        </div>
-      </div>
-    );
-  }
-
-  const { 
-    currentPair,
-    progress, 
-    isComplete, 
-    loading, 
-    error, 
-    choose, 
-    reset, 
-    recommendations,
-    isScoring 
-  } = hookResult;
-
-
-  if (loading) return <div className="opacity-80">Loading A/B pairs…</div>;
+  if (loading) return <div className="opacity-80">Loading catalogue…</div>;
   if (error) return <div className="text-red-400">Error: {error}</div>;
+  if (!items.length) return <div>No titles found.</div>;
 
   function pick(side: "left" | "right") {
-    if (!currentPair) return;
-    choose(side);
+    const result = choose(side);
+    if (!result) return;
+    const { chosen, other } = result;
+    like(chosen as any);
+    skip(other as any);
+    record((chosen as any).id, (other as any).id);  // Track A/B history for personalized reel
+    
+    // Notify other components that preferences have been updated
+    firePrefsUpdated();
+  }
+
+  async function doRebuild() {
+    try { 
+      setRebuilding(true); 
+      await fetch("/api/catalogue/build", { method: "POST" }); 
+      window.location.reload(); 
+    } finally { 
+      setRebuilding(false); 
+    }
+  }
+
+  function hardReset() { 
+    resetLearning(); 
+    resetAB(); 
+    reset(); 
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 px-4 sm:px-6 lg:px-8">
       {/* Progress + controls */}
-      {hookResult && (
-        <>
-          <div className="flex items-center justify-between">
-            <div className="text-sm">Learning Progress</div>
-            <div className="text-xs opacity-80">{progress.current} / {progress.total}</div>
-          </div>
-          <div className="w-full h-2 rounded bg-gray-800 overflow-hidden">
-            <div
-              className="h-2 bg-cyan-400 transition-all"
-              style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }}
-            />
-          </div>
-        </>
-      )}
+      <div className="flex items-center justify-between">
+        <div className="text-sm sm:text-base font-medium">Learning Progress</div>
+        <div className="text-xs sm:text-sm opacity-80 font-mono">{progress.current} / {progress.total}</div>
+      </div>
+      <div className="w-full h-2 sm:h-3 rounded-full bg-gray-800 overflow-hidden shadow-inner">
+        <div
+          className="h-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all duration-500 ease-out"
+          style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }}
+        />
+      </div>
 
       {/* The A/B cards */}
-      {!isComplete && currentPair && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {!done && pair && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
           <button
-            className="rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition"
+            className="rounded-xl sm:rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition-all duration-200 active:scale-[0.98]"
             onClick={() => pick("left")}
-            data-testid="button-pick-left"
           >
             <img
-              src={currentPair.left.posterUrl || currentPair.left.backdropUrl || ""}
-              alt={currentPair.left.title}
-              className="w-full h-[520px] object-cover"
+              src={bestImageUrl(pair.left as any) || ""}
+              alt={(pair.left as any).title}
+              className="w-full h-[400px] sm:h-[520px] object-cover"
               loading="lazy"
             />
-            <div className="p-3 text-center">
-              <div className="font-medium">{currentPair.left.title}</div>
-              <div className="text-xs opacity-70">{currentPair.left.releaseDate?.slice(0,4) || ""}</div>
+            <div className="p-3 sm:p-4 text-center">
+              <div className="font-medium text-sm sm:text-base">{(pair.left as any).title}</div>
+              <div className="text-xs opacity-70 mt-1">{(pair.left as any).releaseDate?.slice(0,4) || ""}</div>
             </div>
           </button>
 
           <button
-            className="rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition"
+            className="rounded-xl sm:rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition-all duration-200 active:scale-[0.98]"
             onClick={() => pick("right")}
-            data-testid="button-pick-right"
           >
             <img
-              src={currentPair.right.posterUrl || currentPair.right.backdropUrl || ""}
-              alt={currentPair.right.title}
-              className="w-full h-[520px] object-cover"
+              src={bestImageUrl(pair.right as any) || ""}
+              alt={(pair.right as any).title}
+              className="w-full h-[400px] sm:h-[520px] object-cover"
               loading="lazy"
             />
-            <div className="p-3 text-center">
-              <div className="font-medium">{currentPair.right.title}</div>
-              <div className="text-xs opacity-70">{currentPair.right.releaseDate?.slice(0,4) || ""}</div>
+            <div className="p-3 sm:p-4 text-center">
+              <div className="font-medium text-sm sm:text-base">{(pair.right as any).title}</div>
+              <div className="text-xs opacity-70 mt-1">{(pair.right as any).releaseDate?.slice(0,4) || ""}</div>
             </div>
           </button>
         </div>
       )}
 
-      {/* Scoring state */}
-      {isComplete && isScoring && (
-        <div className="text-center py-8">
-          <div className="text-lg font-semibold mb-2">Analyzing your preferences…</div>
-          <div className="text-sm text-gray-400">Finding your perfect trailers based on 12 picks</div>
-        </div>
-      )}
+      {/* When the deck is done, reveal the Trailer Reel */}
+      {done && (
+        <div className="space-y-4 sm:space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+            <h2 className="text-base sm:text-lg font-semibold text-center sm:text-left">
+              Perfect! Your personalised Trailer Reel
+            </h2>
+            <div className="flex gap-2 sm:gap-3 justify-center sm:justify-start">
+              <button
+                onClick={() => reset()}
+                className="text-xs sm:text-sm rounded-full px-3 py-1.5 sm:px-4 sm:py-2 bg-white/10 hover:bg-white/20 transition-colors"
+                title="New round with fresh A/B pairs"
+              >
+                New Round
+              </button>
+              <button
+                onClick={hardReset}
+                className="text-xs sm:text-sm rounded-full px-3 py-1.5 sm:px-4 sm:py-2 bg-red-500/20 hover:bg-red-500/30 transition-colors"
+                title="Reset all learned preferences and A/B history"
+              >
+                Reset All
+              </button>
+            </div>
+          </div>
 
-      {/* Show recommendations when ready */}
-      {isComplete && recommendations && !isScoring && (
-        <TrailerResults 
-          recommendations={recommendations}
-          onReset={reset}
-        />
-      )}
-
-      {/* Debug info */}
-      {!currentPair && !loading && (
-        <div className="text-center py-8">
-          <div className="text-red-400">No pairs available. Check server logs.</div>
-          <button 
-            onClick={reset}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Try Again
-          </button>
+          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={[...chosenIds, ...seenIds]} avoidIds={seenIds} count={5} />
         </div>
       )}
     </div>

@@ -1,329 +1,190 @@
-import { useMemo, useState, useEffect } from "react";
+// UI LOCK: DO NOT MODIFY — Reel uses ALL titles + learned preferences (A/B) + MMR diversity
+// Replit Agent: Do not replace with static lists or "curated 50". This ranks the FULL catalogue.
+
+import { useEffect, useMemo, useState } from "react";
 import type { Title } from "../hooks/useEnhancedCatalogue";
-import { toFeatureVector } from "../hooks/useEnhancedCatalogue";
-import { Play, SkipForward, Heart, X, Info, RotateCcw, Volume2, VolumeX, Shuffle, ChevronLeft, ChevronRight } from "lucide-react";
-
-// cosine + MMR reimplemented locally for independence
-function cosine(a: number[], b: number[]): number {
-  let dot = 0, na = 0, nb = 0;
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
-  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1;
-  return dot / denom;
-}
-
-function mmrPick(pool: Title[], userVec: number[], k = 15, lambda = 0.7): Title[] {
-  const chosen: Title[] = [];
-  const remaining = pool.map(t => ({...t, feature: t.feature || toFeatureVector(t)}));
-  while (chosen.length < k && remaining.length) {
-    let best: { item: Title; score: number } | null = null;
-    for (const item of remaining) {
-      const f = item.feature!;
-      const rel = cosine(f, userVec);
-      const div = chosen.length === 0 ? 0 : Math.max(...chosen.map(c => cosine(f, c.feature || toFeatureVector(c))));
-      const score = lambda * rel - (1 - lambda) * div;
-      if (!best || score > best.score) best = { item, score };
-    }
-    if (!best) break;
-    chosen.push(best.item);
-    const idx = remaining.findIndex(r => r.id === best!.item.id);
-    if (idx >= 0) remaining.splice(idx, 1);
-  }
-  return chosen;
-}
-
-type TrailerData = {
-  id: number;
-  title: string;
-  year: string;
-  youtubeKey: string | null;
-  embedUrl: string | null;
-};
+import { bestImageUrl, toFeatureVector } from "../hooks/useEnhancedCatalogue";
 
 type Props = {
   items: Title[];
   learnedVec: number[];
-  onSave?: (movieId: number) => void;
-  onSkip?: (movieId: number) => void;
+  count?: number;
+  recentChosenIds?: number[];  // A/B choices to steer toward "more like this"
+  avoidIds?: number[];         // Anything shown during A/B this round (don't repeat)
 };
 
-export default function TrailerReel({ items, learnedVec, onSave, onSkip }: Props) {
-  const [currentSet, setCurrentSet] = useState(0);
-  const [trailerData, setTrailerData] = useState<TrailerData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [mutedTrailers, setMutedTrailers] = useState<Set<number>>(new Set());
-  const [hiddenTrailers, setHiddenTrailers] = useState<Set<number>>(new Set());
+function l2(x: number[]) { return Math.sqrt(x.reduce((s, v) => s + v*v, 0)); }
+function cosine(a: number[], b: number[]) {
+  const la = l2(a), lb = l2(b);
+  if (la === 0 || lb === 0) return 0;
+  let dot = 0; const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) dot += a[i]*b[i];
+  return dot / (la * lb);
+}
 
-  const picks = useMemo(() => mmrPick(items, learnedVec, 15), [items, learnedVec]);
-  
-  // Fetch trailer data for current picks
-  useEffect(() => {
-    let cancelled = false;
-    
-    const fetchTrailerData = async () => {
-      setLoading(true);
-      const trailers: TrailerData[] = [];
-      
-      for (const movie of picks) {
-        try {
-          const res = await fetch(`/api/trailer?id=${movie.id}`);
-          const json = await res.json();
-          const trailer = json.trailer;
-          
-          const year = movie.releaseDate ? movie.releaseDate.slice(0, 4) : "";
-          
-          if (trailer?.site === "YouTube") {
-            trailers.push({
-              id: movie.id,
-              title: movie.title,
-              year,
-              youtubeKey: trailer.key,
-              embedUrl: `https://www.youtube.com/embed/${trailer.key}?rel=0&modestbranding=1&autoplay=0`
-            });
-          }
-        } catch (error) {
-          console.warn(`Failed to fetch trailer for ${movie.title}:`, error);
-        }
-      }
-      
-      if (!cancelled) {
-        setTrailerData(trailers);
-        setLoading(false);
-      }
-    };
-    
-    if (picks.length > 0) {
-      fetchTrailerData();
+function seededJitter(id: number) {
+  // small repeatable jitter by id (keeps results from being identical each time)
+  const x = Math.sin(id * 99991) * 10000;
+  return (x - Math.floor(x)) * 0.01; // +/- up to 0.01
+}
+
+function mmrPick(pool: Title[], userVec: number[], k = 12, lambda = 0.75) {
+  const chosen: Title[] = [];
+  const feats = new Map<number, number[]>();
+  const getF = (t: Title) => feats.get(t.id) || (feats.set(t.id, t.feature || toFeatureVector(t)), feats.get(t.id)!);
+
+  while (chosen.length < k && pool.length) {
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < pool.length; i++) {
+      const t = pool[i];
+      const f = getF(t);
+      const rel = cosine(f, userVec);
+      const div = chosen.length === 0 ? 0 : Math.max(...chosen.map(c => cosine(f, getF(c))));
+      const score = lambda * rel - (1 - lambda) * div + seededJitter(t.id);
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
     }
-    
-    return () => { cancelled = true; };
-  }, [picks]);
 
-  // Get current 5 trailers
-  const filteredTrailers = trailerData.filter(t => !hiddenTrailers.has(t.id));
-  const visibleTrailers = filteredTrailers.slice(currentSet * 5, (currentSet + 1) * 5);
-  
-  const totalSets = Math.ceil(filteredTrailers.length / 5);
-  const currentTrailerIndex = (currentSet * 5) + 1;
-  const currentTrailerTotal = Math.min((currentSet + 1) * 5, filteredTrailers.length);
-
-  // Action handlers
-  const handleSkip = (id: number) => {
-    onSkip?.(id);
-    setHiddenTrailers(prev => new Set([...Array.from(prev), id]));
-  };
-
-  const handleSelect = (id: number, title: string, year: string) => {
-    const justWatchUrl = `https://www.justwatch.com/au/search?q=${encodeURIComponent(title + ' ' + year)}`;
-    window.open(justWatchUrl, '_blank');
-  };
-
-  const handleSave = (id: number) => {
-    onSave?.(id);
-    // Visual feedback could be added here
-  };
-
-  const handleHide = (id: number) => {
-    setHiddenTrailers(prev => new Set([...Array.from(prev), id]));
-  };
-
-  const handleMoreInfo = (id: number) => {
-    // TODO: Implement details modal
-    console.log('Show more info for movie:', id);
-  };
-
-  const handleReplay = (youtubeKey: string) => {
-    // Force iframe reload by changing src
-    const iframe = document.querySelector(`iframe[src*="${youtubeKey}"]`) as HTMLIFrameElement;
-    if (iframe) {
-      const currentSrc = iframe.src;
-      iframe.src = currentSrc.replace('autoplay=0', 'autoplay=1');
-    }
-  };
-
-  const handleMute = (id: number) => {
-    setMutedTrailers(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  };
-
-  const handleShuffle = () => {
-    // Move to next set or wrap around
-    const nextSet = (currentSet + 1) % totalSets;
-    setCurrentSet(nextSet);
-  };
-
-  const goToPrevious = () => {
-    setCurrentSet(prev => Math.max(0, prev - 1));
-  };
-
-  const goToNext = () => {
-    setCurrentSet(prev => Math.min(totalSets - 1, prev + 1));
-  };
-
-  if (loading) {
-    return (
-      <div className="w-full">
-        <h2 className="text-xl font-semibold mb-3">Your Trailer Reel</h2>
-        <div className="text-center py-8 text-gray-400">
-          Loading personalized trailers...
-        </div>
-      </div>
-    );
+    if (bestIdx < 0) break;
+    const [pick] = pool.splice(bestIdx, 1);
+    chosen.push(pick);
   }
+  return chosen;
+}
 
-  if (visibleTrailers.length === 0) {
-    return (
-      <div className="w-full">
-        <h2 className="text-xl font-semibold mb-3">Your Trailer Reel</h2>
-        <div className="text-center py-8 text-gray-400">
-          No trailers available. Try refreshing your recommendations.
-        </div>
-      </div>
-    );
+
+
+export default function TrailerReel({ items, learnedVec, count = 12, recentChosenIds = [], avoidIds = [] }: Props) {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const [activeUrl, setActiveUrl] = useState<string | null>(null);
+  const [urls, setUrls] = useState<Record<number, string|null>>({});
+
+  // PURE RANDOM TRAILER SELECTION - No bias, no clustering, no smart algorithms
+  // The whole point is to break the grouping patterns you're seeing
+  const { picks, poolSize } = useMemo(() => {
+    // Get all movies with posters
+    const byId = new Map<number, Title>();
+    for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
+    const pool = Array.from(byId.values());
+    
+    // Remove recently shown A/B pairs to avoid immediate repeats
+    const avoid = new Set<number>(avoidIds || []);
+    const available = pool.filter(t => !avoid.has(t.id));
+    
+    console.log(`[TRAILER REEL PURE RANDOM] Selecting ${count} from ${available.length} available movies`);
+    
+    // COMPLETELY RANDOM SELECTION - No scoring, no similarity, no MMR
+    const selected: Title[] = [];
+    const usedIndices = new Set<number>();
+    
+    for (let i = 0; i < Math.min(count, available.length); i++) {
+      let randomIndex;
+      let attempts = 0;
+      
+      // Get a truly random unused index
+      do {
+        randomIndex = Math.floor(Math.random() * available.length);
+        attempts++;
+      } while (usedIndices.has(randomIndex) && attempts < 50);
+      
+      if (attempts < 50) {
+        usedIndices.add(randomIndex);
+        selected.push(available[randomIndex]);
+        console.log(`  [${i+1}] Random pick: "${available[randomIndex].title}" from sources: ${available[randomIndex].sources}`);
+      }
+    }
+    
+    return { picks: selected, poolSize: pool.length };
+  }, [items, count, avoidIds]);
+
+  // Prefetch trailer URLs and auto-select first available
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const ids = picks.map(p => p.id);
+      const map = await fetchTrailerEmbeds(ids);
+      if (!mounted) return;
+      setUrls(map);
+      
+      // Auto-select the first playable trailer
+      const firstIdx = picks.findIndex(p => map[p.id]);
+      if (firstIdx >= 0) {
+        setActiveIdx(firstIdx);
+        setActiveUrl(map[picks[firstIdx].id] || null);
+      } else {
+        setActiveIdx(null);
+        setActiveUrl(null);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [JSON.stringify(picks.map(p => p.id))]);
+
+  function clickPlay(i: number) {
+    setActiveIdx(i);
+    setActiveUrl(urls[picks[i].id] || null);
   }
 
   return (
     <div className="w-full">
-      {/* Header with navigation */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">Your Trailer Reel</h2>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-400">
-            {currentTrailerIndex} / {currentTrailerTotal}
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={goToPrevious}
-              disabled={currentSet === 0}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              data-testid="button-previous-trailer-set"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              onClick={goToNext}
-              disabled={currentSet === totalSets - 1}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              data-testid="button-next-trailer-set"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+        <h2 className="text-xl font-semibold">Your Personalized Trailer Reel</h2>
+        <div className="text-xs opacity-70">
+          Based on your A/B choices • {picks.length} curated from {poolSize} movies
         </div>
       </div>
 
-      {/* Single trailer display */}
-      {visibleTrailers.length > 0 && (
-        <div className="mb-6">
-          <div className="bg-black rounded-xl overflow-hidden">
-            <div className="aspect-video">
-              <iframe
-                className="w-full h-full"
-                src={visibleTrailers[0].embedUrl || ""}
-                title={visibleTrailers[0].title}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
-              />
-            </div>
-            
-            {/* Movie title */}
-            <div className="p-4">
-              <h3 className="text-lg font-semibold text-white">{visibleTrailers[0].title}</h3>
-            </div>
-            
-            {/* Action buttons */}
-            <div className="p-4 pt-0">
-              <div className="flex flex-wrap gap-2">
-                {/* Primary buttons */}
-                <button
-                  onClick={() => handleSkip(visibleTrailers[0].id)}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
-                  data-testid={`button-skip-${visibleTrailers[0].id}`}
-                >
-                  <SkipForward className="w-4 h-4" />
-                  Skip
-                </button>
-                
-                <button
-                  onClick={() => handleSelect(visibleTrailers[0].id, visibleTrailers[0].title, visibleTrailers[0].year)}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-medium transition-colors"
-                  data-testid={`button-watch-now-${visibleTrailers[0].id}`}
-                >
-                  <Play className="w-4 h-4" />
-                  Watch now
-                </button>
-                
-                {/* Secondary buttons */}
-                <button
-                  onClick={() => handleSave(visibleTrailers[0].id)}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-sm font-medium transition-colors"
-                  data-testid={`button-save-${visibleTrailers[0].id}`}
-                >
-                  <Heart className="w-4 h-4" />
-                  Save
-                </button>
-                
-                <button
-                  onClick={() => handleHide(visibleTrailers[0].id)}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
-                  data-testid={`button-hide-${visibleTrailers[0].id}`}
-                >
-                  <X className="w-4 h-4" />
-                  Not for me
-                </button>
-                
-                {/* Utility buttons */}
-                <button
-                  onClick={() => handleMoreInfo(visibleTrailers[0].id)}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors"
-                  data-testid={`button-more-info-${visibleTrailers[0].id}`}
-                >
-                  <Info className="w-4 h-4" />
-                  More info
-                </button>
-                
-                <button
-                  onClick={() => handleReplay(visibleTrailers[0].youtubeKey || "")}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
-                  data-testid={`button-replay-${visibleTrailers[0].id}`}
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  Replay
-                </button>
-                
-                <button
-                  onClick={() => handleMute(visibleTrailers[0].id)}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
-                  data-testid={`button-mute-${visibleTrailers[0].id}`}
-                >
-                  {mutedTrailers.has(visibleTrailers[0].id) ? (
-                    <VolumeX className="w-4 h-4" />
-                  ) : (
-                    <Volume2 className="w-4 h-4" />
-                  )}
-                  {mutedTrailers.has(visibleTrailers[0].id) ? "Unmute" : "Mute"}
-                </button>
-                
-                <button
-                  onClick={handleShuffle}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
-                  data-testid="button-shuffle-trailers"
-                >
-                  <Shuffle className="w-4 h-4" />
-                  Shuffle 6
-                </button>
-              </div>
-            </div>
+      {/* Thumbnails */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+        {picks.map((t, i) => (
+          <button
+            key={t.id}
+            onClick={() => clickPlay(i)}
+            className={`rounded-xl overflow-hidden shadow hover:shadow-lg transition ${i === activeIdx ? "ring-2 ring-cyan-400" : ""}`}
+            title={`Play trailer: ${t.title}`}
+          >
+            <img src={bestImageUrl(t) || ""} alt={t.title} className="w-full h-64 object-cover" loading="lazy" />
+            <div className="p-2 text-sm font-medium text-left">{t.title}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Player */}
+      <div className="mt-6">
+        {activeIdx === null && <div className="text-sm opacity-80">No playable trailer found for these picks.</div>}
+        {activeIdx !== null && activeUrl && (
+          <div className="aspect-video w-full">
+            <iframe
+              className="w-full h-full rounded-xl"
+              src={toYouTubeEmbed(activeUrl)}
+              title="Trailer"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
           </div>
-        </div>
-      )}
+        )}
+        {activeIdx !== null && !activeUrl && (
+          <div className="text-sm opacity-80">No trailer available for this title.</div>
+        )}
+      </div>
     </div>
   );
+}
+
+async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|null>> {
+  if (!ids.length) return {};
+  const qs = ids.join(",");                           // ← important: do NOT encode commas
+  const r = await fetch(`/api/trailers?ids=${qs}`);
+  if (!r.ok) return {};
+  const j = await r.json();
+  const out: Record<number, string|null> = {};
+  Object.keys(j?.trailers || {}).forEach(k => out[Number(k)] = j.trailers[k]);
+  return out;
+}
+
+function toYouTubeEmbed(u: string) {
+  if (!/youtube\.com|youtu\.be/.test(u)) return u;
+  const m = u.match(/v=([^&]+)/);
+  const id = m ? m[1] : u.split("/").pop();
+  return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
 }

@@ -3,11 +3,10 @@ import { Shuffle, AlertCircle, RefreshCw } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import Header from "./components/Header";
 import OnboardingSection from "./components/OnboardingSection";
-import { EnhancedTrailerWheelSection } from "./components/EnhancedTrailerWheelSection";
+import TrailerPlayer from "./components/TrailerPlayer";
 import { EnhancedWatchlist } from "./components/EnhancedWatchlist";
 import { useMLLearning } from "./hooks/useMLLearning";
 import { posterFromTMDbPaths, youtubeThumb } from "./lib/videoPick";
-import TrailerResults from "./components/TrailerResults";
 
 // Movie type matching the new API format
 type Movie = {
@@ -44,12 +43,7 @@ function AppFixed() {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [scores, setScores] = useState<Movie[]>([]);
-  const [userVector, setUserVector] = useState<number[]>([]); // Assuming userVector is needed for trailers
-  const [stage, setStage] = useState<"loading" | "onboarding" | "trailers">("loading"); // Added stage state
-  const [submittedVotes, setSubmittedVotes] = useState<string[]>([]); // To track votes
-
-
+  
   // Load movies from new API
   useEffect(() => {
     async function loadMovies() {
@@ -58,7 +52,7 @@ function AppFixed() {
         const response = await fetch("/api/movies/catalogue");
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-
+        
         const processedMovies: Movie[] = (data.items || []).map((m: any) => {
           const poster = posterFromTMDbPaths(m) || youtubeThumb(m.ytKeys?.[0] || '');
           const year = Number(m.year) || 0;
@@ -73,25 +67,23 @@ function AppFixed() {
             category: year >= 2020 ? "recent" : "classic"
           };
         });
-
+        
         // Shuffle for variety
         for (let i = processedMovies.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [processedMovies[i], processedMovies[j]] = [processedMovies[j], processedMovies[i]];
         }
-
+        
         setMovies(processedMovies);
         console.log(`Movies loaded: ${processedMovies.length} total, ${processedMovies.filter(m => m.category === 'recent').length} recent, ${processedMovies.filter(m => m.category === 'classic').length} classics`);
-        setStage("onboarding"); // Set stage to onboarding after movies load
       } catch (err) {
         setError(String(err));
         console.error("Failed to load movies:", err);
-        setStage("loading"); // Keep loading or go to error state
       } finally {
         setLoading(false);
       }
     }
-
+    
     loadMovies();
   }, []);
 
@@ -106,53 +98,6 @@ function AppFixed() {
     reset: resetML,
     getAdventurousnessLabel
   } = useMLLearning(movies);
-
-
-  // Fetch scores from the API
-  const fetchScores = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const payload = {
-        preferences: preferences,
-        submittedVotes: submittedVotes, // Use submittedVotes
-        userVector: userVector // Include userVector
-      };
-
-      const response = await fetch("/api/score-round", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Score round response not OK: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      setScores(data.movies); // Assuming the API returns movies in 'movies' field
-      setUserVector(data.userVector); // Assuming userVector is returned
-      setSubmittedVotes([]); // Clear submitted votes after fetching new scores
-      setStage("trailers"); // Move to trailers stage
-      console.log("Scores and user vector loaded:", data);
-
-    } catch (err) {
-      setError(String(err));
-      console.error("Failed to fetch scores:", err);
-      setStage("onboarding"); // Go back to onboarding if scores fail
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Effect to fetch scores when onboarding is complete and not already in trailers stage
-  useEffect(() => {
-    if (onboardingComplete && !loading && movies.length > 0 && stage === "onboarding") {
-      fetchScores();
-    }
-  }, [onboardingComplete, loading, movies.length, stage]);
-
 
   // Show loading screen
   if (loading) {
@@ -237,13 +182,7 @@ function AppFixed() {
         {!onboardingComplete && currentPair && currentPair.left && currentPair.right && (
           <OnboardingSection
             currentPair={currentPair}
-            onChoice={(choice, movieLeft, movieRight) => {
-              learnChoice(choice, movieLeft, movieRight);
-              // If it's the last pair, trigger fetching scores
-              if (currentPair.isLastPair) {
-                fetchScores();
-              }
-            }}
+            onChoice={learnChoice}
             onSkip={skipPair}
             preferences={preferences}
             onAdjustAdventurousness={adjustAdventurousness}
@@ -252,22 +191,9 @@ function AppFixed() {
         )}
 
         {/* Trailer Wheel Phase */}
-        {stage === "trailers" && scores.length > 0 && (
-          <div className="p-6">
-            <TrailerResults 
-              movies={scores}
-              onNext={() => {
-                setSubmittedVotes([]);
-                fetchScores();
-              }}
-            />
-          </div>
-        )}
-
-        {/* Watchlist Section */}
-        {onboardingComplete && stage !== "trailers" && (
+        {onboardingComplete && (
           <div className="space-y-8">
-             <div className="glass-card p-8 rounded-2xl">
+            <div className="glass-card p-8 rounded-2xl">
               <div className="flex justify-between items-center mb-6">
                 <div>
                   <h1 className="text-3xl font-bold mb-2">Your Trailer Wheel</h1>
@@ -283,14 +209,19 @@ function AppFixed() {
                 </button>
               </div>
 
-              <EnhancedTrailerWheelSection
-                movies={movies}
-                preferences={preferences}
-                onSave={() => {}}
-                onHide={() => {}}
-                onMarkRecent={() => {}}
-                getAvailableMovies={() => movies}
-                explorationRate={0.5}
+              <TrailerPlayer
+                items={movies.map(m => ({
+                  id: parseInt(String(m.id).replace(/\D/g, '')),
+                  title: m.name,
+                  year: m.year,
+                  genres: m.genre_ids || [],
+                  popularity: 0,
+                  feature: m.features || [],
+                  sources: [m.category]
+                }))}
+                learnedVec={preferences?.w || []}
+                recentChosenIds={Array.from(preferences?.explored || new Set()).map(id => parseInt(String(id).replace(/\D/g, '')))}
+                count={5}
               />
             </div>
 

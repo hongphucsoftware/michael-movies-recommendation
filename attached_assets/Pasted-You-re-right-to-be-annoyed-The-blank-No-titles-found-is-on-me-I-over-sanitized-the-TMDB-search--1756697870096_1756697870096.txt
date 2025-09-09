@@ -1,0 +1,435 @@
+You’re right to be annoyed. The blank “No titles found” is on me — I over-sanitized the TMDB search (I sent the normalized lowercase title to TMDB instead of the real title). That kills matches → zero catalogue → no A/B. Below is a clean copy-paste fix that:
+
+Scrapes ALL films from your 3 URLs (no downsampling).
+
+Resolves each title on TMDB using the raw title (correct), with strict matching by normalized name + year.
+
+If any titles still miss, it does a second-pass lenient resolve (best available hit, adult off).
+
+Keeps your trailer endpoint and UI lock intact.
+
+After pasting, hit /api/catalogue/build once (or just refresh — it will auto-build).
+
+🔧 Replace server/routes.ts with this
+// UI / AGENT NOTE (READ ME):
+// This server builds a catalogue that includes EVERY movie from exactly three URLs:
+// 1) RT 2020 editorial list, 2) IMDb Top 250, 3) IMDb list ls545836395.
+// Do NOT replace this with a "curated 50". No downsampling is allowed.
+// If scrapers break in the future, update the selectors instead of shrinking coverage.
+
+import express, { Request, Response } from "express";
+import * as cheerio from "cheerio";
+
+// ======= CONFIG =======
+const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || "";
+if (!TMDB_API_KEY) console.warn("[TMDB] Missing TMDB_API_KEY in Secrets.");
+
+const SOURCES = {
+  rt2020: "https://editorial.rottentomatoes.com/guide/the-best-movies-of-2020/",
+  imdbTop: "https://www.imdb.com/chart/top/",
+  imdbList: "https://www.imdb.com/list/ls545836395/",
+};
+
+const TMDB_BASE = "https://api.themoviedb.org/3";
+const IMG_BASE = "https://image.tmdb.org/t/p";
+const POSTER_SIZE = "w500";
+const BACKDROP_SIZE = "w780";
+const CATALOGUE_TTL_MS = 1000 * 60 * 60 * 6; // 6h
+const CONCURRENCY = 4;                        // be polite to TMDB
+
+// ======= TYPES =======
+type RawTitle = { title: string; year?: number; src: string };
+type TMDbMovie = {
+  id: number;
+  title?: string;
+  original_title?: string;
+  overview?: string;
+  genre_ids?: number[];
+  release_date?: string;
+  poster_path?: string | null;
+  backdrop_path?: string | null;
+  popularity?: number;
+  vote_average?: number;
+  vote_count?: number;
+  adult?: boolean;
+};
+type Item = {
+  id: number;
+  title: string;
+  overview: string;
+  genres: number[];
+  releaseDate: string | null;
+  popularity: number;
+  voteAverage: number;
+  voteCount: number;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  sources: string[];
+};
+
+// ======= HELPERS =======
+const norm = (s: string) =>
+  s.toLowerCase()
+    .replace(/[\u00A0]/g, " ")
+    .replace(/[:!?,.“”"’']/g, "")
+    .replace(/^\d+\.\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const parseYear = (s: string) => {
+  const m = s.match(/(\d{4})/);
+  return m ? Number(m[1]) : undefined;
+};
+
+function dedupeRaw(arr: RawTitle[]): RawTitle[] {
+  const seen = new Set<string>();
+  const out: RawTitle[] = [];
+  for (const r of arr) {
+    const key = `${norm(r.title)}|${r.year ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(r);
+    }
+  }
+  return out;
+}
+
+async function httpText(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: {
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+      accept: "text/html,application/xhtml+xml",
+    },
+  });
+  if (!res.ok) throw new Error(`Fetch ${url} failed: ${res.status}`);
+  return res.text();
+}
+
+async function tmdb(path: string, params: Record<string, any> = {}) {
+  const url = new URL(`${TMDB_BASE}${path}`);
+  url.searchParams.set("api_key", TMDB_API_KEY);
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+  }
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`TMDb ${path} ${res.status}`);
+  return res.json();
+}
+
+function toItem(m: TMDbMovie, sources: string[]): Item {
+  const title = m.title || m.original_title || "(Untitled)";
+  return {
+    id: m.id,
+    title,
+    overview: m.overview ?? "",
+    genres: m.genre_ids ?? [],
+    releaseDate: m.release_date ?? null,
+    popularity: m.popularity ?? 0,
+    voteAverage: m.vote_average ?? 0,
+    voteCount: m.vote_count ?? 0,
+    posterUrl: m.poster_path ? `${IMG_BASE}/${POSTER_SIZE}${m.poster_path}` : null,
+    backdropUrl: m.backdrop_path ? `${IMG_BASE}/${BACKDROP_SIZE}${m.backdrop_path}` : null,
+    sources,
+  };
+}
+
+// ======= SCRAPERS (ALL TITLES) =======
+async function scrapeRT2020(url: string): Promise<RawTitle[]> {
+  const $ = cheerio.load(await httpText(url));
+  const out: RawTitle[] = [];
+  $("h2,h3,h4").each((_i, el) => {
+    const txt = $(el).text().trim();
+    const m = txt.match(/^(.*)\s+\((\d{4})\)$/);
+    if (m) out.push({ title: m[1].trim(), year: Number(m[2]), src: "rt2020" });
+  });
+  $("a[href^='/m/']").each((_i, el) => {
+    const t = $(el).text().trim();
+    if (t) out.push({ title: t, year: 2020, src: "rt2020" });
+  });
+  return dedupeRaw(out);
+}
+
+async function scrapeImdbTop(url: string): Promise<RawTitle[]> {
+  const $ = cheerio.load(await httpText(url));
+  const out: RawTitle[] = [];
+  $("td.titleColumn").each((_i, el) => {
+    const a = $(el).find("a").first();
+    const title = a.text().trim();
+    const year = parseYear($(el).find("span.secondaryInfo").first().text().trim());
+    if (title) out.push({ title, year, src: "imdbTop" });
+  });
+  // New layout fallback:
+  if (out.length < 200) {
+    $("a.ipc-title-link-wrapper").each((_i, el) => {
+      const t = $(el).text().trim();
+      const year = parseYear($(el).closest("li").find("span.ipc-title-link-helper-text").text().trim());
+      if (t) out.push({ title: t, year, src: "imdbTop" });
+    });
+  }
+  return dedupeRaw(out);
+}
+
+async function scrapeImdbList(url: string, hardLimit = 2000): Promise<RawTitle[]> {
+  const out: RawTitle[] = [];
+  let page = 1;
+  while (true) {
+    const pageUrl = url.endsWith("/") ? `${url}?page=${page}` : `${url}/?page=${page}`;
+    const $ = cheerio.load(await httpText(pageUrl));
+    const before = out.length;
+
+    $("h3.lister-item-header").each((_i, el) => {
+      const a = $(el).find("a").first();
+      const title = a.text().trim();
+      const year = parseYear($(el).find(".lister-item-year").first().text().trim());
+      if (title) out.push({ title, year, src: "imdbList" });
+    });
+
+    const after = out.length;
+    const hasNext = $("a.lister-page-next.next-page").length > 0 || /page=\d+/.test($("a:contains('Next')").attr("href") || "");
+    if (after === before || !hasNext || out.length >= hardLimit) break;
+    page++;
+  }
+  return dedupeRaw(out);
+}
+
+// ======= TMDB RESOLUTION (FIXED) =======
+// IMPORTANT FIX: send the RAW title to TMDB for searching; use normalized title ONLY for equality checks.
+async function searchStrictOnTmdb(rawTitle: string, normalized: string, year?: number): Promise<TMDbMovie | null> {
+  const params: any = { query: rawTitle, include_adult: "false", language: "en-US" };
+  if (year) params.year = year;
+
+  const s = await tmdb("/search/movie", params);
+  const cands: TMDbMovie[] = (s.results || []).filter((x: any) => x && !x.adult);
+
+  const exact = cands.find((c) => {
+    const t1 = norm(c.title || "");
+    const t2 = norm(c.original_title || "");
+    const yr = (c.release_date || "").slice(0, 4);
+    const yearOk = year ? String(year) === yr : true;
+    return yearOk && (t1 === normalized || t2 === normalized);
+  });
+  if (exact) return exact;
+
+  if (year) {
+    const sameYear = cands
+      .filter((c) => (c.release_date || "").startsWith(String(year)))
+      .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
+    if (sameYear) return sameYear;
+  }
+
+  // Very close prefix fallback
+  const best = cands
+    .filter((c) => {
+      const t = norm(c.title || c.original_title || "");
+      return t.startsWith(normalized.slice(0, Math.floor(normalized.length * 0.85)));
+    })
+    .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
+
+  return best ?? null;
+}
+
+// polite concurrency
+async function pLimit<T>(n: number, tasks: (() => Promise<T>)[]): Promise<T[]> {
+  const out: T[] = [];
+  let i = 0;
+  const workers = new Array(n).fill(0).map(async () => {
+    while (i < tasks.length) {
+      const idx = i++;
+      out[idx] = await tasks[idx]();
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+// ======= BUILD (ALL MOVIES) =======
+const cache = { catalogue: [] as Item[], ts: 0, stats: {} as any, misses: [] as RawTitle[] };
+
+async function buildFullCatalogue(): Promise<Item[]> {
+  if (!TMDB_API_KEY) return [];
+
+  // 1) Scrape everything
+  const [rt, top, list] = await Promise.all([
+    scrapeRT2020(SOURCES.rt2020),
+    scrapeImdbTop(SOURCES.imdbTop),
+    scrapeImdbList(SOURCES.imdbList),
+  ]);
+  const union = dedupeRaw([...rt, ...top, ...list]);
+
+  // 2) Strict resolve (fixed: use RAW title in the TMDB query)
+  const seen = new Set<number>();
+  const misses: RawTitle[] = [];
+  const tasks = union.map((r) => async () => {
+    const n = norm(r.title);
+    const hit = await searchStrictOnTmdb(r.title, n, r.year);
+    if (!hit || hit.adult) return { item: null, miss: r };
+    if (seen.has(hit.id)) return { item: null, miss: null as any };
+    seen.add(hit.id);
+    return { item: toItem(hit, [r.src]), miss: null as any };
+  });
+
+  const res1 = await pLimit(CONCURRENCY, tasks);
+  const items1: Item[] = [];
+  for (const r of res1) {
+    if (r.item) items1.push(r.item);
+    if (r.miss) misses.push(r.miss);
+  }
+
+  // 3) Lenient second pass for remaining misses (raw title, no year, take best)
+  if (misses.length) {
+    const tasks2 = misses.map((r) => async () => {
+      try {
+        const s = await tmdb("/search/movie", { query: r.title, include_adult: "false", language: "en-US" });
+        const best: TMDbMovie | undefined = (s.results || []).filter((x: any) => x && !x.adult)
+          .sort((a: TMDbMovie, b: TMDbMovie) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
+        if (!best) return null;
+        if (seen.has(best.id)) return null;
+        seen.add(best.id);
+        return toItem(best, [r.src]);
+      } catch { return null; }
+    });
+    const res2 = await pLimit(CONCURRENCY, tasks2);
+    for (const it of res2) if (it) items1.push(it);
+  }
+
+  // 4) Sort: posters first, then popularity
+  items1.sort((a, b) => {
+    const ap = a.posterUrl ? 1 : 0;
+    const bp = b.posterUrl ? 1 : 0;
+    if (bp !== ap) return bp - ap;
+    return (b.popularity ?? 0) - (a.popularity ?? 0);
+  });
+
+  cache.stats = {
+    counts: { rt2020: rt.length, imdbTop: top.length, imdbList: list.length, totalScraped: union.length },
+    resolved: items1.length,
+    missedAfterLenient: Math.max(0, union.length - items1.length),
+  };
+  cache.misses = misses; // (first-pass misses; second pass may have recovered some)
+  return items1;
+}
+
+function fresh() {
+  return Date.now() - cache.ts < CATALOGUE_TTL_MS && cache.catalogue.length > 0;
+}
+
+// ======= ROUTER =======
+const api = express.Router();
+
+api.get("/catalogue", async (req: Request, res: Response) => {
+  try {
+    if (!fresh()) {
+      cache.catalogue = await buildFullCatalogue();
+      cache.ts = Date.now();
+    }
+    // allow large pages so the client can pull ALL
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
+    const pageSize = Math.min(2000, Math.max(1, parseInt(String(req.query.pageSize ?? "500"), 10)));
+    const start = (page - 1) * pageSize;
+    const slice = cache.catalogue.slice(start, start + pageSize);
+
+    res.json({
+      ok: true,
+      total: cache.catalogue.length,
+      page,
+      pageSize,
+      items: slice.map((m) => ({ ...m, image: m.posterUrl || m.backdropUrl || null })),
+      learnedDims: 12,
+      cacheAgeMs: Date.now() - cache.ts,
+      stats: cache.stats,
+      policy: "ALL_TITLES_FROM_THREE_URLS",
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+  }
+});
+
+api.post("/catalogue/build", async (_req, res) => {
+  try {
+    cache.catalogue = await buildFullCatalogue();
+    cache.ts = Date.now();
+    res.json({ ok: true, total: cache.catalogue.length, rebuiltAt: cache.ts, stats: cache.stats });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+  }
+});
+
+api.post("/cache/flush", (_req, res) => {
+  cache.catalogue = [];
+  cache.ts = 0;
+  res.json({ ok: true });
+});
+
+api.get("/catalogue/stats", (_req, res) => {
+  res.json({ ok: true, stats: cache.stats, misses: cache.misses.slice(0, 50) });
+});
+
+api.get("/trailer", async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.query.id);
+    if (!id) return res.status(400).json({ ok: false, error: "Missing id" });
+    if (!TMDB_API_KEY) return res.status(400).json({ ok: false, error: "TMDB_API_KEY not set" });
+
+    const v1 = await tmdb(`/movie/${id}/videos`, { include_video_language: "en,null", language: "en-US" });
+    let vids = (v1.results || []).filter((v: any) => v && v.key);
+    if (!vids.length) {
+      const v2 = await tmdb(`/movie/${id}/videos`, {});
+      vids = (v2.results || []).filter((v: any) => v && v.key);
+    }
+
+    const best = vids
+      .map((v: any) => {
+        let score = 0;
+        const type = (v.type || "").toLowerCase();
+        if (type === "trailer") score += 4; else if (type === "teaser") score += 2;
+        if (v.official) score += 3;
+        if ((v.site || "").toLowerCase() === "youtube") score += 2;
+        if ((v.name || "").toLowerCase().includes("official")) score += 1;
+        if (v.size) score += Math.min(3, Math.floor((v.size ?? 0) / 360));
+        return { ...v, __score: score };
+      })
+      .sort((a: any, b: any) => b.__score - a.__score)[0];
+
+    if (!best) return res.json({ ok: true, trailer: null });
+
+    const url =
+      (best.site || "").toLowerCase() === "youtube"
+        ? `https://www.youtube.com/watch?v=${best.key}`
+        : (best.site || "").toLowerCase() === "vimeo"
+        ? `https://vimeo.com/${best.key}`
+        : best.key;
+
+    res.json({ ok: true, trailer: { site: best.site, key: best.key, url, name: best.name, size: best.size, official: best.official, type: best.type } });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+  }
+});
+
+api.get("/health", (_req, res) => {
+  res.json({ ok: true, cacheItems: cache.catalogue.length, cacheAgeMs: Date.now() - cache.ts });
+});
+
+export default api;
+
+What changed (so Replit understands)
+
+Critical fix: TMDB search now uses the raw title (e.g., “Spider-Man: No Way Home”), not the lower-cased de-punctuated version. Normalized names are used only to check equality/strictness.
+
+All movies used: We scrape every entry from each URL, dedupe by (title, year), and resolve them all. No “curated 50”.
+
+Resilience: If some titles fail strict matching, a lenient second pass grabs the best non-adult hit so the list stays complete.
+
+Diagnostics: GET /api/catalogue/stats shows counts and first 50 misses so we can chase any outliers.
+
+Do this after pasting
+
+Make sure TMDB_API_KEY is set in Replit Secrets.
+
+In the Shell: npm i cheerio (if not already).
+
+Rebuild once: POST /api/catalogue/build (or just refresh — first /api/catalogue call builds automatically).
+
+If anything still looks empty, open /api/catalogue/stats in the browser and tell me the numbers you see — that’ll pinpoint whether scraping or TMDB resolution is the blocker.
+
+This should bring your A/B picks and Trailer Reel back with ALL films from your three pages.

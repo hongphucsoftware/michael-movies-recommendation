@@ -1,0 +1,93 @@
+You’re seeing “Cannot GET /” because the server isn’t serving the built client (wrong static path / no client build). Here’s the fastest, copy-paste fix to get back to a working app from your ZIP—no fluff.
+
+0) Start fresh from your ZIP
+
+In the Replit Shell (bottom), run:
+
+# replace with the exact filename you uploaded
+unzip -o FileVault_1.zip
+rm -rf node_modules dist
+npm install
+
+1) Ensure the server serves the built client
+
+Open server/src/index.ts and make sure the static path points to dist/client (because compiled server is in dist/server and client build goes to dist/client):
+
+import express from "express";
+import path from "path";
+
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json());
+
+// ✅ Mount API first (keep your existing /api router here)
+// app.use("/api", api);
+
+// ✅ Serve the built client
+const clientDir = path.resolve(__dirname, "../client"); // __dirname = dist/server
+app.use(express.static(clientDir));
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(clientDir, "index.html"));
+});
+
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, "0.0.0.0", () => console.log("Server on", PORT));
+
+
+If the Replit Agent created a stray server/index.ts (not under src/), delete it so we only build from server/src.
+
+2) Make sure Vite outputs to dist/client
+
+Open client/vite.config.ts and set:
+
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: "dist/client",
+    emptyOutDir: true,
+  },
+});
+
+3) Scripts & run command
+
+In package.json (root), ensure:
+
+{
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "start:prod": "NODE_ENV=production node dist/server/index.js"
+  }
+}
+
+
+In .replit:
+
+run = "npm run start:prod"
+
+4) Secrets
+
+Left sidebar → Secrets:
+
+TMDB_API_KEY = your TMDb key
+(Do not use TMDB_API_READ; ignore what the agent added.)
+
+5) Build & run
+
+Back in the Shell:
+
+npm run build
+npm run start:prod
+
+
+Open the webview. You should now see your UI (not “Cannot GET /”).
+
+Why this fixes it
+
+“Cannot GET /” = Express didn’t find / and wasn’t pointing to the client build. We explicitly serve dist/client and send index.html for all routes.
+
+Vite puts the client exactly where the server expects it.
+
+Replit runs the compiled server (dist/server/index.js) that knows where to find the built client.

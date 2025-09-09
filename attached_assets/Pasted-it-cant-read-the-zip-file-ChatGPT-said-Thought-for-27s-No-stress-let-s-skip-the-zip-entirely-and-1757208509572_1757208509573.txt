@@ -1,0 +1,646 @@
+it cant read the zip file
+ChatGPT said:
+Thought for 27s
+
+No stress — let’s skip the zip entirely and drop in the new backend via one paste in your Replit shell. This keeps your UI untouched and fixes the “stuck on loading recommendations” issue.
+
+One-paste installer (creates server/ with API)
+
+In your Replit Shell, paste this whole block and hit Enter:
+
+# --- PickAFlick server: clean install without zip ---
+rm -rf server
+mkdir -p server/src/util server/cache
+
+cat > server/package.json <<'JSON'
+{
+  "name": "pickaflick-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "cheerio": "^1.0.0-rc.12",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.6",
+    "@types/cors": "^2.8.13",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.30",
+    "tsx": "^4.7.2",
+    "typescript": "^5.6.2"
+  }
+}
+JSON
+
+cat > server/tsconfig.json <<'JSON'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "resolveJsonModule": true
+  },
+  "include": ["src"]
+}
+JSON
+
+cat > server/src/constants.ts <<'TS'
+export const IMDB_LISTS = [
+  "https://www.imdb.com/list/ls094921320/",
+  "https://www.imdb.com/list/ls003501243/"
+];
+
+export const CACHE_DIR = new URL("../cache/", import.meta.url).pathname;
+
+export const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
+export const BACKDROP_BASE = "https://image.tmdb.org/t/p/w780";
+
+export const MAX_RECENT_TITLES = 8;
+export const MAX_COMPARISON_HISTORY = 200;
+
+export const DEFAULT_REC_LIMIT = 12;
+TS
+
+cat > server/src/types.ts <<'TS'
+export type MovieLite = {
+  imdbId: string;
+  title: string;
+  year?: number;
+};
+
+export type MovieHydrated = MovieLite & {
+  tmdbId?: number;
+  posterPath?: string | null;
+  backdropPath?: string | null;
+  trailerKey?: string | null; // YouTube
+  runtime?: number | null;
+  keywords?: string[];
+  people?: string[];
+  decade?: string | null;
+  pace?: 'slow'|'medium'|'fast'|null;
+  vibe_tags?: string[];
+  features?: number[];
+};
+
+export type UserState = {
+  id: string;
+  w: number[];
+  recentlyShown: string[];
+  pairsShown: Set<string>;
+  ratings: Map<string, { r: number; comps: number; wins: number; losses: number; }>;
+  winners: Set<string>;
+  blocked: Set<string>;
+  seen: Set<string>;
+};
+TS
+
+cat > server/src/util/math.ts <<'TS'
+export function sigmoid(z: number){ return 1/(1+Math.exp(-z)); }
+export function dot(a: number[], b: number[]){ let s=0; for(let i=0;i<a.length;i++) s += (a[i]||0)*(b[i]||0); return s; }
+export function addInPlace(a:number[], b:number[]){ for(let i=0;i<a.length;i++) a[i]=(a[i]||0)+(b[i]||0); return a; }
+export function sub(a:number[], b:number[]){ const out: number[] = []; const L = Math.max(a.length,b.length); for(let i=0;i<L;i++) out.push((a[i]||0)-(b[i]||0)); return out; }
+export function l2(a:number[]){ return Math.sqrt(dot(a,a)); }
+export function cosine(a:number[], b:number[]){
+  const da = l2(a)||1e-9; const db = l2(b)||1e-9; return dot(a,b)/(da*db);
+}
+export function mmrSelect<T>(items: T[], k: number, sim: (a:T,b:T)=>number, score:(x:T)=>number){
+  const chosen: T[] = [];
+  const remaining = items.slice().sort((x,y)=>score(y)-score(x));
+  while (chosen.length < k && remaining.length){
+    let best: T | null = null;
+    let bestVal = -Infinity;
+    for (const cand of remaining){
+      const rel = score(cand);
+      let div = 0;
+      if (chosen.length){
+        div = Math.max(...chosen.map(c=>sim(c, cand)));
+      }
+      const val = 0.7*rel - 0.3*div;
+      if (val > bestVal){ bestVal = val; best = cand; }
+    }
+    if (!best) break;
+    chosen.push(best);
+    const idx = remaining.indexOf(best);
+    remaining.splice(idx,1);
+  }
+  return chosen;
+}
+TS
+
+cat > server/src/imdb.ts <<'TS'
+import axios from "axios";
+import * as cheerio from "cheerio";
+import { MovieLite } from "./types.js";
+
+export async function fetchImdbList(listUrl: string): Promise<MovieLite[]> {
+  const res = await axios.get(listUrl, { headers: { "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0" } });
+  const $ = cheerio.load(res.data);
+  const out: MovieLite[] = [];
+
+  $("a[href*='/title/tt']").each((_, el) => {
+    const href = $(el).attr("href") || "";
+    const m = href.match(/\/title\/(tt\d{7,8})/);
+    if (!m) return;
+    const imdbId = m[1];
+    const titleText = $(el).text().trim();
+    if (!titleText) return;
+
+    let year: number | undefined = undefined;
+    const parent = $(el).closest(".lister-item, .ipc-metadata-list-summary-item, .lister-item-content");
+    const yearText = parent.find(".lister-item-year, .cli-title-metadata-item").first().text().trim();
+    const ym = yearText && yearText.match(/(19\d{2}|20\d{2})/);
+    if (ym) year = parseInt(ym[1],10);
+
+    if (!out.some(x=>x.imdbId===imdbId)){
+      out.push({ imdbId, title: titleText, year });
+    }
+  });
+
+  const dedup = out.filter((m, i, arr) => arr.findIndex(z=>z.imdbId===m.imdbId)===i);
+  return dedup;
+}
+TS
+
+cat > server/src/tmdb.ts <<'TS'
+import axios from "axios";
+import { MovieHydrated, MovieLite } from "./types.js";
+
+const TMDB = "https://api.themoviedb.org/3";
+
+const tmdb = axios.create({
+  baseURL: TMDB,
+  headers: { "Authorization": `Bearer ${process.env.TMDB_API_READ || ""}` }
+});
+
+export async function hydrateOne(base: MovieLite): Promise<MovieHydrated> {
+  const result: MovieHydrated = { ...base, keywords: [], people: [], decade: null, pace: null, vibe_tags: [] };
+
+  try{
+    const find = await tmdb.get(`/find/${base.imdbId}`, { params: { external_source: "imdb_id" }});
+    const movie = (find.data.movie_results?.[0]) || null;
+    if (!movie) return result;
+    const tmdbId = movie.id;
+    const details = await tmdb.get(`/movie/${tmdbId}`, { params: { append_to_response: "videos,keywords,credits" } });
+
+    const d = details.data;
+    result.tmdbId = tmdbId;
+    result.posterPath = d.poster_path || null;
+    result.backdropPath = d.backdrop_path || null;
+    result.runtime = d.runtime ?? null;
+    result.decade = (d.release_date && d.release_date.length >= 4) ? `${d.release_date.slice(0,3)}0s` : null;
+
+    const vids = d.videos?.results || [];
+    const trailer = vids.find((v:any)=> v.site==="YouTube" && /Trailer/i.test(v.type)) || vids.find((v:any)=> v.site==="YouTube");
+    result.trailerKey = trailer ? trailer.key : null;
+
+    const kw = (d.keywords?.keywords || d.keywords || []).map((k:any)=> (k.name||"").toLowerCase()).filter(Boolean);
+    result.keywords = Array.from(new Set(kw)).slice(0, 20);
+
+    const cast = (d.credits?.cast || []).slice(0,5).map((c:any)=>c.name).filter(Boolean);
+    const crew = (d.credits?.crew || []).filter((c:any)=>c.job==="Director").map((c:any)=>c.name);
+    result.people = Array.from(new Set([...cast, ...crew]));
+
+    if (typeof d.runtime === "number" && d.runtime > 0){
+      result.pace = d.runtime <= 100 ? "fast" : d.runtime <= 130 ? "medium" : "slow";
+    } else {
+      result.pace = null;
+    }
+
+    const vibes = new Set<string>();
+    const ks = result.keywords || [];
+    const low = (s:string)=> ks.some(k=>k.includes(s));
+    if (low("crime")||low("noir")||low("gritty")||low("revenge")||low("assassin")) vibes.add("dark");
+    if (low("feel good")||low("friendship")||low("heartwarming")||low("family")) vibes.add("feel-good");
+    if (low("quirky")||low("indie")||low("eccentric")) vibes.add("quirky");
+    if (low("violent")||low("gore")||low("brutal")||low("war")) vibes.add("violent");
+    if (low("romance")||low("love")||low("wedding")) vibes.add("rom-com");
+    if (low("dystopian")||low("moody")||low("brooding")) vibes.add("moody");
+    if (low("epic")||low("saga")||low("sweeping")) vibes.add("epic");
+    result.vibe_tags = Array.from(vibes);
+
+    return result;
+  }catch(e){
+    return result;
+  }
+}
+TS
+
+cat > server/src/features.ts <<'TS'
+import { MovieHydrated } from "./types.js";
+
+const VIBE_VOCAB = ['dark','feel-good','quirky','violent','rom-com','moody','epic'] as const;
+const PACE_VOCAB = ['slow','medium','fast'] as const;
+const DECADE_VOCAB = ['1970s','1980s','1990s','2000s','2010s','2020s'] as const;
+
+function multiHot(values: string[]|undefined, vocab: readonly string[]): number[]{
+  const v = new Array(vocab.length).fill(0);
+  (values||[]).forEach(tag=>{
+    const i = vocab.indexOf(tag);
+    if (i>=0) v[i]=1;
+  });
+  return v;
+}
+
+function oneHot(value: string|undefined|null, vocab: readonly string[]): number[]{
+  const v = new Array(vocab.length).fill(0);
+  if (!value) return v;
+  const i = vocab.indexOf(value);
+  if (i>=0) v[i]=1;
+  return v;
+}
+
+function hashToVec(tokens: string[]|undefined, dim=64): number[] {
+  const vec = new Array(dim).fill(0);
+  (tokens||[]).forEach(t=>{
+    let h=0;
+    for (let i=0;i<t.length;i++) h = ((h<<5)-h) + t.charCodeAt(i);
+    const idx = Math.abs(h)%dim;
+    vec[idx] += 1;
+  });
+  const norm = Math.sqrt(vec.reduce((s,x)=>s+x*x,0)) || 1;
+  return vec.map(x=>x/norm);
+}
+
+export function buildFeatures(m: MovieHydrated): number[] {
+  const parts: number[][] = [];
+  parts.push(multiHot(m.vibe_tags, VIBE_VOCAB));
+  parts.push(oneHot(m.pace, PACE_VOCAB));
+  parts.push(oneHot(m.decade||undefined, DECADE_VOCAB));
+  parts.push(hashToVec(m.keywords, 64));
+  parts.push(hashToVec(m.people, 32));
+  return parts.flat();
+}
+TS
+
+cat > server/src/model.ts <<'TS'
+import { MovieHydrated, UserState } from "./types.js";
+import { dot, sigmoid, sub, mmrSelect } from "./util/math.js";
+import { POSTER_BASE } from "./constants.js";
+
+// Content model update (pairwise logistic)
+export function updateContentWeights(user: UserState, xA: number[], xB: number[], winner: 'A'|'B', lr=0.08, l2=1e-4){
+  const y = winner==='A'?1:0;
+  const delta = sub(xA, xB);
+  const p = sigmoid(dot(user.w, delta));
+  const L = Math.max(user.w.length, delta.length);
+  const wNew: number[] = new Array(L).fill(0);
+  for (let i=0;i<L;i++){
+    const wi = user.w[i]||0;
+    const di = delta[i]||0;
+    wNew[i] = wi + lr * (((y - p)*di) - l2*wi);
+  }
+  user.w = wNew;
+}
+
+function expected(rA:number, rB:number){
+  return 1 / (1 + Math.pow(10, (rB - rA)/400));
+}
+
+export function updateElo(user: UserState, aId: string, bId: string, winner: 'A'|'B'){
+  const a = user.ratings.get(aId) || { r: 1200, comps: 0, wins: 0, losses: 0 };
+  const b = user.ratings.get(bId) || { r: 1200, comps: 0, wins: 0, losses: 0 };
+  const eA = expected(a.r, b.r);
+  const sA = winner==='A'?1:0;
+  const baseK = 32;
+  const kA = baseK * (1 / Math.sqrt(1 + a.comps));
+  const kB = baseK * (1 / Math.sqrt(1 + b.comps));
+  a.r = a.r + kA * (sA - eA);
+  b.r = b.r + kB * ((1 - sA) - (1 - eA));
+  a.comps++; b.comps++;
+  if (winner==='A') a.wins++; else a.losses++;
+  if (winner==='B') b.wins++; else b.losses++;
+  user.ratings.set(aId, a);
+  user.ratings.set(bId, b);
+}
+
+function pairKey(a:string,b:string){ return [a,b].sort().join("|"); }
+
+function gaussian(){
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+export function chooseNextPair(user: UserState, pool: MovieHydrated[]){
+  const allowed = pool.filter(m=> !user.blocked.has(m.imdbId) && !user.seen.has(m.imdbId) && !user.recentlyShown.includes(m.imdbId));
+  if (allowed.length < 2) return null;
+
+  const sampled = allowed.map(m=>{
+    const r = user.ratings.get(m.imdbId)?.r || 1200;
+    const comps = user.ratings.get(m.imdbId)?.comps || 0;
+    const sigma = 1 / Math.sqrt(1 + comps);
+    const eps = gaussian() * sigma;
+    return { m, mu: r, sigma, sampled: r + eps };
+  }).sort((a,b)=> b.sampled - a.sampled);
+
+  const champion = sampled[0];
+  let challenger = sampled.slice(1)
+    .filter(x=> !user.pairsShown.has(pairKey(champion.m.imdbId, x.m.imdbId)))
+    .sort((a,b)=> (Math.abs(a.mu - champion.mu) - 0.6*a.sigma) - (Math.abs(b.mu - champion.mu) - 0.6*b.sigma))[0];
+
+  if (!challenger){
+    challenger = sampled[1];
+  }
+
+  user.recentlyShown.unshift(champion.m.imdbId, challenger.m.imdbId);
+  user.recentlyShown = Array.from(new Set(user.recentlyShown)).slice(0, 8);
+  user.pairsShown.add(pairKey(champion.m.imdbId, challenger.m.imdbId));
+
+  return { a: champion.m, b: challenger.m };
+}
+
+export function scoreForRec(user: UserState, m: MovieHydrated){
+  const r = user.ratings.get(m.imdbId)?.r || 1200;
+  const wdot = dot(user.w, m.features || []);
+  const simWin = 0;
+  return 0.5*wdot + 0.4*r + 0.1*simWin;
+}
+
+export function getTopRecommendations(user: UserState, pool: MovieHydrated[], k: number){
+  const candidates = pool.filter(m=> !user.blocked.has(m.imdbId) && !user.seen.has(m.imdbId));
+  const scored = candidates.map(m=> ({ m, s: scoreForRec(user, m) }))
+    .sort((x,y)=> y.s - x.s);
+  const selected = mmrSelect(scored, k, (a,b)=>{
+    const fa = a.m.features || [], fb = b.m.features || [];
+    const sim = (fa.length && fb.length) ? (fa.reduce((sum,ai,idx)=> sum + ai*(fb[idx]||0),0) / ((Math.sqrt(fa.reduce((s,ai)=>s+ai*ai,0))||1e-9)*(Math.sqrt(fb.reduce((s,bi)=>s+bi*bi,0))||1e-9))) : 0;
+    return sim;
+  }, (x)=>x.s);
+
+  return selected.map(x=> ({
+    imdbId: x.m.imdbId,
+    title: x.m.title,
+    posterUrl: x.m.posterPath ? (POSTER_BASE + x.m.posterPath) : null,
+    trailerKey: x.m.trailerKey || null,
+    reason: "Based on your pairwise picks"
+  }));
+}
+TS
+
+cat > server/src/store.ts <<'TS'
+import fs from "fs";
+import path from "path";
+import { MovieHydrated, MovieLite, UserState } from "./types.js";
+import { CACHE_DIR } from "./constants.js";
+import { v4 as uuidv4 } from "uuid";
+
+const catPath = path.join(CACHE_DIR, "catalogue.json");
+const hydPath = path.join(CACHE_DIR, "hydrated.json");
+
+let catalogue: MovieLite[] = [];
+let hydrated: MovieHydrated[] = [];
+
+export function getCatalogue(){ return catalogue; }
+export function getHydrated(){ return hydrated; }
+export function setCatalogue(c: MovieLite[]){ catalogue = c; fs.writeFileSync(catPath, JSON.stringify(c, null, 2)); }
+export function setHydrated(h: MovieHydrated[]){ hydrated = h; fs.writeFileSync(hydPath, JSON.stringify(h, null, 2)); }
+
+export function tryLoadCache(){
+  try{
+    if (fs.existsSync(catPath)){
+      catalogue = JSON.parse(fs.readFileSync(catPath, "utf-8"));
+    }
+    if (fs.existsSync(hydPath)){
+      hydrated = JSON.parse(fs.readFileSync(hydPath, "utf-8"));
+    }
+  }catch(e){ /* ignore */ }
+}
+
+const users: Map<string, UserState> = new Map();
+
+export function getOrCreateUser(id?: string): UserState {
+  const uid = id || uuidv4();
+  let u = users.get(uid);
+  if (!u){
+    const dim = (hydrated[0]?.features?.length || 128);
+    u = {
+      id: uid,
+      w: new Array(dim).fill(0),
+      recentlyShown: [],
+      pairsShown: new Set(),
+      ratings: new Map(),
+      winners: new Set(),
+      blocked: new Set(),
+      seen: new Set(),
+    };
+    users.set(uid, u);
+  }
+  return u;
+}
+TS
+
+cat > server/src/index.ts <<'TS'
+import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import { IMDB_LISTS, DEFAULT_REC_LIMIT, POSTER_BASE } from "./constants.js";
+import { fetchImdbList } from "./imdb.js";
+import { hydrateOne } from "./tmdb.js";
+import { buildFeatures } from "./features.js";
+import { getOrCreateUser, tryLoadCache, getCatalogue, setCatalogue, getHydrated, setHydrated } from "./store.js";
+import { chooseNextPair, updateContentWeights, updateElo, getTopRecommendations } from "./model.js";
+import { MovieHydrated } from "./types.js";
+
+const app = express();
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json());
+app.use(cookieParser());
+
+function getSid(req:any, res:any){
+  let sid = req.cookies["sid"];
+  if (!sid){
+    sid = Math.random().toString(36).slice(2);
+    res.cookie("sid", sid, { httpOnly: false, sameSite: "lax" });
+  }
+  return sid;
+}
+
+app.get("/api/health", (req,res)=>{
+  res.json({ ok: true, counts: { catalogue: getCatalogue().length, hydrated: getHydrated().length } });
+});
+
+app.get("/api/catalogue/status", (req,res)=>{
+  const hyd = getHydrated();
+  const ready = hyd.filter(x=> x.posterPath || x.trailerKey);
+  res.json({ total: hyd.length, ready: ready.length });
+});
+
+app.get("/api/pair", (req,res)=>{
+  const sid = getSid(req,res);
+  const user = getOrCreateUser(sid);
+  const pool = getHydrated();
+  const pair = chooseNextPair(user, pool);
+  if (!pair) return res.status(400).json({ error: "Not enough items to pair." });
+  const format = (m: MovieHydrated) => ({
+    imdbId: m.imdbId,
+    title: m.title,
+    posterUrl: m.posterPath ? (POSTER_BASE + m.posterPath) : null,
+    trailerKey: m.trailerKey || null
+  });
+  res.json({ a: format(pair.a), b: format(pair.b) });
+});
+
+app.post("/api/vote", (req,res)=>{
+  const sid = getSid(req,res);
+  const user = getOrCreateUser(sid);
+  const { a, b, winner } = req.body as { a: string; b: string; winner: 'A'|'B' };
+  const pool = getHydrated();
+  const mA = pool.find(x=>x.imdbId===a);
+  const mB = pool.find(x=>x.imdbId===b);
+  if (!mA || !mB) return res.status(400).json({ error: "Unknown movie(s)" });
+
+  if (mA.features && mB.features){
+    updateContentWeights(user, mA.features, mB.features, winner);
+  }
+  updateElo(user, a, b, winner);
+  if (winner==='A') user.winners.add(a); else user.winners.add(b);
+  res.json({ ok: true });
+});
+
+app.get("/api/recommendations", (req,res)=>{
+  const sid = getSid(req,res);
+  const user = getOrCreateUser(sid);
+  const limit = parseInt((req.query.limit as string) || String(DEFAULT_REC_LIMIT),10) || DEFAULT_REC_LIMIT;
+  const recs = getTopRecommendations(user, getHydrated(), limit);
+  res.json({ items: recs });
+});
+
+app.post("/api/feedback", (req,res)=>{
+  const sid = getSid(req,res);
+  const user = getOrCreateUser(sid);
+  const { movieId, action } = req.body as { movieId: string; action: 'seen'|'block'|'like'|'dislike' };
+  if (action==='seen') user.seen.add(movieId);
+  if (action==='block') user.blocked.add(movieId);
+  res.json({ ok: true });
+});
+
+async function buildCatalogue(){
+  tryLoadCache();
+  if (getHydrated().length){
+    console.log("[catalogue] Loaded from cache:", getHydrated().length);
+    return;
+  }
+  console.log("[catalogue] Fetching IMDb lists…");
+  const all: Map<string, { imdbId: string; title: string; year?: number }> = new Map();
+  for (const url of IMDB_LISTS){
+    try{
+      const items = await fetchImdbList(url);
+      items.forEach(m=> all.set(m.imdbId, m));
+    }catch(e){ console.warn("Failed list", url); }
+  }
+  const basics = Array.from(all.values());
+  setCatalogue(basics);
+  console.log("[catalogue] Found", basics.length, "unique items.");
+
+  console.log("[hydrate] Hydrating via TMDb…");
+  const hydrated: MovieHydrated[] = [];
+  for (const m of basics){
+    try{
+      const h = await hydrateOne(m);
+      h.features = buildFeatures(h);
+      hydrated.push(h);
+    }catch(e){ /* ignore */ }
+  }
+  setHydrated(hydrated);
+  console.log("[hydrate] Hydrated", hydrated.length, "items.");
+}
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, ()=>{
+  console.log("PickAFlick server listening on", PORT);
+  buildCatalogue().catch(()=>{});
+});
+TS
+
+cat > server/README.md <<'MD'
+# PickAFlick Server Patch (Drop-in)
+
+- Uses only:
+  - https://www.imdb.com/list/ls094921320/
+  - https://www.imdb.com/list/ls003501243/
+- Hydrates via TMDb (posters/trailers/keywords/credits)
+- Custom features: vibe_tags, pace, decade, keywords, people
+- Pairwise learning (content weights + Elo), active pairing, MMR diversity
+- Endpoints: /api/pair, /api/vote, /api/recommendations, /api/feedback, /api/health
+
+## Replit Quick Start
+1) Add Secret: `TMDB_API_READ` = TMDb v4 Read Access Token (starts with `eyJ...`)
+2) Run:
+
+
+cd server
+npm i
+npm run dev
+
+
+Test:
+- `GET http://localhost:3001/api/health`
+- `GET http://localhost:3001/api/pair`
+- `GET http://localhost:3001/api/recommendations`
+MD
+
+cd server
+npm i
+echo "✅ Server files created. Next: add the TMDB_API_READ secret, then run: npm run dev"
+
+Then run it
+
+Replit → Secrets → add:
+
+TMDB_API_READ = your TMDb Read Access Token (v4) (looks like eyJ...).
+
+In Shell:
+
+cd server
+npm run dev
+
+
+Open these in the Replit webview (or curl them):
+
+GET /api/health → should show counts.
+
+GET /api/pair → returns two titles with posterUrl & trailerKey.
+
+GET /api/recommendations → returns a non-empty items array.
+
+Hook your existing UI (no visual changes)
+
+If your UI already calls /api/..., you’re done.
+If not, point its API base to http://localhost:3001/api. The payloads are:
+
+Pair
+
+{ "a": { "imdbId":"tt...", "title":"...", "posterUrl":"...", "trailerKey":"..." },
+  "b": { "imdbId":"tt...", "title":"...", "posterUrl":"...", "trailerKey":"..." } }
+
+
+Vote (POST)
+
+{ "a":"tt...", "b":"tt...", "winner":"A" }
+
+
+Recommendations
+
+{ "items": [ { "imdbId":"tt...", "title":"...", "posterUrl":"...", "trailerKey":"..." } ] }
+
+If recommendations still “hang”
+
+Hit /api/health — if hydrated is 0, your TMDb token is missing/invalid.
+
+Your UI may expect different field names. If it needs id/poster/trailerId, you can map on the client, or I can add an alias route quickly.
+
+Want me to tweak the endpoint shapes to your exact UI without touching the visuals? Paste your current client API helper (or the fetch code), and I’ll match it precisely.

@@ -1,0 +1,128 @@
+ok so the structure for both the testing page and the reccomendations trailer looks good. The ab selcetions looks like it working its just the reccomendations are exactly the same after two goes so that seems broken - look at the zip file and then write the code and explanation for replit to fix
+ChatGPT said:
+Thought for 36s
+
+You’re seeing the same recs because your votes aren’t influencing the same profile the trailer page reads, or because the trailer page isn’t refetching /recs after a vote. Fix both:
+
+What to change (fast)
+1) Server: accept sid via header or query (so it always matches)
+
+In server/routes.ts, change the sess(req) helper:
+
+function sess(req: Request) {
+  const sid =
+    (req.headers["x-session-id"] as string) ||
+    (req.query.sid as string) ||
+    "anon";
+  let p = PROFILES.get(sid);
+  if (!p) { p = { w: {}, seenPairs: new Set(), rounds: 0 }; PROFILES.set(sid, p); }
+  return p;
+}
+
+
+Now the same session works whether the client sends a header or a ?sid= query.
+
+2) Client: create one stable session id and send it on every API call
+
+Create client/src/lib/session.ts:
+
+export const getSID = () => {
+  const K = "paf.sid";
+  let sid = localStorage.getItem(K);
+  if (!sid) {
+    sid = "sid_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem(K, sid);
+  }
+  return sid;
+};
+
+
+Create client/src/lib/api.ts:
+
+import { getSID } from "./session";
+
+export async function apiGet<T = any>(url: string): Promise<T> {
+  const sid = getSID();
+  const res = await fetch(url.includes("?") ? `${url}&sid=${sid}` : `${url}?sid=${sid}`, {
+    headers: { "x-session-id": sid },
+  });
+  return res.json();
+}
+
+export async function apiPost<T = any>(url: string, body: any): Promise<T> {
+  const sid = getSID();
+  const res = await fetch(url.includes("?") ? `${url}&sid=${sid}` : `${url}?sid=${sid}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-session-id": sid },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+3) Client: after a vote, refetch recommendations
+
+Add a tiny event bus client/src/lib/events.ts:
+
+export const firePrefsUpdated = () => window.dispatchEvent(new Event("ab:prefs-updated"));
+export const onPrefsUpdated = (fn: () => void) => {
+  window.addEventListener("ab:prefs-updated", fn);
+  return () => window.removeEventListener("ab:prefs-updated", fn);
+};
+
+
+In your A/B component (where you already post a vote):
+
+import { apiPost } from "../lib/api";
+import { firePrefsUpdated } from "../lib/events";
+
+// ...
+await apiPost("/api/ab/vote", { leftId, rightId, chosenId });
+// tell the app to refresh recs
+firePrefsUpdated();
+
+
+In your Trailer/Recommendations component or hook:
+
+import { useEffect, useMemo, useState } from "react";
+import { apiGet } from "../lib/api";
+import { onPrefsUpdated } from "../lib/events";
+
+export function useRecommendations(top = 20) {
+  const [items, setItems] = useState<any[]>([]);
+  const [trailers, setTrailers] = useState<Record<number, string | null>>({});
+
+  async function load() {
+    // add cache-buster t= to avoid any client cache
+    const recs = await apiGet<{ ok: boolean; items: any[] }>(`/api/recs?top=${top}&t=${Date.now()}`);
+    if (!recs?.ok) return;
+    setItems(recs.items);
+    const ids = recs.items.map(m => m.id).join(",");
+    const tr = await apiGet<{ ok: boolean; trailers: Record<number, string | null> }>(`/api/trailers?ids=${encodeURIComponent(ids)}`);
+    setTrailers(tr.trailers || {});
+  }
+
+  useEffect(() => {
+    load();
+    return onPrefsUpdated(() => load()); // refetch after each vote
+  }, [top]);
+
+  const withTrailers = useMemo(() => items.map(m => ({ ...m, trailer: trailers[m.id] ?? null })), [items, trailers]);
+  return { items: withTrailers };
+}
+
+
+Use that hook in your Trailer strip/player. No layout changes.
+
+4) Optional: make sure the server isn’t rebuilding and dropping memory
+
+Keep CATALOGUE_TTL_HOURS=24 (or higher) so profiles aren’t wiped by frequent rebuilds.
+
+If you run on Free replit, avoid hot-reload during testing (it clears in-memory profiles).
+
+Why this fixes “same recs after two goes”
+
+Session alignment: votes and recs are now guaranteed to hit the same user profile (same sid via header and query).
+
+Refetch: the trailer page actively reloads /recs after each vote, so ranking reflects new weights immediately.
+
+No UI changes: posters/trailers still come from TMDb; only request plumbing changed.

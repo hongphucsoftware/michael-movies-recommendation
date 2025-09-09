@@ -35,6 +35,7 @@ export default function OnboardingSection({
 
   const movieA = currentPair.left;
   const movieB = currentPair.right;
+  const choices = preferences?.choices || 0;
 
   return (
     <main className="relative z-10 max-w-7xl mx-auto px-6 pb-12" id="onboarding">
@@ -49,7 +50,7 @@ export default function OnboardingSection({
           <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto leading-relaxed">
             Pick posters based on your gut feeling. Our AI learns your taste in real-time and curates the perfect trailer queue for you.
           </p>
-          
+
           {/* Progress Section */}
           <div className="glass-card p-6 rounded-2xl max-w-md mx-auto animate-slide-up">
             <div className="flex justify-between items-center mb-4">
@@ -66,7 +67,7 @@ export default function OnboardingSection({
                 </div>
               </div>
             </div>
-            
+
             {/* Progress Bar */}
             <div className="w-full bg-netflix-gray rounded-full h-3 mb-4 overflow-hidden">
               <div 
@@ -74,7 +75,21 @@ export default function OnboardingSection({
                 style={{ width: `${progressWidth}%` }}
               ></div>
             </div>
-            
+
+            {/* Funnel Phase Indicator */}
+            <div className="mb-4">
+              <div className="text-sm text-gray-400 mb-2">
+                {choices < 4 ? 'Phase 1: Broad Genre Discovery' : 
+                 choices < 8 ? 'Phase 2: Preference Refinement' : 
+                 'Phase 3: Taste Precision'}
+              </div>
+              <div className="flex justify-center space-x-2">
+                <div className={`w-3 h-3 rounded-full ${choices >= 1 ? 'bg-electric-blue' : 'bg-gray-600'}`} />
+                <div className={`w-3 h-3 rounded-full ${choices >= 5 ? 'bg-electric-blue' : 'bg-gray-600'}`} />
+                <div className={`w-3 h-3 rounded-full ${choices >= 9 ? 'bg-electric-blue' : 'bg-gray-600'}`} />
+              </div>
+            </div>
+
             <div className="flex items-center justify-center text-sm text-gray-400">
               <Lightbulb className="mr-2 text-yellow-400" size={16} />
               <span>Trust your instincts — quick choices help us learn better</span>
@@ -100,7 +115,7 @@ export default function OnboardingSection({
                   className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
 
                 />
-                
+
                 <div className="space-y-3">
                   <h3 className="text-xl font-bold text-white">{movieA.name}</h3>
                   <p className="text-gray-400 text-sm">{movieA.year} • Film • {movieA.category}</p>
@@ -113,7 +128,7 @@ export default function OnboardingSection({
                     <MousePointer className="text-netflix-red mr-2" size={16} />
                     <span className="text-sm text-gray-300">Click to choose</span>
                   </div>
-                  
+
                   {/* Selection overlay */}
                   <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:scale-100 scale-75 z-20">
                     <div className="bg-netflix-red text-white px-3 py-1 rounded-full text-sm font-bold shadow-lg">
@@ -139,7 +154,7 @@ export default function OnboardingSection({
                   className="w-full h-96 object-cover rounded-xl mb-4 shadow-2xl group-hover:shadow-3xl transition-all duration-300 group-hover:brightness-125"
 
                 />
-                
+
                 <div className="space-y-3">
                   <h3 className="text-xl font-bold text-white">{movieB.name}</h3>
                   <p className="text-gray-400 text-sm">{movieB.year} • Film • {movieB.category}</p>
@@ -152,7 +167,7 @@ export default function OnboardingSection({
                     <MousePointer className="text-netflix-red mr-2" size={16} />
                     <span className="text-sm text-gray-300">Click to choose</span>
                   </div>
-                  
+
                   {/* Selection overlay */}
                   <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:scale-100 scale-75 z-20">
                     <div className="bg-electric-blue text-white px-3 py-1 rounded-full text-sm font-bold shadow-lg">

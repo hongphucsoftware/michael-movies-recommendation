@@ -1,0 +1,74 @@
+Awesome — I’ve packaged a clean, drop-in backend that uses only your two IMDb lists, keeps your A/B UI intact, learns from pairwise picks, and returns fast, diversified trailer recs.
+
+Download the server patch (zip)
+
+What this gives you
+
+Only these lists:
+
+https://www.imdb.com/list/ls094921320/
+
+https://www.imdb.com/list/ls003501243/
+
+Small, fast catalogue builder (scrapes those lists → unique IMDb IDs).
+
+TMDb hydration via the “find by IMDb ID” endpoint → posters + YouTube trailer keys + keywords + credits.
+
+Custom features (no genres/year dependency): vibe_tags, pace, decade, keywords, people → hashed vectors.
+
+Learning loop: pairwise logistic (content weights) + Elo, active “champion vs challenger” pairing.
+
+Always-responding /api/recommendations so your trailer reel doesn’t hang.
+
+Guardrails: no repeat pairs, cooldown, block/seen, MMR diversity.
+
+How to install on Replit (don’t touch your UI)
+
+Unzip and drop the server/ folder into your project root (leave your client UI as-is).
+
+In Replit → Secrets, add:
+
+TMDB_API_READ = your TMDb Read Access Token (v4) (starts with eyJ…).
+
+In the shell:
+
+cd server
+npm i
+npm run dev
+
+
+Server boots on http://localhost:3001
+ and auto-builds the small catalogue from the two IMDb lists.
+
+If your UI already calls /api/..., you’re done. If it points somewhere else, set the client’s API base to http://localhost:3001/api (no UI redesign required).
+
+Endpoints (matching a typical A/B UI)
+
+GET /api/pair → { a: {imdbId,title,posterUrl,trailerKey}, b: {...} }
+
+POST /api/vote → { a, b, winner: 'A'|'B' }
+
+GET /api/recommendations?limit=12 → { items: [{imdbId,title,posterUrl,trailerKey,reason}, ...] }
+
+POST /api/feedback → { movieId, action: 'seen'|'block'|'like'|'dislike' }
+
+GET /api/health → { ok, counts: { catalogue, hydrated } }
+
+Why your trailer reel was “stuck”
+
+The usual culprits:
+
+The recs endpoint never returns (slow/empty catalogue).
+→ Fixed: the server caches a tiny catalogue and always returns a list (even pre-training).
+
+Missing posters/trailers causing client errors.
+→ Fixed: hydration uses TMDb find-by-IMDb and prefers YouTube trailers. Fields are null-safe.
+
+Bad session handling.
+→ Fixed: the server assigns a sid cookie and stores per-user learning in memory.
+
+Expanding later
+
+When everything’s humming, just add more IMDb list URLs in server/src/constants.ts and redeploy. Memory stays lean; hydration is cached.
+
+If you want me to wire your existing client calls to these endpoints (without changing your UI look/feel), paste the small API file (e.g., client/src/lib/api.ts) and I’ll adjust it to this backend.
