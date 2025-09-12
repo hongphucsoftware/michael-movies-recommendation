@@ -83,18 +83,25 @@ function toEra(year) {
   return `${decade}s`;
 }
 
-// Build catalogue from both SEED lists with random shuffling
+// Build catalogue from both SEED lists with alternating selection
 function buildCatalogue() {
-  // Combine both lists
-  const allMovies = [
-    ...SEED_LIST_1.map(s => ({ ...s, sourceListId: "ls094921320" })),
-    ...SEED_LIST_2.map(s => ({ ...s, sourceListId: "ls003501243" }))
-  ];
+  // Create alternating pattern: take turns between lists
+  const alternatingMovies = [];
   
-  // Shuffle the combined list randomly
-  const shuffled = allMovies.sort(() => Math.random() - 0.5);
+  // Interleave movies from both lists
+  const maxLength = Math.max(SEED_LIST_1.length, SEED_LIST_2.length);
+  for (let i = 0; i < maxLength; i++) {
+    // Add from SEED_LIST_1 if available
+    if (i < SEED_LIST_1.length) {
+      alternatingMovies.push({ ...SEED_LIST_1[i], sourceListId: "ls094921320" });
+    }
+    // Add from SEED_LIST_2 if available
+    if (i < SEED_LIST_2.length) {
+      alternatingMovies.push({ ...SEED_LIST_2[i], sourceListId: "ls003501243" });
+    }
+  }
   
-  const catalogue = shuffled.map(s => ({
+  const catalogue = alternatingMovies.map(s => ({
     id: hashCode(s.tt),
     imdbId: s.tt,
     title: s.title,
