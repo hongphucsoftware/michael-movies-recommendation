@@ -93,7 +93,19 @@ export function useEnhancedCatalogue() {
         setLoading(true);
         setError(null);
         // Pull ALL items in a single call (server guarantees no downsampling)
-        const res = await fetch(`/api/catalogue?all=1`);
+        // Get current seed index from URL parameter or localStorage
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlSeedIndex = urlParams.get('seedIndex');
+        const storedSeedIndex = localStorage.getItem('currentSeedIndex');
+        const seedIndex = urlSeedIndex || storedSeedIndex || '0';
+        
+        // Update localStorage with the current seed index
+        if (urlSeedIndex) {
+          localStorage.setItem('currentSeedIndex', urlSeedIndex);
+        }
+        
+        console.log(`[Catalogue] Using seed index: ${seedIndex} (from URL: ${urlSeedIndex}, stored: ${storedSeedIndex})`);
+        const res = await fetch(`/api/catalogue?all=1&seedIndex=${seedIndex}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json: CatalogueResponse = await res.json();
         if (cancelled) return;

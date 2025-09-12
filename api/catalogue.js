@@ -22,8 +22,8 @@ function toEra(year) {
   return `${decade}s`;
 }
 
-function buildCatalogue() {
-  const currentSeed = currentSeedIndex === 0 ? SEED_LIST_1 : SEED_LIST_2;
+function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
+  const currentSeed = seedIndex === 0 ? SEED_LIST_1 : SEED_LIST_2;
   const movies = currentSeed.map(s => ({
     id: hashCode(s.tt),
     imdbId: s.tt,
@@ -40,7 +40,7 @@ function buildCatalogue() {
     trailerUrl: s.trailer,
     topActors: s.actors,
     director: s.director,
-    sourceListIds: [currentSeedIndex === 0 ? "ls094921320" : "ls003501243"],
+    sourceListIds: [seedIndex === 0 ? "ls094921320" : "ls003501243"],
   }));
   
   return movies;
@@ -53,11 +53,15 @@ export default (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "application/json");
     
-    const catalogue = buildCatalogue();
+    // Get seed index from query parameter or use default
+    const seedIndex = req.query.seedIndex ? parseInt(req.query.seedIndex) : DEFAULT_SEED_INDEX;
+    
+    const catalogue = buildCatalogue(seedIndex);
     res.status(200).json({
       ok: true,
       total: catalogue.length,
-      items: catalogue
+      items: catalogue,
+      seedIndex: seedIndex
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });

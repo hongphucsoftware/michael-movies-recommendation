@@ -64,9 +64,12 @@ export default function PosterPair() {
       const result = await response.json();
       
       if (result.ok) {
-        console.log(`Switched to ${result.seedName}`);
-        // Reload the page to get new movies from the new seed
-        window.location.reload();
+        console.log(`Switched to ${result.seedName}, seedIndex: ${result.seedIndex}`);
+        // Store the new seed index in localStorage
+        localStorage.setItem('currentSeedIndex', result.seedIndex.toString());
+        console.log(`[NewRound] Stored seedIndex ${result.seedIndex} in localStorage`);
+        // Instead of reloading, trigger a refresh of the catalogue data
+        window.location.href = `/?seedIndex=${result.seedIndex}`;
       } else {
         console.error('Failed to switch seed:', result.error);
       }
