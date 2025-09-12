@@ -1,10 +1,18 @@
 import express, { type Request, Response, NextFunction } from "express";
-import api from "./routes";
+import api from "./routes-ab.ts";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Add no-store on all API responses
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api")) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -38,7 +46,7 @@ app.use((req, res, next) => {
 
 (async () => {
   app.use("/api", api);
-  const server = app;
+  const server = app as any;
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
