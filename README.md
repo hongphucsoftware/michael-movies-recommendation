@@ -10,6 +10,141 @@ This document provides comprehensive testing instructions for the PickaFlick API
 - `seedIndex=0`: IMDb List `ls094921320` (24 movies)
 - `seedIndex=1`: IMDb List `ls003501243` (24 movies)
 
+## 🔧 API Endpoints Overview
+
+### Core API Endpoints
+
+| Endpoint | Method | Purpose | Description |
+|----------|--------|---------|-------------|
+| `/api/audit/summary` | GET | Health Check | Returns count of movies in each seed list |
+| `/api/ab/round` | GET | A/B Testing | Returns 12 pairs of movies for user selection |
+| `/api/score-round` | POST | Recommendations | Returns 6 personalized movie recommendations |
+| `/api/catalogue` | GET | Movie Database | Returns full list of movies from current seed |
+| `/api/trailers` | GET | Trailer URLs | Returns YouTube trailer URLs for specified movies |
+| `/api/next-seed` | POST | Seed Switching | Switches between available seed lists |
+| `/api/proxy-img` | GET | Image Proxy | Proxies external images to avoid CORS issues |
+
+### Detailed API Descriptions
+
+#### `/api/audit/summary`
+**Purpose**: Health check and data validation  
+**Returns**: Count of movies per seed list, total movies, current seed index  
+**Use Case**: Verify data integrity and list health
+
+#### `/api/ab/round`
+**Purpose**: Generate A/B test pairs for user preference learning  
+**Returns**: 12 pairs (24 movies total) with excludeIds list  
+**Use Case**: Present movies to users for preference selection
+
+#### `/api/score-round`
+**Purpose**: Generate personalized recommendations based on user choices  
+**Input**: Array of 12 winner movie IDs from A/B round  
+**Returns**: 6 recommended movies + their trailer URLs  
+**Use Case**: Provide personalized movie suggestions
+
+#### `/api/catalogue`
+**Purpose**: Access full movie database for current seed list  
+**Returns**: Complete list of movies with metadata  
+**Use Case**: Browse all available movies, get movie details
+
+#### `/api/trailers`
+**Purpose**: Get YouTube trailer URLs for specific movies  
+**Input**: Comma-separated movie IDs  
+**Returns**: Object mapping movie IDs to trailer URLs  
+**Use Case**: Play movie trailers in the application
+
+#### `/api/next-seed`
+**Purpose**: Switch between available seed lists  
+**Returns**: New seed index, name, and ID  
+**Use Case**: Change movie database (e.g., from List 1 to List 2)
+
+#### `/api/proxy-img`
+**Purpose**: Proxy external images to avoid CORS restrictions  
+**Input**: Image URL as query parameter  
+**Returns**: Proxied image data  
+**Use Case**: Display movie posters from external sources
+
+## 🔄 API Workflow
+
+### Typical User Journey
+
+1. **Start**: User visits the application
+   - Frontend calls `/api/catalogue` to load available movies
+   - Frontend calls `/api/audit/summary` to verify data health
+
+2. **A/B Testing Phase**: User selects movie preferences
+   - Frontend calls `/api/ab/round` to get 12 movie pairs
+   - User makes 12 selections (24 total choices)
+   - Frontend stores user preferences
+
+3. **Recommendation Phase**: Get personalized suggestions
+   - Frontend calls `/api/score-round` with user's 12 winner IDs
+   - Backend analyzes preferences and returns 6 recommendations
+   - Frontend calls `/api/trailers` to get trailer URLs for recommendations
+
+4. **Seed Switching**: Change movie database
+   - User clicks "New Round" button
+   - Frontend calls `/api/next-seed` to switch seed lists
+   - Process repeats with new movie database
+
+### Data Flow Diagram
+
+```
+User → Frontend → API Endpoints → SEED Data
+  ↓
+1. /api/catalogue (load movies)
+2. /api/ab/round (get pairs)
+3. User selections
+4. /api/score-round (get recommendations)
+5. /api/trailers (get trailer URLs)
+6. Display results
+```
+
+### Key Features
+
+- **Stateless Design**: All APIs work independently
+- **Seed Index Support**: Most endpoints accept `seedIndex` parameter
+- **Local Data Only**: No external API calls, uses SEED data exclusively
+- **YouTube Integration**: Direct YouTube trailer URLs
+- **CORS Handling**: Image proxy for external movie posters
+
+## 🧠 Recommendation Algorithm
+
+### How Recommendations Work
+
+The `/api/score-round` endpoint uses a sophisticated algorithm to generate personalized recommendations:
+
+1. **User Profile Analysis**: Analyzes the 12 movies the user selected
+2. **Feature Extraction**: Extracts genres, actors, directors, and era preferences
+3. **Similarity Scoring**: Uses weighted Jaccard similarity to find similar movies
+4. **Diversity Filtering**: Ensures recommendations are diverse (max 2 same genre, max 1 same director)
+5. **Exclusion Logic**: Excludes the 24 movies already shown in A/B round
+6. **Final Selection**: Returns top 6 recommendations with trailer URLs
+
+### Movie Data Structure
+
+Each movie in the SEED data contains:
+
+```json
+{
+  "tt": "tt1745960",
+  "title": "Top Gun: Maverick",
+  "poster": "https://m.media-amazon.com/images/...",
+  "trailer": "https://www.youtube.com/watch?v=g4U4BQW9OEk",
+  "year": 2022,
+  "genres": ["Action", "Drama"],
+  "director": "Joseph Kosinski",
+  "actors": ["Tom Cruise", "Miles Teller", "Jennifer Connelly"]
+}
+```
+
+### Seed List Information
+
+- **SEED_LIST_1** (`ls094921320`): 24 movies from IMDb list
+- **SEED_LIST_2** (`ls003501243`): 24 movies from IMDb list
+- **Total Movies**: 48 movies across both lists
+- **Data Source**: Local SEED data only (no external APIs)
+
 ## 📋 Acceptance Criteria Tests
 
 ### 1. Audit Summary - List Health Check
