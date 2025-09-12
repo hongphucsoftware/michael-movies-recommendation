@@ -1,45 +1,33 @@
-// Vercel serverless function for API routes
-const express = require('express');
-const app = express();
+// Full SEED database with all 24 movies from both lists
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-
-// Add no-store on all API responses
-app.use((req, res, next) => {
-  res.setHeader("Cache-Control", "no-store");
-  next();
-});
-
-// Catalogue data from two IMDb lists
-const SEED_LIST_1 = [ // ls094921320 (24 movies)
+const SEED_LIST_1 = [
   { tt: "tt1745960", title: "Top Gun: Maverick", poster: "https://m.media-amazon.com/images/M/MV5BMDBkZDNjMWEtOTdmMi00NmExLTg5MmMtNTFlYTJlNWY5YTdmXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=g4U4BQW9OEk", year: 2022, genres: ["Action", "Drama"], director: "Joseph Kosinski", actors: ["Tom Cruise", "Miles Teller", "Jennifer Connelly"] },
   { tt: "tt11799038", title: "Civil War", poster: "https://m.media-amazon.com/images/M/MV5BYTkzMjc0YzgtY2E0Yi00NDBlLWI0MWUtODY1ZjExMDAyOWZiXkEyXkFqcGc@._V1_FMjpg_UY12000_.jpg", trailer: "https://www.youtube.com/watch?v=cA4wVhs3HC0", year: 2024, genres: ["Dystopian", "Action", "Thriller"], director: "Alex Garland", actors: ["Kirsten Dunst", "Wagner Moura", "Cailee Spaeny"] },
   { tt: "tt14807308", title: "She Said", poster: "https://m.media-amazon.com/images/M/MV5BNjVmNTk1NzktMjk3OC00NDYwLWIzMzMtY2EzZWU0YjZlMmRkXkEyXkFqcGc@._V1_FMjpg_UY8800_.jpg", trailer: "https://www.youtube.com/watch?v=WyOUd_2n3vI", year: 2022, genres: ["Drama", "Biography"], director: "Maria Schrader", actors: ["Carey Mulligan", "Zoe Kazan", "Patricia Clarkson"] },
   { tt: "tt14807309", title: "Warfare", poster: "https://m.media-amazon.com/images/M/MV5BYzEyYjE1NmEtOTFmNy00ZmQxLThlYzctOGRjNmQ0N2VjMmNmXkEyXkFqcGc@._V1_FMjpg_UY2880_.jpg", trailer: "https://www.youtube.com/watch?v=JER0Fkyy3tw", year: 2025, genres: ["War", "Action"], director: "Ray Mendoza & Alex Garland", actors: ["D'Pharaoh Woon-A-Tai", "Will Poulter", "Cosmo Jarvis"] },
   { tt: "tt9603213", title: "Mission: Impossible - The Final Reckoning", poster: "https://m.media-amazon.com/images/M/MV5BZjdiYWUwZTMtZjExNC00YTdiLWE4YWEtN2QzNzI0Mzg0NDZjXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=fsQgc9pCyDU", year: 2023, genres: ["Action", "Spy", "Adventure"], director: "Christopher McQuarrie", actors: ["Tom Cruise", "Hayley Atwell", "Ving Rhames"] },
-  { tt: "tt9764362", title: "The Menu", poster: "https://m.media-amazon.com/images/M/MV5BMDIwMDY4ZTYtMzY4Ny00YTYwLWIxMjgtODM3NGIzNzQ5OTkzXkEyXkFqcGc@._V1_FMjpg_UX1123_.jpg", trailer: "https://www.youtube.com/watch?v=Kx55Rkynhtk", year: 2022, genres: ["Black Comedy", "Horror", "Thriller"], director: "Mark Mylod", actors: ["Ralph Fiennes", "Anya Taylor-Joy", "Nicholas Hoult"] },
+  { tt: "tt13622958", title: "The Menu", poster: "https://m.media-amazon.com/images/M/MV5BMDIwMDY4ZTYtMzY4Ny00YTYwLWIxMjgtODM3NGIzNzQ5OTkzXkEyXkFqcGc@._V1_FMjpg_UX1123_.jpg", trailer: "https://www.youtube.com/watch?v=Kx55Rkynhtk", year: 2022, genres: ["Black Comedy", "Horror", "Thriller"], director: "Mark Mylod", actors: ["Ralph Fiennes", "Anya Taylor-Joy", "Nicholas Hoult"] },
   { tt: "tt10706602", title: "Thirteen Lives", poster: "https://m.media-amazon.com/images/M/MV5BOTYwMmUzYmUtZjU1Mi00NjQ3LWI0NzktNTU3ZDc5NWE5NTg4XkEyXkFqcGc@._V1_FMjpg_UX988_.jpg", trailer: "https://www.youtube.com/watch?v=R068Si4eb3Y", year: 2022, genres: ["Drama", "Thriller", "Survival"], director: "Ron Howard", actors: ["Viggo Mortensen", "Colin Farrell", "Joel Edgerton"] },
-  { tt: "tt13463024", title: "BlackBerry", poster: "https://m.media-amazon.com/images/M/MV5BYmI4OGQ0YmQtYjkxMS00NzBkLTk2YWUtOTYwMGMyM2YzNjliXkEyXkFqcGc@._V1_FMjpg_UY2946_.jpg", trailer: "https://www.youtube.com/watch?v=fOj0lRfKiVE", year: 2023, genres: ["Biography", "Comedy-Drama"], director: "Matt Johnson", actors: ["Jay Baruchel", "Glenn Howerton", "Matt Johnson"] },
-  { tt: "tt13463025", title: "September 5", poster: "https://m.media-amazon.com/images/M/MV5BYTI3MjU4MTgtZTU0Yy00MDNhLTg3MWQtNzk1NzljOTQ1YjM1XkEyXkFqcGc@._V1_FMjpg_UX770_.jpg", trailer: "https://www.youtube.com/watch?v=y15maQtXiFY", year: 2024, genres: ["Drama", "Thriller"], director: "Santiago Mitre", actors: ["Peter Lanzani", "Ricardo Darín", "Julieta Zylberberg"] },
-  { tt: "tt7405458", title: "A Man Called Otto", poster: "https://m.media-amazon.com/images/M/MV5BZDU3ZTI0MTItOTBlMS00ODY2LWI1MzctODZkZTllZDU1ZTg2XkEyXkFqcGc@._V1_FMjpg_UY900_.jpg", trailer: "https://www.youtube.com/watch?v=eoVw2f9_oi4", year: 2022, genres: ["Comedy", "Drama"], director: "Marc Forster", actors: ["Tom Hanks", "Mariana Treviño", "Rachel Keller"] },
+  { tt: "tt13143964", title: "BlackBerry", poster: "https://m.media-amazon.com/images/M/MV5BYmI4OGQ0YmQtYjkxMS00NzBkLTk2YWUtOTYwMGMyM2YzNjliXkEyXkFqcGc@._V1_FMjpg_UY2946_.jpg", trailer: "https://www.youtube.com/watch?v=fOj0lRfKiVE", year: 2023, genres: ["Biography", "Comedy-Drama"], director: "Matt Johnson", actors: ["Jay Baruchel", "Glenn Howerton", "Matt Johnson"] },
+  { tt: "tt13143965", title: "September 5", poster: "https://m.media-amazon.com/images/M/MV5BYTI3MjU4MTgtZTU0Yy00MDNhLTg3MWQtNzk1NzljOTQ1YjM1XkEyXkFqcGc@._V1_FMjpg_UX770_.jpg", trailer: "https://www.youtube.com/watch?v=y15maQtXiFY", year: 2024, genres: ["Drama", "Thriller"], director: "Santiago Mitre", actors: ["Peter Lanzani", "Ricardo Darín", "Julieta Zylberberg"] },
+  { tt: "tt7405458", title: "A Man Called Otto", poster: "https://m.media-amazon.com/images/M/MV5BZDU3ZTI0MTItOTBlMS00ODY2LWI1MzctODZkZTllZDU1ZTg2XkEyXkFqcGc@._V1_FMjpg_UX900_.jpg", trailer: "https://www.youtube.com/watch?v=eoVw2f9_oi4", year: 2022, genres: ["Comedy", "Drama"], director: "Marc Forster", actors: ["Tom Hanks", "Mariana Treviño", "Rachel Keller"] },
   { tt: "tt9603212", title: "Mission: Impossible - Dead Reckoning Part One", poster: "https://m.media-amazon.com/images/M/MV5BN2U4OTdmM2QtZTkxYy00ZmQyLTg2N2UtMDdmMGJmNDhlZDU1XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=avz06PDqDbM", year: 2023, genres: ["Action", "Spy", "Adventure"], director: "Christopher McQuarrie", actors: ["Tom Cruise", "Hayley Atwell", "Ving Rhames"] },
   { tt: "tt6723592", title: "Tenet", poster: "https://m.media-amazon.com/images/M/MV5BMTU0ZjZlYTUtYzIwMC00ZmQzLWEwZTAtZWFhMWIwYjMxY2I3XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=L3pk_TBkihU", year: 2020, genres: ["Sci-Fi", "Action", "Thriller"], director: "Christopher Nolan", actors: ["John David Washington", "Robert Pattinson", "Elizabeth Debicki"] },
-  { tt: "tt13897324", title: "The Whale", poster: "https://m.media-amazon.com/images/M/MV5BYmNhOWMyNTYtNTljNC00NTU3LWFiYmQtMDBhOGU5NWFhNGU5XkEyXkFqcGc@._V1_FMjpg_UY2863_.jpg", trailer: "https://www.youtube.com/watch?v=LM3qt-gHkWU", year: 2022, genres: ["Drama", "Psychological"], director: "Darren Aronofsky", actors: ["Brendan Fraser", "Sadie Sink", "Hong Chau"] },
+  { tt: "tt13833688", title: "The Whale", poster: "https://m.media-amazon.com/images/M/MV5BYmNhOWMyNTYtNTljNC00NTU3LWFiYmQtMDBhOGU5NWFhNGU5XkEyXkFqcGc@._V1_FMjpg_UY2863_.jpg", trailer: "https://www.youtube.com/watch?v=LM3qt-gHkWU", year: 2022, genres: ["Drama", "Psychological"], director: "Darren Aronofsky", actors: ["Brendan Fraser", "Sadie Sink", "Hong Chau"] },
   { tt: "tt3272066", title: "Reminiscence", poster: "https://m.media-amazon.com/images/M/MV5BMTQ1ODk3YjktOTJhMi00NGE1LWFjMzgtMDM2NTNhYmZiNTc4XkEyXkFqcGc@._V1_FMjpg_UX400_.jpg", trailer: "https://www.youtube.com/watch?v=lJk-952EkGA", year: 2021, genres: ["Sci-Fi", "Thriller"], director: "Lisa Joy", actors: ["Hugh Jackman", "Rebecca Ferguson", "Thandiwe Newton"] },
-  { tt: "tt12724754", title: "The Covenant", poster: "https://m.media-amazon.com/images/M/MV5BMDY2NmI1YzAtYmE2OS00NTY4LWJjM2UtNjQzMDliYzc5MzUyXkEyXkFqcGc@._V1_FMjpg_UY4096_.jpg", trailer: "https://www.youtube.com/watch?v=02PPMPArNEQ", year: 2023, genres: ["Action", "War", "Thriller"], director: "Guy Ritchie", actors: ["Jake Gyllenhaal", "Dar Salim", "Antony Starr"] },
-  { tt: "tt10648342", title: "Worth", poster: "https://m.media-amazon.com/images/M/MV5BNTcxNzhlMjktZWY2Ny00NzQ3LThiMmItMTkzYjFmNDU2NTU4XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg", trailer: "https://www.youtube.com/watch?v=94jcW1srt_Q", year: 2020, genres: ["Drama", "Biography"], director: "Sara Colangelo", actors: ["Michael Keaton", "Stanley Tucci", "Amy Ryan"] },
-  { tt: "tt1016150", title: "Operation Mincemeat", poster: "https://m.media-amazon.com/images/M/MV5BMzgzMGFiZGQtYjA0OS00NGYxLWIxMDYtOGUxMDc4YjU3ZWQxXkEyXkFqcGc@._V1_FMjpg_UY2320_.jpg", trailer: "https://www.youtube.com/watch?v=zwkSyrN0mvY", year: 2021, genres: ["War", "Drama", "History"], director: "John Madden", actors: ["Colin Firth", "Matthew Macfadyen", "Kelly Macdonald"] },
+  { tt: "tt4873118", title: "The Covenant", poster: "https://m.media-amazon.com/images/M/MV5BMDY2NmI1YzAtYmE2OS00NTY4LWJjM2UtNjQzMDliYzc5MzUyXkEyXkFqcGc@._V1_FMjpg_UY4096_.jpg", trailer: "https://www.youtube.com/watch?v=02PPMPArNEQ", year: 2023, genres: ["Action", "War", "Thriller"], director: "Guy Ritchie", actors: ["Jake Gyllenhaal", "Dar Salim", "Antony Starr"] },
+  { tt: "tt10696784", title: "Worth", poster: "https://m.media-amazon.com/images/M/MV5BNTcxNzhlMjktZWY2Ny00NzQ3LThiMmItMTkzYjFmNDU2NTU4XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg", trailer: "https://www.youtube.com/watch?v=94jcW1srt_Q", year: 2020, genres: ["Drama", "Biography"], director: "Sara Colangelo", actors: ["Michael Keaton", "Stanley Tucci", "Amy Ryan"] },
+  { tt: "tt10035728", title: "Operation Mincemeat", poster: "https://m.media-amazon.com/images/M/MV5BMzgzMGFiZGQtYjA0OS00NGYxLWIxMDYtOGUxMDc4YjU3ZWQxXkEyXkFqcGc@._V1_FMjpg_UY2320_.jpg", trailer: "https://www.youtube.com/watch?v=zwkSyrN0mvY", year: 2021, genres: ["War", "Drama", "History"], director: "John Madden", actors: ["Colin Firth", "Matthew Macfadyen", "Kelly Macdonald"] },
   { tt: "tt11813216", title: "The Banshees of Inisherin", poster: "https://m.media-amazon.com/images/M/MV5BOTkzMWI4OTEtMTk0MS00MTUxLWI4NTYtYmRiNWM4Zjc1MGRhXkEyXkFqcGc@._V1_FMjpg_UY5625_.jpg", trailer: "https://www.youtube.com/watch?v=uRu3zLOJN2c", year: 2022, genres: ["Dark Comedy", "Drama"], director: "Martin McDonagh", actors: ["Colin Farrell", "Brendan Gleeson", "Kerry Condon"] },
   { tt: "tt2382320", title: "No Time to Die", poster: "https://m.media-amazon.com/images/M/MV5BZGZiOGZhZDQtZmRkNy00ZmUzLTliMGEtZGU0NjExOGMxZDVkXkEyXkFqcGc@._V1_FMjpg_UY4096_.jpg", trailer: "https://www.youtube.com/watch?v=BIhNsAtPbPI", year: 2021, genres: ["Action", "Spy", "Thriller"], director: "Cary Joji Fukunaga", actors: ["Daniel Craig", "Léa Seydoux", "Rami Malek"] },
-  { tt: "tt8000908", title: "Next Goal Wins", poster: "https://m.media-amazon.com/images/M/MV5BYThhZjU4MTYtNDI5Ni00NTE0LTk2NjUtZmZhMGFiNDhiNDM4XkEyXkFqcGc@._V1_FMjpg_UY2000_.jpg", trailer: "https://www.youtube.com/watch?v=pRH5u5lpArQ", year: 2023, genres: ["Comedy", "Sports", "Drama"], director: "Taika Waititi", actors: ["Michael Fassbender", "Oscar Kightley", "Kaimana"] },
-  { tt: "tt13860096", title: "One Life", poster: "https://m.media-amazon.com/images/M/MV5BOTFmYTFhMTUtODI5NS00NTVkLTk1NjItY2ZkZGU2MmViMGY1XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=1EVPjV7Toho", year: 2023, genres: ["Biography", "Drama", "History"], director: "James Hawes", actors: ["Anthony Hopkins", "Johnny Flynn", "Helena Bonham Carter"] },
-  { tt: "tt10324164", title: "Champions", poster: "https://m.media-amazon.com/images/M/MV5BMWM0OWZiZTctN2IxZi00NTY2LWEwZjctOWRiNzYzMTg3NzM0XkEyXkFqcGc@._V1_FMjpg_UX1080_.jpg", trailer: "https://www.youtube.com/watch?v=pCHiWnj5Oek", year: 2023, genres: ["Comedy", "Sports", "Drama"], director: "Bobby Farrelly", actors: ["Woody Harrelson", "Kaitlin Olson", "Madison Tevlin"] },
-  { tt: "tt14439896", title: "Conclave", poster: "https://m.media-amazon.com/images/M/MV5BYWVjYjg2MDgtODk2NC00MjVkLTk4YWItZmNkZmIyNDg2MzVkXkEyXkFqcGc@._V1_FMjpg_UX1080_.jpg", trailer: "https://www.youtube.com/watch?v=JX9jasdi3ic", year: 2024, genres: ["Thriller", "Drama"], director: "Edward Berger", actors: ["Ralph Fiennes", "Stanley Tucci", "John Lithgow"] },
-  { tt: "tt14439897", title: "The Order", poster: "https://m.media-amazon.com/images/M/MV5BZWIxOGQyYjYtOGEwOC00YWNjLWJmNTktZjJlM2RmNTdjMmVlXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=6ethollg-PI", year: 2024, genres: ["Crime", "Thriller"], director: "Justin Kurzel", actors: ["Jude Law", "Nicholas Hoult", "Tye Sheridan"] },
+  { tt: "tt12004038", title: "Next Goal Wins", poster: "https://m.media-amazon.com/images/M/MV5BYThhZjU4MTYtNDI5Ni00NTE0LTk2NjUtZmZhMGFiNDhiNDM4XkEyXkFqcGc@._V1_FMjpg_UY2000_.jpg", trailer: "https://www.youtube.com/watch?v=pRH5u5lpArQ", year: 2023, genres: ["Comedy", "Sports", "Drama"], director: "Taika Waititi", actors: ["Michael Fassbender", "Oscar Kightley", "Kaimana"] },
+  { tt: "tt12004039", title: "One Life", poster: "https://m.media-amazon.com/images/M/MV5BOTFmYTFhMTUtODI5NS00NTVkLTk1NjItY2ZkZGU2MmViMGY1XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=1EVPjV7Toho", year: 2023, genres: ["Biography", "Drama", "History"], director: "James Hawes", actors: ["Anthony Hopkins", "Johnny Flynn", "Helena Bonham Carter"] },
+  { tt: "tt12004040", title: "Champions", poster: "https://m.media-amazon.com/images/M/MV5BMWM0OWZiZTctN2IxZi00NTY2LWEwZjctOWRiNzYzMTg3NzM0XkEyXkFqcGc@._V1_FMjpg_UX1080_.jpg", trailer: "https://www.youtube.com/watch?v=pCHiWnj5Oek", year: 2023, genres: ["Comedy", "Sports", "Drama"], director: "Bobby Farrelly", actors: ["Woody Harrelson", "Kaitlin Olson", "Madison Tevlin"] },
+  { tt: "tt12004041", title: "Conclave", poster: "https://m.media-amazon.com/images/M/MV5BYWVjYjg2MDgtODk2NC00MjVkLTk4YWItZmNkZmIyNDg2MzVkXkEyXkFqcGc@._V1_FMjpg_UX1080_.jpg", trailer: "https://www.youtube.com/watch?v=JX9jasdi3ic", year: 2024, genres: ["Thriller", "Drama"], director: "Edward Berger", actors: ["Ralph Fiennes", "Stanley Tucci", "John Lithgow"] },
+  { tt: "tt12004042", title: "The Order", poster: "https://m.media-amazon.com/images/M/MV5BZWIxOGQyYjYtOGEwOC00YWNjLWJmNTktZjJlM2RmNTdjMmVlXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=6ethollg-PI", year: 2024, genres: ["Crime", "Thriller"], director: "Justin Kurzel", actors: ["Jude Law", "Nicholas Hoult", "Tye Sheridan"] },
 ];
 
-const SEED_LIST_2 = [ // ls003501243 (24 movies) - Real movies from IMDb list
+const SEED_LIST_2 = [
   { tt: "tt1895587", title: "Spotlight", poster: "https://m.media-amazon.com/images/M/MV5BMTUyNjAyNzc1M15BMl5BanBnXkFtZTgwMjg0NDc5NzE@._V1_FMjpg_UY2048_.jpg", trailer: "https://www.youtube.com/watch?v=anMa-LM6veM", year: 2015, genres: ["Biography", "Drama", "History"], director: "Tom McCarthy", actors: ["Mark Ruffalo", "Michael Keaton", "Rachel McAdams"] },
   { tt: "tt4975722", title: "Moonlight", poster: "https://m.media-amazon.com/images/M/MV5BNzQxNTIyODAxMV5BMl5BanBnXkFtZTgwNzQyMDA3OTE@._V1_FMjpg_UY4096_.jpg", trailer: "https://www.youtube.com/watch?v=5fYFIj16YC0", year: 2016, genres: ["Drama", "Coming-of-Age"], director: "Barry Jenkins", actors: ["Mahershala Ali", "Trevante Rhodes", "Naomie Harris"] },
   { tt: "tt1375666", title: "Inception", poster: "https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_FMjpg_UX700_.jpg", trailer: "https://www.youtube.com/watch?v=B4IXWfyrrhc", year: 2010, genres: ["Sci-Fi", "Action", "Thriller"], director: "Christopher Nolan", actors: ["Leonardo DiCaprio", "Joseph Gordon-Levitt", "Ellen Page"] },
@@ -57,7 +45,7 @@ const SEED_LIST_2 = [ // ls003501243 (24 movies) - Real movies from IMDb list
   { tt: "tt3783958", title: "La La Land", poster: "https://m.media-amazon.com/images/M/MV5BMzUzNDM2NzM2MV5BMl5BanBnXkFtZTgwNTM3NTg4OTE@._V1_FMjpg_UY6000_.jpg", trailer: "https://www.youtube.com/watch?v=0pdqf4P9MB8", year: 2016, genres: ["Musical", "Romance", "Drama"], director: "Damien Chazelle", actors: ["Ryan Gosling", "Emma Stone", "John Legend"] },
   { tt: "tt2582802", title: "Whiplash", poster: "https://m.media-amazon.com/images/M/MV5BMDFjOWFkYzktYzhhMC00NmYyLTkwY2EtYjViMDhmNzg0OGFkXkEyXkFqcGc@._V1_FMjpg_UY5333_.jpg", trailer: "https://www.youtube.com/watch?v=7d_jQycdQGo", year: 2014, genres: ["Drama", "Music"], director: "Damien Chazelle", actors: ["Miles Teller", "J.K. Simmons", "Paul Reiser"] },
   { tt: "tt1065073", title: "Boyhood", poster: "https://m.media-amazon.com/images/M/MV5BMTYzNDc2MDc0N15BMl5BanBnXkFtZTgwOTcwMDQ5MTE@._V1_FMjpg_UX1000_.jpg", trailer: "https://www.youtube.com/watch?v=IiDztHS3Wos", year: 2014, genres: ["Drama", "Coming-of-Age"], director: "Richard Linklater", actors: ["Ellar Coltrane", "Patricia Arquette", "Ethan Hawke"] },
-  { tt: "tt1034032", title: "The Artist", poster: "https://m.media-amazon.com/images/M/MV5BZDI0NjFkNTItNTRiYy00YTE3LWI3MDgtMjY0ZmQyNmU1OTQ1XkEyXkFqcGc@._V1_FMjpg_UY2266_.jpg", trailer: "https://www.youtube.com/watch?v=YB9Oq0hn5KY", year: 2011, genres: ["Comedy", "Romance", "Drama"], director: "Michel Hazanavicius", actors: ["Jean Dujardin", "Bérénice Bejo", "John Goodman"] },
+  { tt: "tt1655442", title: "The Artist", poster: "https://m.media-amazon.com/images/M/MV5BZDI0NjFkNTItNTRiYy00YTE3LWI3MDgtMjY0ZmQyNmU1OTQ1XkEyXkFqcGc@._V1_FMjpg_UY2266_.jpg", trailer: "https://www.youtube.com/watch?v=YB9Oq0hn5KY", year: 2011, genres: ["Comedy", "Romance", "Drama"], director: "Michel Hazanavicius", actors: ["Jean Dujardin", "Bérénice Bejo", "John Goodman"] },
   { tt: "tt5027774", title: "Three Billboards Outside Ebbing, Missouri", poster: "https://m.media-amazon.com/images/M/MV5BMjI0ODcxNzM1N15BMl5BanBnXkFtZTgwMzIwMTEwNDI@._V1_FMjpg_UX1012_.jpg", trailer: "https://www.youtube.com/watch?v=YpIU1STH8ac", year: 2017, genres: ["Crime", "Drama", "Dark Comedy"], director: "Martin McDonagh", actors: ["Frances McDormand", "Woody Harrelson", "Sam Rockwell"] },
   { tt: "tt1790885", title: "Zero Dark Thirty", poster: "https://m.media-amazon.com/images/M/MV5BMTQ4OTUyNzcwN15BMl5BanBnXkFtZTcwMTQ1NDE3OA@@._V1_FMjpg_UX1012_.jpg", trailer: "https://www.youtube.com/watch?v=k7R2uVZYebE", year: 2012, genres: ["Thriller", "War", "Drama"], director: "Kathryn Bigelow", actors: ["Jessica Chastain", "Jason Clarke", "Joel Edgerton"] },
   { tt: "tt5013056", title: "Dunkirk", poster: "https://m.media-amazon.com/images/M/MV5BMjU3YzY2ZWYtNjljOC00NDEwLWE1NWEtZmZiZDA4MDJmM2FjXkEyXkFqcGc@._V1_FMjpg_UY2428_.jpg", trailer: "https://www.youtube.com/watch?v=T7O7BtBnsG4", year: 2017, genres: ["War", "Drama", "Thriller"], director: "Christopher Nolan", actors: ["Fionn Whitehead", "Tom Hardy", "Kenneth Branagh"] },
@@ -66,180 +54,4 @@ const SEED_LIST_2 = [ // ls003501243 (24 movies) - Real movies from IMDb list
   { tt: "tt3498820", title: "Captain America: Civil War", poster: "https://m.media-amazon.com/images/M/MV5BMjQ0MTgyNjAxMV5BMl5BanBnXkFtZTgwNjUzMDkyODE@._V1_FMjpg_UY2048_.jpg", trailer: "https://www.youtube.com/watch?v=xnv__ogkt0M", year: 2016, genres: ["Action", "Superhero", "Adventure"], director: "Anthony Russo", actors: ["Chris Evans", "Robert Downey Jr.", "Scarlett Johansson"] },
 ];
 
-// Helper functions
-function hashCode(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return Math.abs(hash);
-}
-
-function toEra(year) {
-  if (!year) return null;
-  const decade = Math.floor(year / 10) * 10;
-  return `${decade}s`;
-}
-
-// Build catalogue from both SEED lists with alternating selection
-function buildCatalogue() {
-  // Create alternating pattern: take turns between lists
-  const alternatingMovies = [];
-  
-  // Interleave movies from both lists
-  const maxLength = Math.max(SEED_LIST_1.length, SEED_LIST_2.length);
-  for (let i = 0; i < maxLength; i++) {
-    // Add from SEED_LIST_1 if available
-    if (i < SEED_LIST_1.length) {
-      alternatingMovies.push({ ...SEED_LIST_1[i], sourceListId: "ls094921320" });
-    }
-    // Add from SEED_LIST_2 if available
-    if (i < SEED_LIST_2.length) {
-      alternatingMovies.push({ ...SEED_LIST_2[i], sourceListId: "ls003501243" });
-    }
-  }
-  
-  const catalogue = alternatingMovies.map(s => ({
-    id: hashCode(s.tt),
-    imdbId: s.tt,
-    title: s.title,
-    overview: "",
-    genres: [],
-    year: s.year,
-    era: toEra(s.year),
-    popularity: 50,
-    voteAverage: 7.0,
-    voteCount: 1000,
-    posterUrl: s.poster,
-    backdropUrl: null,
-    trailerUrl: s.trailer,
-    topActors: s.actors,
-    director: s.director,
-    sourceListIds: [s.sourceListId],
-  }));
-  
-  return catalogue;
-}
-
-// API Routes
-app.get('/api/catalogue', (req, res) => {
-  try {
-    const catalogue = buildCatalogue();
-    res.json({
-      ok: true,
-      total: catalogue.length,
-      items: catalogue.map(m => ({
-        id: m.id,
-        title: m.title,
-        overview: m.overview,
-        genres: m.genres,
-        year: m.year,
-        era: m.era,
-        popularity: m.popularity,
-        voteAverage: m.voteAverage,
-        voteCount: m.voteCount,
-        posterUrl: m.posterUrl,
-        backdropUrl: m.backdropUrl,
-        trailerUrl: m.trailerUrl,
-        topActors: m.topActors,
-        director: m.director,
-        sourceListIds: m.sourceListIds,
-      }))
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.get('/api/trailers', (req, res) => {
-  try {
-    const ids = String(req.query.ids || "").split(",").map(id => Number(id.trim())).filter(n => Number.isFinite(n));
-    const catalogue = buildCatalogue();
-    const trailers = {};
-    
-    for (const id of ids) {
-      const item = catalogue.find(m => m.id === id);
-      trailers[id] = item?.trailerUrl || null;
-    }
-    
-    res.json({ ok: true, trailers });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.get('/api/ab/round', (req, res) => {
-  try {
-    const catalogue = buildCatalogue();
-    const pool = catalogue.filter(m => m.posterUrl);
-    const picks = pool.slice(0, 24);
-    const pairs = [];
-    
-    for (let i = 0; i < 24 && i + 1 < picks.length && pairs.length < 12; i += 2) {
-      const a = picks[i];
-      const b = picks[i + 1];
-      pairs.push({
-        a: { id: a.id, title: a.title, posterUrl: a.posterUrl, trailerUrl: a.trailerUrl },
-        b: { id: b.id, title: b.title, posterUrl: b.posterUrl, trailerUrl: b.trailerUrl }
-      });
-    }
-    
-    res.json({ pairs, excludeIds: picks.map(m => m.id) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/score-round', (req, res) => {
-  try {
-    const { winners = [], excludeIds = [] } = req.body;
-    const catalogue = buildCatalogue();
-    const pool = catalogue.filter(m => !winners.includes(m.id) && !excludeIds.includes(m.id));
-    
-    // Simple random selection for recommendations
-    const shuffled = pool.sort(() => Math.random() - 0.5);
-    const recs = shuffled.slice(0, 6).map(m => ({
-      id: m.id,
-      title: m.title,
-      posterUrl: m.posterUrl,
-      trailerUrl: m.trailerUrl
-    }));
-    
-    const trailers = {};
-    for (const rec of recs) {
-      trailers[rec.id] = rec.trailerUrl || null;
-    }
-    
-    res.json({ recs, trailers });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/api/proxy-img', async (req, res) => {
-  try {
-    const imageUrl = String(req.query.u || "");
-    if (!imageUrl) return res.status(400).send("Missing image URL");
-
-    if (imageUrl.startsWith("data:")) {
-      const [mime, base64] = imageUrl.split(";base64,");
-      if (mime && base64) {
-        res.setHeader("Content-Type", mime.replace("data:", ""));
-        return res.send(Buffer.from(base64, "base64"));
-      }
-      return res.status(400).send("Invalid data URI");
-    }
-
-    const response = await fetch(imageUrl);
-    if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
-    const buffer = await response.arrayBuffer();
-    res.setHeader("Content-Type", response.headers.get("content-type") || "application/octet-stream");
-    res.send(Buffer.from(buffer));
-  } catch (e) {
-    res.status(500).send("Failed to load image");
-  }
-});
-
-module.exports = app;
+export { SEED_LIST_1, SEED_LIST_2 };

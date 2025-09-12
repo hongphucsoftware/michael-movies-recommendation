@@ -38,6 +38,46 @@ export default function PosterPair() {
     }
   }
 
+  async function newRound() {
+    try {
+      // Call API to switch to next seed
+      const response = await fetch('/api/next-seed', { 
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      // Check if response is ok
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('Non-JSON response:', text);
+        throw new Error('Server returned non-JSON response');
+      }
+      
+      const result = await response.json();
+      
+      if (result.ok) {
+        console.log(`Switched to ${result.seedName}`);
+        // Reload the page to get new movies from the new seed
+        window.location.reload();
+      } else {
+        console.error('Failed to switch seed:', result.error);
+      }
+    } catch (error) {
+      console.error('Error switching seed:', error);
+      // Fallback: just reload the page anyway
+      console.log('Falling back to page reload...');
+      window.location.reload();
+    }
+  }
+
   function hardReset() { 
     resetLearning(); 
     resetAB(); 
@@ -101,9 +141,9 @@ export default function PosterPair() {
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold">Perfect! Your personalised Trailer Reel</h2>
             <button
-              onClick={() => reset()}
+              onClick={newRound}
               className="text-xs rounded-full px-3 py-1 bg-white/10 hover:bg-white/20 transition"
-              title="New round with fresh A/B pairs"
+              title="New round with fresh A/B pairs from next seed list"
             >
               New Round
             </button>

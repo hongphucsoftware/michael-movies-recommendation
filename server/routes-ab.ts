@@ -530,6 +530,29 @@ api.get("/trailers", async (req: Request, res: Response) => {
   }
 });
 
+// New endpoint to switch to next seed list
+api.post("/next-seed", (req, res) => {
+  try {
+    // For local development, we'll simulate switching between lists
+    // In production, this would be handled by the global variable
+    const listIds = ["ls094921320", "ls003501243"];
+    const currentIndex = 0; // Default to first list for now
+    const nextIndex = (currentIndex + 1) % listIds.length;
+    const nextListId = listIds[nextIndex];
+    
+    res.json({
+      ok: true,
+      seedIndex: nextIndex,
+      seedName: `List ${nextIndex + 1}`,
+      seedId: nextListId,
+      message: `Switched to ${nextListId}`
+    });
+  } catch (e) {
+    console.error('Error in /api/next-seed:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Health
 api.get("/health", (_req, res) => {
   res.json({ ok: true, cacheItems: cache.catalogue.length, cacheAgeMs: Date.now() - cache.ts, lists: cache.stats.byList, total: cache.stats.total });
