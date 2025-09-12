@@ -28,8 +28,47 @@ type CatalogueResponse = {
 // ---- Feature vector utils (10 genre buckets + era + popularity) ----
 const GENRE_BUCKETS = [28,12,16,35,80,18,14,27,9648,878];
 
+// Map genre names to TMDb genre IDs for SEED data
+const GENRE_NAME_TO_ID: Record<string, number> = {
+  "Action": 28,
+  "Adventure": 12,
+  "Animation": 16,
+  "Comedy": 35,
+  "Crime": 80,
+  "Documentary": 99,
+  "Drama": 18,
+  "Family": 10751,
+  "Fantasy": 14,
+  "History": 36,
+  "Horror": 27,
+  "Music": 10402,
+  "Mystery": 9648,
+  "Romance": 10749,
+  "Sci-Fi": 878,
+  "Thriller": 53,
+  "War": 10752,
+  "Western": 37,
+  "Biography": 18, // Map to Drama
+  "Dystopian": 878, // Map to Sci-Fi
+  "Black Comedy": 35, // Map to Comedy
+  "Comedy-Drama": 35, // Map to Comedy
+  "Dark Comedy": 35, // Map to Comedy
+  "Psychological": 18, // Map to Drama
+  "Survival": 18, // Map to Drama
+  "Spy": 28, // Map to Action
+  "Sports": 18, // Map to Drama
+};
+
 export function toFeatureVector(t: Title): number[] {
-  const g = GENRE_BUCKETS.map((gid) => (t.genres || []).includes(gid) ? 1 : 0);
+  // Handle both numeric IDs and string genre names
+  const genreIds = (t.genres || []).map(g => {
+    if (typeof g === 'string') {
+      return GENRE_NAME_TO_ID[g] || 18; // Default to Drama if not found
+    }
+    return g;
+  });
+  
+  const g = GENRE_BUCKETS.map((gid) => genreIds.includes(gid) ? 1 : 0);
   const era = t.releaseDate && Number(t.releaseDate.slice(0,4)) >= 2020 ? 1 : 0;
   const pop = Math.max(0, Math.min(1, (t.popularity || 0) / 100));
   return [...g, era, pop];

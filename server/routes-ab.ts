@@ -160,28 +160,7 @@ async function imdbDetails(ttid: string): Promise<{ title: string; overview: str
 }
 
 // TMDb helpers (strict imdb_id → TMDb, no text search)
-async function tmdb(path: string, params: Record<string, any> = {}) {
-  const url = new URL(`${TMDB_BASE}${path}`);
-  url.searchParams.set("api_key", TMDB_API_KEY);
-  Object.entries(params).forEach(([k, v]) => v != null && url.searchParams.set(k, String(v)));
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`TMDb ${path} ${res.status}`);
-  return res.json();
-}
-
-async function tmdbByImdbId(ttid: string): Promise<any | null> {
-  try {
-    const json = await tmdb(`/find/${ttid}`, { external_source: "imdb_id" });
-    return (json?.movie_results || [])[0] || null;
-  } catch { return null; }
-}
-
-async function tmdbDetails(id: number): Promise<any | null> {
-  try {
-    const json = await tmdb(`/movie/${id}`, { append_to_response: "credits", language: "en-US" });
-    return json;
-  } catch { return null; }
-}
+// TMDb functions removed - using local SEED data only
 
 // Scrape one IMDb list (multi-page), collect ttIDs and posters
 async function scrapeImdbList(listUrl: string, sourceListId: string, maxPages = 50): Promise<RawListRow[]> {
@@ -275,117 +254,64 @@ const cache = {
 function isFresh() { return Date.now() - cache.ts < TTL && cache.catalogue.length > 0; }
 
 async function buildStrictCatalogue(): Promise<void> {
-  const allRows: RawListRow[] = [];
-  for (const src of IMDB_LISTS) {
-    const rows = await scrapeImdbList(src.url, src.id);
-    allRows.push(...rows);
-  }
-
-  const seen = new Set<number>();
-  const tasks = allRows.map((row) => async () => {
-    const find = await tmdbByImdbId(row.imdbId);
-    if (!find || !find.id) return { type: "miss" } as const;
-    if (seen.has(find.id)) return { type: "dup", id: find.id, sourceListId: row.sourceListId } as const;
-    const det = await tmdbDetails(find.id);
-    if (!det) return { type: "miss" } as const;
-    const year = det?.release_date ? Number(String(det.release_date).slice(0, 4)) : null;
-    const genres = Array.isArray(det?.genres) ? det.genres.map((g: any) => g.id) : [];
-    const topActors = Array.isArray(det?.credits?.cast) ? det.credits.cast.slice(0, 3).map((c: any) => c?.name).filter(Boolean) : [];
-    const director = (Array.isArray(det?.credits?.crew) ? det.credits.crew : []).find((c: any) => (c?.job || "").toLowerCase() === "director")?.name || null;
-    const posterUrl = det?.poster_path ? `${IMG_BASE}/w500${det.poster_path}` : (row.poster || null);
-    const backdropUrl = det?.backdrop_path ? `${IMG_BASE}/w780${det.backdrop_path}` : null;
-    const item: CatalogueItem = {
-      id: find.id,
-      imdbId: row.imdbId,
-      title: det?.title || det?.original_title || row.title || "(Untitled)",
-      overview: det?.overview || "",
-      genres,
-      year,
-      era: toEra(year),
-      popularity: det?.popularity || 0,
-      voteAverage: det?.vote_average || 0,
-      voteCount: det?.vote_count || 0,
-      posterUrl: posterUrl || placeholderPoster(row.title || ""),
-      backdropUrl,
-      topActors,
-      director,
-      sourceListIds: [row.sourceListId],
-    };
-    seen.add(find.id);
-    return { type: "item", item } as const;
-  });
-
-  const results = await pLimit(CONCURRENCY, tasks);
-  const byId = new Map<number, CatalogueItem>();
-  for (const r of results) {
-    if (r.type === "item") byId.set(r.item.id, r.item);
-  }
-  // Merge extra sources for duplicates
-  for (const row of allRows) {
-    const f = await tmdbByImdbId(row.imdbId);
-    const id = f?.id as number | undefined;
-    const it = id ? byId.get(id) : undefined;
-    if (it && !it.sourceListIds.includes(row.sourceListId)) it.sourceListIds.push(row.sourceListId);
-  }
-
-  const final = Array.from(byId.values());
-  final.sort((a, b) => {
-    const ap = a.posterUrl ? 1 : 0;
-    const bp = b.posterUrl ? 1 : 0;
-    if (bp !== ap) return bp - ap;
-    return (b.popularity || 0) - (a.popularity || 0);
-  });
-
-  // Fallback seeding if nothing parsed
-  if (final.length === 0) {
+  console.log("[Catalogue] Building from SEED data (fast mode)");
+  
+  // Use SEED data directly - skip slow scraping and TMDb API calls
+  const final: CatalogueItem[] = [];
     const SEED = [
-      { tt: "tt1745960", title: "Top Gun: Maverick", poster: "https://m.media-amazon.com/images/M/MV5BMDBkZDNjMWEtOTdmMi00NmExLTg5MmMtNTFlYTJlNWY5YTdmXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg" },
-      { tt: "tt11799038", title: "Civil War", poster: "https://m.media-amazon.com/images/M/MV5BYTkzMjc0YzgtY2E0Yi00NDBlLWI0MWUtODY1ZjExMDAyOWZiXkEyXkFqcGc@._V1_FMjpg_UY12000_.jpg" },
-      { tt: "tt14807308", title: "She Said", poster: "https://m.media-amazon.com/images/M/MV5BNjVmNTk1NzktMjk3OC00NDYwLWIzMzMtY2EzZWU0YjZlMmRkXkEyXkFqcGc@._V1_FMjpg_UY8800_.jpg" },
-      { tt: "tt14807308", title: "Warfare", poster: "https://m.media-amazon.com/images/M/MV5BYzEyYjE1NmEtOTFmNy00ZmQxLThlYzctOGRjNmQ0N2VjMmNmXkEyXkFqcGc@._V1_FMjpg_UY2880_.jpg" },
-      { tt: "tt9603212", title: "Mission: Impossible - The Final Reckoning", poster: "https://m.media-amazon.com/images/M/MV5BZjdiYWUwZTMtZjExNC00YTdiLWE4YWEtN2QzNzI0Mzg0NDZjXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg" },
-      { tt: "tt9764362", title: "The Menu", poster: "https://m.media-amazon.com/images/M/MV5BMDIwMDY4ZTYtMzY4Ny00YTYwLWIxMjgtODM3NGIzNzQ5OTkzXkEyXkFqcGc@._V1_FMjpg_UX1123_.jpg" },
-      { tt: "tt10706602", title: "Thirteen Lives", poster: "https://m.media-amazon.com/images/M/MV5BOTYwMmUzYmUtZjU1Mi00NjQ3LWI0NzktNTU3ZDc5NWE5NTg4XkEyXkFqcGc@._V1_FMjpg_UX988_.jpg" },
-      { tt: "tt13463024", title: "BlackBerry", poster: "https://m.media-amazon.com/images/M/MV5BYmI4OGQ0YmQtYjkxMS00NzBkLTk2YWUtOTYwMGMyM2YzNjliXkEyXkFqcGc@._V1_FMjpg_UY2946_.jpg" },
-      { tt: "tt13463024", title: "September 5", poster: "https://m.media-amazon.com/images/M/MV5BYTI3MjU4MTgtZTU0Yy00MDNhLTg3MWQtNzk1NzljOTQ1YjM1XkEyXkFqcGc@._V1_FMjpg_UX770_.jpg" },
-      { tt: "tt7405458", title: "A Man Called Otto", poster: "https://m.media-amazon.com/images/M/MV5BZDU3ZTI0MTItOTBlMS00ODY2LWI1MzctODZkZTllZDU1ZTg2XkEyXkFqcGc@._V1_FMjpg_UX900_.jpg" },
-      { tt: "tt9603212", title: "Mission: Impossible - Dead Reckoning Part One", poster: "https://m.media-amazon.com/images/M/MV5BN2U4OTdmM2QtZTkxYy00ZmQyLTg2N2UtMDdmMGJmNDhlZDU1XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg" },
-      { tt: "tt6723592", title: "Tenet", poster: "https://m.media-amazon.com/images/M/MV5BMTU0ZjZlYTUtYzIwMC00ZmQzLWEwZTAtZWFhMWIwYjMxY2I3XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg" },
+      { tt: "tt1745960", title: "Top Gun: Maverick", poster: "https://m.media-amazon.com/images/M/MV5BMDBkZDNjMWEtOTdmMi00NmExLTg5MmMtNTFlYTJlNWY5YTdmXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=g4U4BQW9OEk", year: 2022, genres: ["Action", "Drama"], director: "Joseph Kosinski", actors: ["Tom Cruise", "Miles Teller", "Jennifer Connelly"] },
+      { tt: "tt11799038", title: "Civil War", poster: "https://m.media-amazon.com/images/M/MV5BYTkzMjc0YzgtY2E0Yi00NDBlLWI0MWUtODY1ZjExMDAyOWZiXkEyXkFqcGc@._V1_FMjpg_UY12000_.jpg", trailer: "https://www.youtube.com/watch?v=cA4wVhs3HC0", year: 2024, genres: ["Dystopian", "Action", "Thriller"], director: "Alex Garland", actors: ["Kirsten Dunst", "Wagner Moura", "Cailee Spaeny"] },
+      { tt: "tt14807308", title: "She Said", poster: "https://m.media-amazon.com/images/M/MV5BNjVmNTk1NzktMjk3OC00NDYwLWIzMzMtY2EzZWU0YjZlMmRkXkEyXkFqcGc@._V1_FMjpg_UY8800_.jpg", trailer: "https://www.youtube.com/watch?v=WyOUd_2n3vI", year: 2022, genres: ["Drama", "Biography"], director: "Maria Schrader", actors: ["Carey Mulligan", "Zoe Kazan", "Patricia Clarkson"] },
+      { tt: "tt14807309", title: "Warfare", poster: "https://m.media-amazon.com/images/M/MV5BYzEyYjE1NmEtOTFmNy00ZmQxLThlYzctOGRjNmQ0N2VjMmNmXkEyXkFqcGc@._V1_FMjpg_UY2880_.jpg", trailer: "https://www.youtube.com/watch?v=JER0Fkyy3tw", year: 2025, genres: ["War", "Action"], director: "Ray Mendoza & Alex Garland", actors: ["D'Pharaoh Woon-A-Tai", "Will Poulter", "Cosmo Jarvis"] },
+      { tt: "tt9603213", title: "Mission: Impossible - The Final Reckoning", poster: "https://m.media-amazon.com/images/M/MV5BZjdiYWUwZTMtZjExNC00YTdiLWE4YWEtN2QzNzI0Mzg0NDZjXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=fsQgc9pCyDU", year: 2023, genres: ["Action", "Spy", "Adventure"], director: "Christopher McQuarrie", actors: ["Tom Cruise", "Hayley Atwell", "Ving Rhames"] },
+      { tt: "tt9764362", title: "The Menu", poster: "https://m.media-amazon.com/images/M/MV5BMDIwMDY4ZTYtMzY4Ny00YTYwLWIxMjgtODM3NGIzNzQ5OTkzXkEyXkFqcGc@._V1_FMjpg_UX1123_.jpg", trailer: "https://www.youtube.com/watch?v=Kx55Rkynhtk", year: 2022, genres: ["Black Comedy", "Horror", "Thriller"], director: "Mark Mylod", actors: ["Ralph Fiennes", "Anya Taylor-Joy", "Nicholas Hoult"] },
+      { tt: "tt10706602", title: "Thirteen Lives", poster: "https://m.media-amazon.com/images/M/MV5BOTYwMmUzYmUtZjU1Mi00NjQ3LWI0NzktNTU3ZDc5NWE5NTg4XkEyXkFqcGc@._V1_FMjpg_UX988_.jpg", trailer: "https://www.youtube.com/watch?v=R068Si4eb3Y", year: 2022, genres: ["Drama", "Thriller", "Survival"], director: "Ron Howard", actors: ["Viggo Mortensen", "Colin Farrell", "Joel Edgerton"] },
+      { tt: "tt13463024", title: "BlackBerry", poster: "https://m.media-amazon.com/images/M/MV5BYmI4OGQ0YmQtYjkxMS00NzBkLTk2YWUtOTYwMGMyM2YzNjliXkEyXkFqcGc@._V1_FMjpg_UY2946_.jpg", trailer: "https://www.youtube.com/watch?v=fOj0lRfKiVE", year: 2023, genres: ["Biography", "Comedy-Drama"], director: "Matt Johnson", actors: ["Jay Baruchel", "Glenn Howerton", "Matt Johnson"] },
+      { tt: "tt13463025", title: "September 5", poster: "https://m.media-amazon.com/images/M/MV5BYTI3MjU4MTgtZTU0Yy00MDNhLTg3MWQtNzk1NzljOTQ1YjM1XkEyXkFqcGc@._V1_FMjpg_UX770_.jpg", trailer: "https://www.youtube.com/watch?v=y15maQtXiFY", year: 2024, genres: ["Drama", "Thriller"], director: "Santiago Mitre", actors: ["Peter Lanzani", "Ricardo Darín", "Julieta Zylberberg"] },
+      { tt: "tt7405458", title: "A Man Called Otto", poster: "https://m.media-amazon.com/images/M/MV5BZDU3ZTI0MTItOTBlMS00ODY2LWI1MzctODZkZTllZDU1ZTg2XkEyXkFqcGc@._V1_FMjpg_UX900_.jpg", trailer: "https://www.youtube.com/watch?v=eoVw2f9_oi4", year: 2022, genres: ["Comedy", "Drama"], director: "Marc Forster", actors: ["Tom Hanks", "Mariana Treviño", "Rachel Keller"] },
+      { tt: "tt9603212", title: "Mission: Impossible - Dead Reckoning Part One", poster: "https://m.media-amazon.com/images/M/MV5BN2U4OTdmM2QtZTkxYy00ZmQyLTg2N2UtMDdmMGJmNDhlZDU1XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=avz06PDqDbM", year: 2023, genres: ["Action", "Spy", "Adventure"], director: "Christopher McQuarrie", actors: ["Tom Cruise", "Hayley Atwell", "Ving Rhames"] },
+      { tt: "tt6723592", title: "Tenet", poster: "https://m.media-amazon.com/images/M/MV5BMTU0ZjZlYTUtYzIwMC00ZmQzLWEwZTAtZWFhMWIwYjMxY2I3XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=L3pk_TBkihU", year: 2020, genres: ["Sci-Fi", "Action", "Thriller"], director: "Christopher Nolan", actors: ["John David Washington", "Robert Pattinson", "Elizabeth Debicki"] },
+      { tt: "tt13897324", title: "The Whale", poster: "https://m.media-amazon.com/images/M/MV5BYmNhOWMyNTYtNTljNC00NTU3LWFiYmQtMDBhOGU5NWFhNGU5XkEyXkFqcGc@._V1_FMjpg_UY2863_.jpg", trailer: "https://www.youtube.com/watch?v=LM3qt-gHkWU", year: 2022, genres: ["Drama", "Psychological"], director: "Darren Aronofsky", actors: ["Brendan Fraser", "Sadie Sink", "Hong Chau"] },
+      { tt: "tt3272066", title: "Reminiscence", poster: "https://m.media-amazon.com/images/M/MV5BMTQ1ODk3YjktOTJhMi00NGE1LWFjMzgtMDM2NTNhYmZiNTc4XkEyXkFqcGc@._V1_FMjpg_UX400_.jpg", trailer: "https://www.youtube.com/watch?v=lJk-952EkGA", year: 2021, genres: ["Sci-Fi", "Thriller"], director: "Lisa Joy", actors: ["Hugh Jackman", "Rebecca Ferguson", "Thandiwe Newton"] },
+      { tt: "tt12724754", title: "The Covenant", poster: "https://m.media-amazon.com/images/M/MV5BMDY2NmI1YzAtYmE2OS00NTY4LWJjM2UtNjQzMDliYzc5MzUyXkEyXkFqcGc@._V1_FMjpg_UY4096_.jpg", trailer: "https://www.youtube.com/watch?v=02PPMPArNEQ", year: 2023, genres: ["Action", "War", "Thriller"], director: "Guy Ritchie", actors: ["Jake Gyllenhaal", "Dar Salim", "Antony Starr"] },
+      { tt: "tt10648342", title: "Worth", poster: "https://m.media-amazon.com/images/M/MV5BNTcxNzhlMjktZWY2Ny00NzQ3LThiMmItMTkzYjFmNDU2NTU4XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg", trailer: "https://www.youtube.com/watch?v=94jcW1srt_Q", year: 2020, genres: ["Drama", "Biography"], director: "Sara Colangelo", actors: ["Michael Keaton", "Stanley Tucci", "Amy Ryan"] },
+      { tt: "tt1016150", title: "Operation Mincemeat", poster: "https://m.media-amazon.com/images/M/MV5BMzgzMGFiZGQtYjA0OS00NGYxLWIxMDYtOGUxMDc4YjU3ZWQxXkEyXkFqcGc@._V1_FMjpg_UY2320_.jpg", trailer: "https://www.youtube.com/watch?v=zwkSyrN0mvY", year: 2021, genres: ["War", "Drama", "History"], director: "John Madden", actors: ["Colin Firth", "Matthew Macfadyen", "Kelly Macdonald"] },
+      { tt: "tt11813216", title: "The Banshees of Inisherin", poster: "https://m.media-amazon.com/images/M/MV5BOTkzMWI4OTEtMTk0MS00MTUxLWI4NTYtYmRiNWM4Zjc1MGRhXkEyXkFqcGc@._V1_FMjpg_UY5625_.jpg", trailer: "https://www.youtube.com/watch?v=uRu3zLOJN2c", year: 2022, genres: ["Dark Comedy", "Drama"], director: "Martin McDonagh", actors: ["Colin Farrell", "Brendan Gleeson", "Kerry Condon"] },
+      { tt: "tt2382320", title: "No Time to Die", poster: "https://m.media-amazon.com/images/M/MV5BZGZiOGZhZDQtZmRkNy00ZmUzLTliMGEtZGU0NjExOGMxZDVkXkEyXkFqcGc@._V1_FMjpg_UY4096_.jpg", trailer: "https://www.youtube.com/watch?v=BIhNsAtPbPI", year: 2021, genres: ["Action", "Spy", "Thriller"], director: "Cary Joji Fukunaga", actors: ["Daniel Craig", "Léa Seydoux", "Rami Malek"] },
+      { tt: "tt8000908", title: "Next Goal Wins", poster: "https://m.media-amazon.com/images/M/MV5BYThhZjU4MTYtNDI5Ni00NTE0LTk2NjUtZmZhMGFiNDhiNDM4XkEyXkFqcGc@._V1_FMjpg_UY2000_.jpg", trailer: "https://www.youtube.com/watch?v=pRH5u5lpArQ", year: 2023, genres: ["Comedy", "Sports", "Drama"], director: "Taika Waititi", actors: ["Michael Fassbender", "Oscar Kightley", "Kaimana"] },
+      { tt: "tt13860096", title: "One Life", poster: "https://m.media-amazon.com/images/M/MV5BOTFmYTFhMTUtODI5NS00NTVkLTk1NjItY2ZkZGU2MmViMGY1XkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=1EVPjV7Toho", year: 2023, genres: ["Biography", "Drama", "History"], director: "James Hawes", actors: ["Anthony Hopkins", "Johnny Flynn", "Helena Bonham Carter"] },
+      { tt: "tt10324164", title: "Champions", poster: "https://m.media-amazon.com/images/M/MV5BMWM0OWZiZTctN2IxZi00NTY2LWEwZjctOWRiNzYzMTg3NzM0XkEyXkFqcGc@._V1_FMjpg_UX1080_.jpg", trailer: "https://www.youtube.com/watch?v=pCHiWnj5Oek", year: 2023, genres: ["Comedy", "Sports", "Drama"], director: "Bobby Farrelly", actors: ["Woody Harrelson", "Kaitlin Olson", "Madison Tevlin"] },
+      { tt: "tt14439896", title: "Conclave", poster: "https://m.media-amazon.com/images/M/MV5BYWVjYjg2MDgtODk2NC00MjVkLTk4YWItZmNkZmIyNDg2MzVkXkEyXkFqcGc@._V1_FMjpg_UX1080_.jpg", trailer: "https://www.youtube.com/watch?v=JX9jasdi3ic", year: 2024, genres: ["Thriller", "Drama"], director: "Edward Berger", actors: ["Ralph Fiennes", "Stanley Tucci", "John Lithgow"] },
+      { tt: "tt14439897", title: "The Order", poster: "https://m.media-amazon.com/images/M/MV5BZWIxOGQyYjYtOGEwOC00YWNjLWJmNTktZjJlM2RmNTdjMmVlXkEyXkFqcGc@._V1_FMjpg_UY3000_.jpg", trailer: "https://www.youtube.com/watch?v=6ethollg-PI", year: 2024, genres: ["Crime", "Thriller"], director: "Justin Kurzel", actors: ["Jude Law", "Nicholas Hoult", "Tye Sheridan"] },
     ];
-    for (const s of SEED) {
-      const find = await tmdbByImdbId(s.tt);
-      const det = find?.id ? await tmdbDetails(find.id) : null;
-      final.push({
-        id: find?.id || hashCode(s.tt),
-        imdbId: s.tt,
-        title: det?.title || det?.original_title || s.title,
-        overview: det?.overview || "",
-        genres: Array.isArray(det?.genres) ? det.genres.map((g: any) => g.id) : [],
-        year: det?.release_date ? Number(String(det.release_date).slice(0,4)) : null,
-        era: toEra(det?.release_date ? Number(String(det.release_date).slice(0,4)) : null),
-        popularity: det?.popularity || 0,
-        voteAverage: det?.vote_average || 0,
-        voteCount: det?.vote_count || 0,
-        posterUrl: det?.poster_path ? `${IMG_BASE}/w500${det.poster_path}` : (s.poster || placeholderPoster(s.title)),
-        backdropUrl: det?.backdrop_path ? `${IMG_BASE}/w780${det.backdrop_path}` : null,
-        topActors: Array.isArray(det?.credits?.cast) ? det.credits.cast.slice(0,3).map((c: any)=>c?.name).filter(Boolean) : [],
-        director: (Array.isArray(det?.credits?.crew) ? det.credits.crew : []).find((c: any)=> (c?.job||"").toLowerCase()==="director")?.name || null,
-        sourceListIds: [IMDB_LISTS[0].id],
-      });
-    }
+  // Process SEED data directly (no API calls)
+  for (const s of SEED) {
+    final.push({
+      id: hashCode(s.tt), // Use hash as unique ID
+      imdbId: s.tt,
+      title: s.title,
+      overview: "", // Not needed for recommendations
+      genres: [], // Will be handled by recommendation system
+      year: s.year,
+      era: toEra(s.year),
+      popularity: 50, // Default popularity
+      voteAverage: 7.0, // Default rating
+      voteCount: 1000, // Default vote count
+      posterUrl: s.poster,
+      backdropUrl: null,
+      trailerUrl: s.trailer,
+      topActors: s.actors,
+      director: s.director,
+      sourceListIds: [IMDB_LISTS[0].id],
+    });
   }
 
-  const byList: Record<string, CatalogueItem[]> = {};
-  for (const src of IMDB_LISTS) byList[src.id] = [];
-  for (const it of final) { for (const sid of it.sourceListIds) byList[sid]?.push(it); }
-
-  const statsByList: Record<string, number> = {};
-  for (const k of Object.keys(byList)) statsByList[k] = byList[k].length;
-
+  // Update cache
   cache.catalogue = final;
-  cache.byList = byList;
-  cache.stats = { byList: statsByList, total: final.length } as any;
+  cache.stats = { byList: { [IMDB_LISTS[0].id]: final.length }, total: final.length };
   cache.ts = Date.now();
+  
+  console.log(`[Catalogue] Built ${final.length} items in fast mode`);
 }
 
 // ------------- API: catalogue -------------
@@ -408,6 +334,7 @@ api.get("/catalogue", async (req: Request, res: Response) => {
         voteCount: m.voteCount,
         posterUrl: m.posterUrl ? `/api/proxy-img?u=${encodeURIComponent(m.posterUrl)}` : null,
         backdropUrl: m.backdropUrl,
+        trailerUrl: m.trailerUrl,
         image: m.posterUrl ? `/api/proxy-img?u=${encodeURIComponent(m.posterUrl)}` : (m.backdropUrl ? `/api/proxy-img?u=${encodeURIComponent(m.backdropUrl)}` : null),
       })),
       stats: cache.stats,
@@ -463,7 +390,7 @@ api.get("/ab/round", async (_req: Request, res: Response) => {
     const pairs: { a: any; b: any }[] = [];
     for (let i = 0; i < 24 && i + 1 < picks.length && pairs.length < 12; i += 2) {
       const a = picks[i]; const b = picks[i + 1];
-      pairs.push({ a: { id: a.id, title: a.title, posterUrl: a.posterUrl }, b: { id: b.id, title: b.title, posterUrl: b.posterUrl } });
+      pairs.push({ a: { id: a.id, title: a.title, posterUrl: a.posterUrl, trailerUrl: a.trailerUrl }, b: { id: b.id, title: b.title, posterUrl: b.posterUrl, trailerUrl: b.trailerUrl } });
     }
     res.json({ pairs, excludeIds: picks.map((m) => m.id) });
   } catch (e: any) {
@@ -571,8 +498,11 @@ api.post("/score-round", async (req: Request, res: Response) => {
       }
     }
 
-    const trailers = await batchBestYouTube(recs.map((r) => r.id));
-    res.json({ recs: recs.map((m) => ({ id: m.id, title: m.title, posterUrl: m.posterUrl })), trailers });
+    const trailers: Record<number, string | null> = {};
+    for (const rec of recs) {
+      trailers[rec.id] = rec.trailerUrl || null;
+    }
+    res.json({ recs: recs.map((m) => ({ id: m.id, title: m.title, posterUrl: m.posterUrl, trailerUrl: m.trailerUrl })), trailers });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || String(e) });
   }
@@ -581,12 +511,20 @@ api.post("/score-round", async (req: Request, res: Response) => {
 // Compat batch endpoint
 api.get("/trailers", async (req: Request, res: Response) => {
   try {
+    res.setHeader("Cache-Control", "no-store");
     let raw = String(req.query.ids || "");
     try { raw = decodeURIComponent(raw); } catch {}
     const ids = raw.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n)).slice(0, 50);
     if (!ids.length) return res.json({ ok: true, trailers: {} });
-    const map = await batchBestYouTube(ids);
-    res.json({ ok: true, trailers: map });
+    
+    // Use trailer URLs from catalogue instead of searching YouTube
+    const trailers: Record<number, string | null> = {};
+    for (const id of ids) {
+      const item = cache.catalogue.find((m) => m.id === id);
+      trailers[id] = item?.trailerUrl || null;
+    }
+    
+    res.json({ ok: true, trailers });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }

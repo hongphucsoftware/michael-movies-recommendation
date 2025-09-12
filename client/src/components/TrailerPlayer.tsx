@@ -95,6 +95,16 @@ const jitterById = (id: number) => {
   return (x - Math.floor(x)) * 0.01;
 };
 
+// Simple shuffle function for fallback
+function shuffle<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 // Weighted sample without replacement using softmax
 function softmaxSample<T>(items: T[], getScore: (t: T)=>number, k: number, temperature = 0.65): T[] {
   const pool = items.slice();
@@ -117,6 +127,13 @@ function softmaxSample<T>(items: T[], getScore: (t: T)=>number, k: number, tempe
    Server call for trailer embeds
    ========================= */
 
+function toYouTubeEmbed(u: string) {
+  if (!/youtube\.com|youtu\.be/.test(u)) return u;
+  const m = u.match(/v=([^&]+)/);
+  const id = m ? m[1] : u.split("/").pop();
+  return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
+}
+
 async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|null>> {
   if (!ids.length) return {};
   // Keep commas unencoded; server also tolerates encoded commas.
@@ -124,7 +141,10 @@ async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|
   if (!r.ok) return {};
   const j = await r.json();
   const out: Record<number, string|null> = {};
-  Object.keys(j?.trailers || {}).forEach(k => (out[Number(k)] = j.trailers[k]));
+  Object.keys(j?.trailers || {}).forEach(k => {
+    const url = j.trailers[k];
+    out[Number(k)] = url ? toYouTubeEmbed(url) : null;
+  });
   return out;
 }
 
@@ -170,6 +190,158 @@ function buildUserProfile(items: Title[], chosenIds: number[]): UserProfile {
 }
 
 /* =========================
+   Stateless Recommendation Engine
+   ========================= */
+
+function computeStatelessRecommendations(
+  pool: Title[], 
+  recentChosenIds: number[], 
+  count: number,
+  avoidIds: number[] = []
+): Title[] {
+  console.log(`[StatelessReco] Computing recommendations from ${pool.length} candidates`);
+  
+  if (pool.length <= count) {
+    console.log("[StatelessReco] Pool too small, returning all");
+    return shuffle(pool);
+  }
+
+  // Get user's chosen movies (A/B winners)
+  const chosenMovies = pool.filter(t => recentChosenIds.includes(t.id));
+  console.log(`[StatelessReco] User chose ${chosenMovies.length} movies`);
+  
+  if (chosenMovies.length === 0) {
+    console.log("[StatelessReco] No chosen movies, returning random");
+    return shuffle(pool).slice(0, count);
+  }
+
+  // Compute similarity scores for each candidate
+  const scored = pool.map(candidate => {
+    let totalScore = 0;
+    let matchCount = 0;
+
+    // Compare against each chosen movie
+    for (const chosen of chosenMovies) {
+      let similarity = 0;
+
+      // 1. Genre similarity (weighted Jaccard)
+      const candidateGenres = new Set(candidate.genres || []);
+      const chosenGenres = new Set(chosen.genres || []);
+      if (candidateGenres.size > 0 && chosenGenres.size > 0) {
+        const intersection = new Set([...candidateGenres].filter(g => chosenGenres.has(g)));
+        const union = new Set([...candidateGenres, ...chosenGenres]);
+        similarity += (intersection.size / union.size) * 0.4; // 40% weight
+      }
+
+      // 2. Actor similarity (Top-3 actors)
+      const candidateActors = new Set((candidate.topActors || []).map(a => a.toLowerCase()));
+      const chosenActors = new Set((chosen.topActors || []).map(a => a.toLowerCase()));
+      if (candidateActors.size > 0 && chosenActors.size > 0) {
+        const actorIntersection = new Set([...candidateActors].filter(a => chosenActors.has(a)));
+        const actorUnion = new Set([...candidateActors, ...chosenActors]);
+        similarity += (actorIntersection.size / actorUnion.size) * 0.3; // 30% weight
+      }
+
+      // 3. Director similarity
+      if (candidate.director && chosen.director) {
+        if (candidate.director.toLowerCase() === chosen.director.toLowerCase()) {
+          similarity += 0.2; // 20% weight
+        }
+      }
+
+      // 4. Era similarity (decade-based)
+      if (candidate.era && chosen.era) {
+        if (candidate.era === chosen.era) {
+          similarity += 0.1; // 10% weight
+        }
+      }
+
+      totalScore += similarity;
+      if (similarity > 0) matchCount++;
+    }
+
+    // Average similarity across chosen movies
+    const avgSimilarity = chosenMovies.length > 0 ? totalScore / chosenMovies.length : 0;
+    
+    // Small popularity prior (boost popular movies slightly)
+    const popularityBoost = Math.log(1 + (candidate.popularity || 0)) * 0.05;
+    
+    // Prefer movies that weren't shown in A/B rounds (small bonus)
+    const avoidPenalty = avoidIds.includes(candidate.id) ? -0.1 : 0;
+    
+    return {
+      movie: candidate,
+      score: avgSimilarity + popularityBoost + avoidPenalty,
+      similarity: avgSimilarity,
+      popularityBoost,
+      avoidPenalty
+    };
+  });
+
+  // Sort by score (highest first)
+  scored.sort((a, b) => b.score - a.score);
+
+  // Apply diversity guards
+  const selected: Title[] = [];
+  const genreCounts = new Map<number, number>();
+  const directorCounts = new Map<string, number>();
+
+  for (const { movie } of scored) {
+    // Get top genre (most common genre in chosen movies)
+    const topGenre = (() => {
+      const genreFreq = new Map<number, number>();
+      for (const chosen of chosenMovies) {
+        for (const genre of chosen.genres || []) {
+          genreFreq.set(genre, (genreFreq.get(genre) || 0) + 1);
+        }
+      }
+      let maxFreq = 0;
+      let topG = null;
+      for (const [genre, freq] of genreFreq) {
+        if (freq > maxFreq) {
+          maxFreq = freq;
+          topG = genre;
+        }
+      }
+      return topG;
+    })();
+
+    const movieTopGenre = movie.genres?.includes(topGenre) ? topGenre : null;
+    const director = movie.director;
+
+    // Diversity guards: ≤2 same top genre, ≤1 same director
+    const genreLimit = movieTopGenre ? (genreCounts.get(movieTopGenre) || 0) < 2 : true;
+    const directorLimit = director ? (directorCounts.get(director) || 0) < 1 : true;
+
+    if (genreLimit && directorLimit) {
+      selected.push(movie);
+      
+      // Update counts
+      if (movieTopGenre) {
+        genreCounts.set(movieTopGenre, (genreCounts.get(movieTopGenre) || 0) + 1);
+      }
+      if (director) {
+        directorCounts.set(director, (directorCounts.get(director) || 0) + 1);
+      }
+
+      if (selected.length >= count) break;
+    }
+  }
+
+  // If we don't have enough diverse results, fill with remaining high-scored movies
+  if (selected.length < count) {
+    const remaining = scored
+      .map(s => s.movie)
+      .filter(m => !selected.includes(m))
+      .slice(0, count - selected.length);
+    selected.push(...remaining);
+  }
+
+  console.log(`[StatelessReco] Selected ${selected.length} recommendations`);
+  return selected;
+}
+
+/* =========================
    TrailerPlayer component
    ========================= */
 
@@ -195,65 +367,18 @@ export default function TrailerPlayer({
     [items, JSON.stringify(recentChosenIds)]
   );
 
-  // ------- Build 5 correlated picks from full catalogue -------
+  // ------- Build recommendations using stateless similarity -------
   const picks = useMemo(() => {
-    // Unique pool (image present) & avoid repeats
-    const avoid = new Set<number>(avoidIds);
+    // Get all movies with images (don't exclude A/B items since we only have 24 total)
     const byId = new Map<number, Title>();
     for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
-    const pool0 = Array.from(byId.values()).filter(t => !avoid.has(t.id));
-
-    // Build profile and choose final preference vector
-    const profile = buildUserProfile(pool0, recentChosenIds);
-    let u = (learnedVec && l2(learnedVec) > 0.05) ? learnedVec.slice() : profile.vec.slice();
-    const useCosine = l2(u) > 0.05;
-    if (!useCosine) u = []; // fallback to genre-only if no vector learned
-
-    // Scoring components
-    const genreBias = (t: Title) => {
-      const ids = t.genres || []; if (!ids.length) return 0;
-      let s = 0; for (const g of ids) s += profile.genreWeight[g] || 0;
-      return s / ids.length;
-    };
-    const brandKey = (t: Title) =>
-      (t.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ").slice(0, 2).join(" ");
-
-    const scored = pool0.map(t => {
-      const f = t.feature || toFeatureVector(t);
-      const rel = useCosine ? cosine(f, u) : 0;
-      const gb  = genreBias(t);
-      const base = SCORE_WEIGHTS.cosine*rel + SCORE_WEIGHTS.genre*gb + SCORE_WEIGHTS.jitter*jitterById(t.id);
-      
-      // Only penalize popularity if BOTH similarity and genre are weak AND it's very popular
-      const pop = Math.min(1, (t.popularity || 0) / 100);
-      const antiPop = (pop > 0.60 && rel < 0.33 && gb < 0.30) ? -(0.08 * pop) : 0;
-      
-      return { t, s: base + antiPop, rel, gb, antiPop, brand: brandKey(t) };
-    });
-
-    // FILTER by minimum taste and build top slice
-    const eligible = scored.filter(x => (x.rel >= MIN_REL) || ((0.5*x.rel + 0.5*x.gb) >= MIN_COMBO));
-    const topSlice = eligible.sort((a,b)=>b.s-a.s).slice(0, Math.min(TOP_SLICE, eligible.length));
-
-    // Brand diversity cap (no duplicate brands in 5)
-    const filtered: typeof topSlice = [];
-    const brandCount = new Map<string, number>();
-    for (const it of topSlice) {
-      const c = brandCount.get(it.brand) || 0;
-      if (c >= BRAND_CAP_IN_FIVE) continue;
-      brandCount.set(it.brand, c+1);
-      filtered.push(it);
-    }
-
-    // Softmax sample 5 with tighter temperature
-    const sampled = softmaxSample(filtered, x => x.s, count, PICK_TEMPERATURE);
+    const pool = Array.from(byId.values());
     
-    // Store for debug (console)
-    console.debug("[Reco] sampled", sampled.map(x => ({
-      id:x.t.id, title:x.t.title, score:round(x.s), cos:round(x.rel), genre:round(x.gb), antiPop:round(x.antiPop)
-    })));
+    console.log(`[Reco] Pool size: ${pool.length}, Avoid: ${avoidIds.length}, Count: ${count}`);
     
-    return sampled.map(x => x.t);
+    // Use stateless recommendation engine with preference for non-A/B items
+    return computeStatelessRecommendations(pool, recentChosenIds, count, avoidIds);
+
   }, [items, JSON.stringify(recentChosenIds), JSON.stringify(avoidIds), JSON.stringify(learnedVec), count]);
 
   // ⬇️ Debug rows using the same genre weights as the picker
