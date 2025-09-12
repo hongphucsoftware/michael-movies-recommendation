@@ -3,8 +3,8 @@
 // Import full SEED data
 import { SEED_LIST_1, SEED_LIST_2 } from './seed-data.js';
 
-// Global variable to track current seed list
-let currentSeedIndex = 0;
+// Default seed index (can be overridden by query parameter)
+const DEFAULT_SEED_INDEX = 0;
 
 function hashCode(str) {
   let hash = 0;
@@ -16,8 +16,8 @@ function hashCode(str) {
   return Math.abs(hash);
 }
 
-function buildCatalogue() {
-  const currentSeed = currentSeedIndex === 0 ? SEED_LIST_1 : SEED_LIST_2;
+function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
+  const currentSeed = seedIndex === 0 ? SEED_LIST_1 : SEED_LIST_2;
   const movies = currentSeed.map(s => ({
     id: hashCode(s.tt),
     imdbId: s.tt,
@@ -40,13 +40,16 @@ export default (req, res) => {
       return res.status(405).json({ ok: false, error: 'Method not allowed' });
     }
     
-    const { ids } = req.query;
+    const { ids, seedIndex } = req.query;
     if (!ids) {
       return res.status(400).json({ ok: false, error: 'Missing ids parameter' });
     }
     
+    // Get seed index from query parameter or use default
+    const currentSeedIndex = seedIndex ? parseInt(seedIndex) : DEFAULT_SEED_INDEX;
+    
     const idList = ids.split(',').map(id => parseInt(id.trim()));
-    const catalogue = buildCatalogue();
+    const catalogue = buildCatalogue(currentSeedIndex);
     
     const trailers = {};
     idList.forEach(id => {

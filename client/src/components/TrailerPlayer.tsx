@@ -136,8 +136,15 @@ function toYouTubeEmbed(u: string) {
 
 async function fetchTrailerEmbeds(ids: number[]): Promise<Record<number, string|null>> {
   if (!ids.length) return {};
+  
+  // Get current seed index from URL parameter or localStorage
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlSeedIndex = urlParams.get('seedIndex');
+  const storedSeedIndex = localStorage.getItem('currentSeedIndex');
+  const seedIndex = urlSeedIndex || storedSeedIndex || '0';
+  
   // Keep commas unencoded; server also tolerates encoded commas.
-  const r = await fetch(`/api/trailers?ids=${ids.join(",")}`);
+  const r = await fetch(`/api/trailers?ids=${ids.join(",")}&seedIndex=${seedIndex}`);
   if (!r.ok) return {};
   const j = await r.json();
   const out: Record<number, string|null> = {};
