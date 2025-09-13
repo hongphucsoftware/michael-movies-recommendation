@@ -6,6 +6,11 @@ import { SEED_LIST_1, SEED_LIST_2 } from '../seed-data.js';
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
 
+// Global state for A/B round management
+let movieScores = {}; // { movieId: rating }, start at 1500 if missing
+let pairsShown = new Set(); // Track pairs already shown
+let recent = []; // Recently shown movies (cooldown list)
+
 function hashCode(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -55,6 +60,103 @@ function shuffleArray(array) {
   return shuffled;
 }
 
+function pickRandom(array) {
+  if (array.length === 0) return null;
+  const randomIndex = Math.floor(Math.random() * array.length);
+  return array[randomIndex];
+}
+
+function makePairKey(id1, id2) {
+  // Create a consistent key regardless of order
+  return id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`;
+}
+
+function handleABRound(catalogue) {
+  // --- Step 1. Ensure every movie has a score ---
+  for (const movie of catalogue) {
+    if (movieScores[movie.id] === undefined) {
+      movieScores[movie.id] = 1500;
+    }
+  }
+
+  // --- Step 2. Pick eligible pool ---
+  // For now, use all movies as eligible (we'll implement cooldown later)
+  const eligible = catalogue;
+
+  // --- Step 3. Sort by score ---
+  const sorted = eligible.sort((a, b) => movieScores[b.id] - movieScores[a.id]);
+
+  const pairs = [];
+  let attempts = 0;
+  const maxAttempts = 100; // Prevent infinite loops
+
+  // Generate pairs more systematically
+  const usedMovies = new Set();
+  
+  for (let i = 0; i < 12 && pairs.length < 12; i++) {
+    // pick champion from top quartile
+    const topQuartileSize = Math.max(1, Math.floor(sorted.length / 4));
+    const topQuartile = sorted.slice(0, topQuartileSize);
+    const availableChampions = topQuartile.filter(m => !usedMovies.has(m.id));
+    
+    if (availableChampions.length === 0) break;
+    
+    const champion = pickRandom(availableChampions);
+    if (!champion) break;
+
+    // find challengers within ~40–120 Elo of champion
+    const championScore = movieScores[champion.id];
+    const challengers = eligible.filter(c => {
+      if (c.id === champion.id || usedMovies.has(c.id)) return false;
+      const scoreDiff = Math.abs(movieScores[c.id] - championScore);
+      return scoreDiff >= 40 && scoreDiff <= 120;
+    });
+
+    // if no good challengers, fall back to random eligible
+    const challenger = challengers.length > 0
+      ? pickRandom(challengers)
+      : pickRandom(eligible.filter(c => c.id !== champion.id && !usedMovies.has(c.id)));
+
+    if (!challenger) break;
+
+    // add pair
+    pairs.push({
+      left: champion,
+      right: challenger
+    });
+    
+    // mark movies as used
+    usedMovies.add(champion.id);
+    usedMovies.add(challenger.id);
+  }
+
+  // If we couldn't generate enough pairs, fill with random pairs
+  while (pairs.length < 12 && eligible.length >= 2) {
+    const shuffled = shuffleArray(eligible);
+    const left = shuffled[0];
+    const right = shuffled[1];
+    
+    if (left && right && left.id !== right.id) {
+      const key = makePairKey(left.id, right.id);
+      if (!pairsShown.has(key)) {
+        pairs.push({ left, right });
+        pairsShown.add(key);
+        recent.push(left.id, right.id);
+        if (recent.length > 20) {
+          recent = recent.slice(-20);
+        }
+      }
+    }
+    break; // Prevent infinite loop
+  }
+
+  return {
+    ok: true,
+    pairs: pairs,
+    excludeIds: Array.from(usedMovies)
+  };
+}
+
 // Vercel serverless function handler
 export default (req, res) => {
   try {
@@ -71,32 +173,11 @@ export default (req, res) => {
     const seedIndex = req.query.seedIndex ? parseInt(req.query.seedIndex) : DEFAULT_SEED_INDEX;
     
     const catalogue = buildCatalogue(seedIndex);
-    const shuffled = shuffleArray(catalogue);
     
-    // Create 12 pairs (24 unique items)
-    const pairs = [];
-    const excludeIds = new Set();
+    // Use the new sophisticated pairing algorithm
+    const result = handleABRound(catalogue);
     
-    for (let i = 0; i < 12 && i * 2 + 1 < shuffled.length; i++) {
-      const left = shuffled[i * 2];
-      const right = shuffled[i * 2 + 1];
-      
-      if (left && right) {
-        pairs.push({
-          left: left,
-          right: right
-        });
-        
-        excludeIds.add(left.id);
-        excludeIds.add(right.id);
-      }
-    }
-    
-    res.status(200).json({
-      ok: true,
-      pairs: pairs,
-      excludeIds: Array.from(excludeIds)
-    });
+    res.status(200).json(result);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

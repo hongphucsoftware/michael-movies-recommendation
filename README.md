@@ -112,14 +112,51 @@ User → Frontend → API Endpoints → SEED Data
 
 ### How Recommendations Work
 
-The `/api/score-round` endpoint uses a sophisticated algorithm to generate personalized recommendations:
+The `/api/score-round` endpoint uses a sophisticated Taste Dial + Elo-lite algorithm to generate personalized recommendations:
 
-1. **User Profile Analysis**: Analyzes the 12 movies the user selected
-2. **Feature Extraction**: Extracts genres, actors, directors, and era preferences
-3. **Similarity Scoring**: Uses weighted Jaccard similarity to find similar movies
-4. **Diversity Filtering**: Ensures recommendations are diverse (max 2 same genre, max 1 same director)
-5. **Exclusion Logic**: Excludes the 24 movies already shown in A/B round
-6. **Final Selection**: Returns top 6 recommendations with trailer URLs
+1. **Taste Dial Updates**: For each winner movie, updates preference counters:
+   - Actors: +1 per actor (weight: 5x in scoring)
+   - Directors: +2 per director (weight: 10x in scoring) 
+   - Genres: +1 per genre (weight: 3x in scoring)
+
+2. **Elo-lite Scoring**: Each winner gets +20 points, losers get -20 points
+
+3. **Recommendation Scoring**: For each movie in catalogue:
+   - Base score: 1500 (or existing Elo score)
+   - Actor bonus: +5 × taste_dial_count for each matching actor
+   - Director bonus: +10 × taste_dial_count for matching director
+   - Genre bonus: +3 × taste_dial_count for each matching genre
+
+4. **Selection Process**: 
+   - Sort all movies by total score (descending)
+   - Take top 12 candidates
+   - Shuffle for diversity
+   - Return top 6 recommendations
+
+5. **Output**: Returns 6 personalized recommendations with trailer URLs
+
+### A/B Round Algorithm
+
+The `/api/ab/round` endpoint uses a sophisticated Elo-based pairing algorithm:
+
+1. **Score Initialization**: All movies start with 1500 Elo score if not previously rated
+
+2. **Champion Selection**: 
+   - Sort movies by Elo score (descending)
+   - Pick champions from top quartile (strongest movies)
+   - Random selection within top quartile for variety
+
+3. **Challenger Matching**:
+   - Find challengers within 40-120 Elo points of champion
+   - Ensures competitive matchups (not blowouts)
+   - Fallback to random eligible movie if no good challenger
+
+4. **Pair Management**:
+   - Track used movies to prevent duplicates
+   - Generate exactly 12 unique pairs (24 movies)
+   - Return excludeIds list for frontend state management
+
+5. **Output**: Returns 12 pairs with left/right structure + excludeIds array
 
 ### Movie Data Structure
 
