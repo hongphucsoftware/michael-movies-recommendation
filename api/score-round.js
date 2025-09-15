@@ -1,7 +1,7 @@
 // Vercel serverless function for /api/score-round
 
 // Import full SEED data
-import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3 } from './seed-data.js';
+import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4 } from './seed-data.js';
 
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
@@ -36,8 +36,8 @@ function pickRandomN(arr, n) {
 }
 
 function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
-  const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3];
-  const listIds = ["ls094921320", "ls003501243", "ls002065120"];
+  const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4];
+  const listIds = ["ls094921320", "ls003501243", "ls002065120", "ls000873904"];
   const currentSeed = seeds[seedIndex] || SEED_LIST_1;
   const picked = pickRandomN(currentSeed, Math.min(24, currentSeed.length));
   const movies = picked.map(s => ({
