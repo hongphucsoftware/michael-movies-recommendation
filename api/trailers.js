@@ -1,7 +1,7 @@
 // Vercel serverless function for /api/trailers
 
 // Import full SEED data
-import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4 } from './seed-data.js';
+import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5 } from './seed-data.js';
 
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
@@ -17,7 +17,7 @@ function hashCode(str) {
 }
 
 function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
-  const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4];
+  const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5];
   const currentSeed = seeds[seedIndex] || SEED_LIST_1;
   const movies = currentSeed.map(s => ({
     id: hashCode(s.tt),
