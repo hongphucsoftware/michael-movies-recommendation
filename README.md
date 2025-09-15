@@ -200,6 +200,19 @@ curl -X GET "https://pickaflick-alpha.vercel.app/api/audit/summary?seedIndex=1"
 # Expected: {"ok":true,"lists":{"ls003501243":24},"total":24,"seedIndex":1}
 ```
 
+### 1b. Capacity APIs (all seeds)
+
+```bash
+# New: overall capacity across all seed lists
+curl -X GET "https://pickaflick-alpha.vercel.app/api/audit/capacity"
+
+# New: catalogue capacity listing each seed with seedIndex, seedId, count
+curl -X GET "https://pickaflick-alpha.vercel.app/api/catalogue/capacity"
+
+# New: list ALL items across all 5 seed lists
+curl -X GET "https://pickaflick-alpha.vercel.app/api/catalogue/all"
+```
+
 ### 2. A/B Testing - 12 Pairs
 
 **Requirement**: A/B page loads 12 pairs (24 unique movies).
@@ -250,6 +263,11 @@ curl -X GET "https://pickaflick-alpha.vercel.app/api/catalogue?seedIndex=0"
 curl -X GET "https://pickaflick-alpha.vercel.app/api/catalogue?seedIndex=1"
 
 # Expected: All movies have "sourceListIds":["ls003501243"]
+
+# Optional: Verify seed 3/4/5 as well
+curl -X GET "https://pickaflick-alpha.vercel.app/api/catalogue?seedIndex=2"
+curl -X GET "https://pickaflick-alpha.vercel.app/api/catalogue?seedIndex=3"
+curl -X GET "https://pickaflick-alpha.vercel.app/api/catalogue?seedIndex=4"
 ```
 
 ### 5. API Response Format - JSON Only
