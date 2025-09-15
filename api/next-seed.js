@@ -1,7 +1,7 @@
 // Vercel serverless function for /api/next-seed
 
 // Import full SEED data
-import { SEED_LIST_1, SEED_LIST_2 } from './seed-data.js';
+import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3 } from './seed-data.js';
 
 // Global variable to track current seed list (shared with catalogue)
 let currentSeedIndex = 0;
@@ -19,9 +19,9 @@ export default (req, res) => {
     }
     
     // Switch to next seed list
-    currentSeedIndex = (currentSeedIndex + 1) % 2;
-    const seedName = currentSeedIndex === 0 ? "List 1" : "List 2";
-    const seedId = currentSeedIndex === 0 ? "ls094921320" : "ls003501243";
+    currentSeedIndex = (currentSeedIndex + 1) % 3;
+    const seedName = currentSeedIndex === 0 ? "List 1" : currentSeedIndex === 1 ? "List 2" : "List 3";
+    const seedId = currentSeedIndex === 0 ? "ls094921320" : currentSeedIndex === 1 ? "ls003501243" : "ls002065120";
     
     res.status(200).json({
       ok: true,

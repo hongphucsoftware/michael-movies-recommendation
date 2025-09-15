@@ -1,7 +1,7 @@
 // Vercel serverless function for /api/catalogue
 
 // Import full SEED data
-import { SEED_LIST_1, SEED_LIST_2 } from './seed-data.js';
+import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3 } from './seed-data.js';
 
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
@@ -22,9 +22,21 @@ function toEra(year) {
   return `${decade}s`;
 }
 
+function pickRandomN(arr, n) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, n);
+}
+
 function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
-  const currentSeed = seedIndex === 0 ? SEED_LIST_1 : SEED_LIST_2;
-  const movies = currentSeed.map(s => ({
+  const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3];
+  const listIds = ["ls094921320", "ls003501243", "ls002065120"];
+  const currentSeed = seeds[seedIndex] || SEED_LIST_1;
+  const picked = pickRandomN(currentSeed, Math.min(24, currentSeed.length));
+  const movies = picked.map(s => ({
     id: hashCode(s.tt),
     imdbId: s.tt,
     title: s.title,
@@ -40,7 +52,7 @@ function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
     trailerUrl: s.trailer,
     topActors: s.actors,
     director: s.director,
-    sourceListIds: [seedIndex === 0 ? "ls094921320" : "ls003501243"],
+    sourceListIds: [listIds[seedIndex] || listIds[0]],
   }));
   
   return movies;
