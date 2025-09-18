@@ -366,6 +366,12 @@ export default function TrailerPlayer({
   const [queue, setQueue] = useState<Title[]>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
   const [idx, setIdx] = useState(0);
+  const [saved, setSaved] = useState<Record<number, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("pf_saved_v1") || "{}"); } catch { return {}; }
+  });
+  const [thumbs, setThumbs] = useState<Record<number, 1|-1|0>>(() => {
+    try { return JSON.parse(localStorage.getItem("pf_thumbs_v1") || "{}"); } catch { return {}; }
+  });
   const [debugOn] = useDebugToggle();
 
   // Build the same profile the picker uses (for debug panel)
@@ -442,6 +448,32 @@ export default function TrailerPlayer({
   const current = queue[idx];
   const embed = current ? embeds[current.id] : null;
 
+  function persistSaved(next: Record<number, boolean>) {
+    setSaved(next);
+    try { localStorage.setItem("pf_saved_v1", JSON.stringify(next)); } catch {}
+  }
+  function persistThumbs(next: Record<number, 1|-1|0>) {
+    setThumbs(next);
+    try { localStorage.setItem("pf_thumbs_v1", JSON.stringify(next)); } catch {}
+  }
+
+  const toggleSave = useCallback(() => {
+    if (!current) return;
+    const next = { ...saved, [current.id]: !saved[current.id] };
+    persistSaved(next);
+  }, [current, saved]);
+
+  const thumbUp = useCallback(() => {
+    if (!current) return;
+    const next = { ...thumbs, [current.id]: thumbs[current.id] === 1 ? 0 : 1 } as Record<number,1|-1|0>;
+    persistThumbs(next);
+  }, [current, thumbs]);
+  const thumbDown = useCallback(() => {
+    if (!current) return;
+    const next = { ...thumbs, [current.id]: thumbs[current.id] === -1 ? 0 : -1 } as Record<number,1|-1|0>;
+    persistThumbs(next);
+  }, [current, thumbs]);
+
   return (
     <div className="w-full max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-3">
@@ -466,6 +498,54 @@ export default function TrailerPlayer({
                 No trailer found for this title
               </div>
             )}
+          </div>
+          {/* Right-side controls under the embed */}
+          <div className="flex flex-wrap items-center justify-between mt-3 gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={toggleSave}
+                className={`px-3 py-2 rounded-lg ${saved[current.id] ? "bg-green-700" : "bg-neutral-800 hover:bg-neutral-700"}`}
+                title="Save to watch later"
+                data-testid="button-save"
+              >
+                {saved[current.id] ? "Saved" : "Save"}
+              </button>
+              <button
+                onClick={thumbUp}
+                className={`px-3 py-2 rounded-lg ${thumbs[current.id] === 1 ? "bg-cyan-700" : "bg-neutral-800 hover:bg-neutral-700"}`}
+                title="Thumbs up"
+                data-testid="button-thumb-up"
+              >
+                👍 Like
+              </button>
+              <button
+                onClick={thumbDown}
+                className={`px-3 py-2 rounded-lg ${thumbs[current.id] === -1 ? "bg-red-700" : "bg-neutral-800 hover:bg-neutral-700"}`}
+                title="Thumbs down"
+                data-testid="button-thumb-down"
+              >
+                👎 Dislike
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <a
+                href={current.trailerUrl || current.backdropUrl || current.posterUrl || "#"}
+                target="_blank" rel="noreferrer"
+                className="px-3 py-2 rounded-lg bg-electric-blue hover:bg-blue-600"
+                data-testid="button-watch-now"
+              >
+                Watch Now
+              </a>
+              <button
+                onClick={next}
+                disabled={!canNext}
+                className={`px-3 py-2 rounded-lg ${canNext ? "bg-neutral-800 hover:bg-neutral-700" : "bg-neutral-900 opacity-50 cursor-not-allowed"}`}
+                title="Skip"
+                data-testid="button-skip"
+              >
+                Skip
+              </button>
+            </div>
           </div>
         </div>
       )}

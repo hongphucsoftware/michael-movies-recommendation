@@ -8,6 +8,30 @@ import { useQuickPicks } from "../hooks/useQuickPicks";
 import { useABHistory } from "../hooks/useABHistory";
 import TrailerPlayer from "./TrailerPlayer";
 
+function genreName(id: number): string {
+  switch (id) {
+    case 28: return "Action";
+    case 12: return "Adventure";
+    case 16: return "Animation";
+    case 35: return "Comedy";
+    case 80: return "Crime";
+    case 99: return "Documentary";
+    case 18: return "Drama";
+    case 10751: return "Family";
+    case 14: return "Fantasy";
+    case 36: return "History";
+    case 27: return "Horror";
+    case 10402: return "Music";
+    case 9648: return "Mystery";
+    case 10749: return "Romance";
+    case 878: return "Sci-Fi";
+    case 53: return "Thriller";
+    case 10752: return "War";
+    case 37: return "Western";
+    default: return "Genre";
+  }
+}
+
 export default function PosterPair() {
   const { items, total, loading, error, stats } = useEnhancedCatalogue();
   const { learned, like, skip, resetLearning } = useLearnedVector(12);
@@ -158,6 +182,28 @@ export default function PosterPair() {
               Reset All Learning
             </button>
           </div>
+
+          {/* You feel like watching … (top 3 genres from chosen) */}
+          {(() => {
+            const chosenSet = new Set(chosenIds);
+            const chosen = items.filter((t: any) => chosenSet.has(t.id));
+            const counts = new Map<number, number>();
+            for (const t of chosen) for (const g of (t.genres || [])) counts.set(g, (counts.get(g) || 0) + 1);
+            const top = Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([g])=>g);
+            if (!top.length) return null;
+            return (
+              <div className="rounded-xl p-4 bg-white/5 border border-white/10">
+                <div className="text-sm opacity-80 mb-2">You feel like watching…</div>
+                <div className="flex flex-wrap gap-2">
+                  {top.map((g) => (
+                    <span key={g} className="px-3 py-1 rounded-full text-xs bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
+                      {genreName(g)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={5} />
         </div>
