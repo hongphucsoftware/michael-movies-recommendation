@@ -204,13 +204,18 @@ export function useMLLearning(movies: Movie[]) {
   }, []);
 
   const skipPair = useCallback(() => {
+    // Reset onboarding run for current seed: clear recent pairs and explored set,
+    // reset choices so the user gets a fresh 12-pair sequence without changing seed.
+    try { localStorage.removeItem('ts_recent_pairs'); } catch {}
     setState(prev => ({
       ...prev,
       preferences: {
         ...prev.preferences,
-        choices: Math.max(0, prev.preferences.choices - 1)
+        explored: new Set<string>(),
+        choices: 0
       },
-      currentPair: nextPair()
+      currentPair: nextPair(),
+      onboardingComplete: false
     }));
   }, [nextPair]);
 

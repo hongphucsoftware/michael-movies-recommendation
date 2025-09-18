@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import type { Title } from "../hooks/useEnhancedCatalogue";
 import { toFeatureVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "./ui/carousel";
 
 // --- Alignment tuning constants (higher correlation, less generic) ---
 const SCORE_WEIGHTS = { cosine: 0.65, genre: 0.35, jitter: 0.0 }; // was 0.55/0.40/0.05
@@ -564,6 +565,73 @@ export default function TrailerPlayer({
           Next →
         </button>
       </div>
+
+      {/* You feel like watching… swipable picks */}
+      {(() => {
+        // Determine top genres from recent choices, default to Action(28)
+        const chosenSet = new Set(recentChosenIds);
+        const chosen = items.filter((t) => chosenSet.has(t.id));
+        const counts = new Map<number, number>();
+        for (const t of chosen) for (const g of (t.genres || [])) counts.set(g, (counts.get(g) || 0) + 1);
+        const top = Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]).map(([g])=>g);
+        const focusGenres = (top.length ? top : [28]).slice(0,3);
+        const recs = items
+          .filter((t) => (t.genres || []).some((g) => focusGenres.includes(g)))
+          .sort((a,b)=> (b.popularity||0) - (a.popularity||0))
+          .slice(0, 5);
+        if (!recs.length) return null;
+        return (
+          <div className="mt-6">
+            <div className="text-sm opacity-80 mb-2">You feel like watching…</div>
+            <Carousel className="w-full">
+              <CarouselContent>
+                {recs.map((t) => (
+                  <CarouselItem key={t.id} className="basis-5/6 sm:basis-1/2 md:basis-1/3 lg:basis-1/4 xl:basis-1/5">
+                    <div className="p-2">
+                      <div className="rounded-xl overflow-hidden bg-white/5 border border-white/10 hover:border-white/20 transition">
+                        <div className="aspect-[2/3] w-full bg-black/40">
+                          {(() => {
+                            const img = bestImageUrl(t);
+                            return img ? (
+                              <img src={img} alt={t.title} className="w-full h-full object-cover" loading="lazy" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-xs opacity-70">No image</div>
+                            );
+                          })()}
+                        </div>
+                        <div className="p-3">
+                          <div className="text-sm font-medium line-clamp-2">{t.title}</div>
+                          <div className="text-xs opacity-70 mt-1">{t.releaseDate?.slice(0,4) || ""}</div>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {(t.genres || []).slice(0,2).map((g) => (
+                              <span key={g} className="px-2 py-0.5 rounded-full text-[10px] bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
+                                {g}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <a
+                              href={t.trailerUrl || t.backdropUrl || t.posterUrl || "#"}
+                              target="_blank" rel="noreferrer"
+                              className="text-xs px-2 py-1 rounded-md bg-electric-blue hover:bg-blue-600"
+                            >
+                              Watch Now
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </CarouselItem>
+                ))}
+              </CarouselContent>
+              <div className="flex items-center justify-between mt-2">
+                <CarouselPrevious className="bg-neutral-800 hover:bg-neutral-700 border-neutral-700" />
+                <CarouselNext className="bg-neutral-800 hover:bg-neutral-700 border-neutral-700" />
+              </div>
+            </Carousel>
+          </div>
+        );
+      })()}
 
       {/* Debug panel */}
       {debugOn && <DebugPanel rows={debugRows} />}

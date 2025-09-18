@@ -183,28 +183,6 @@ export default function PosterPair() {
             </button>
           </div>
 
-          {/* You feel like watching … (top 3 genres from chosen) */}
-          {(() => {
-            const chosenSet = new Set(chosenIds);
-            const chosen = items.filter((t: any) => chosenSet.has(t.id));
-            const counts = new Map<number, number>();
-            for (const t of chosen) for (const g of (t.genres || [])) counts.set(g, (counts.get(g) || 0) + 1);
-            const top = Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([g])=>g);
-            if (!top.length) return null;
-            return (
-              <div className="rounded-xl p-4 bg-white/5 border border-white/10">
-                <div className="text-sm opacity-80 mb-2">You feel like watching…</div>
-                <div className="flex flex-wrap gap-2">
-                  {top.map((g) => (
-                    <span key={g} className="px-3 py-1 rounded-full text-xs bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
-                      {genreName(g)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-
           <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={5} />
         </div>
       )}
