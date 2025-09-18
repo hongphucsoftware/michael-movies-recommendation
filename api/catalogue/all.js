@@ -64,7 +64,7 @@ export default (req, res) => {
       mapSeedToMovies(SEED_LIST_5, LIST_IDS[4]),
     ].flat();
 
-    res.status(200).json({ ok: true, total: all.length, items: all });
+    res.status(200).json({ ok: true, items: all });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
