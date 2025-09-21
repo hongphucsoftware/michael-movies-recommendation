@@ -18,8 +18,9 @@ function hashCode(str) {
 
 function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
   const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5];
-  const currentSeed = seeds[seedIndex] || SEED_LIST_1;
-  const movies = currentSeed.map(s => ({
+  // Use all 5 seed lists combined for maximum coverage
+  const allSeeds = [...SEED_LIST_1, ...SEED_LIST_2, ...SEED_LIST_3, ...SEED_LIST_4, ...SEED_LIST_5];
+  const movies = allSeeds.map(s => ({
     id: hashCode(s.tt),
     imdbId: s.tt,
     title: s.title,
