@@ -81,7 +81,7 @@ function shuffleArray(array) {
 
 async function getGeminiRecommendations(userSelections) {
   try {
-    const prompt = `You are a movie concierge. Given a user's selections, infer their taste across genre, vibe, pacing, tone, director/actors, and recommend 5 fresh movies they will likely enjoy next. Avoid duplicates from the input. Output JSON only.`;
+    const prompt = `You are a movie concierge. Given a user's selections, infer their taste across genre, vibe, pacing, tone, director/actors, and recommend 10 fresh movies they will likely enjoy next. Avoid duplicates from the input. Output JSON only.`;
     
     const userSelectionsText = `User selections:\n${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}`;
     
@@ -247,9 +247,9 @@ function handleScoreRoundFallback(winners, catalogue) {
   scoredMovies.sort((a, b) => b.score - a.score);
 
   // add a little randomness for diversity
-  const topCandidates = scoredMovies.slice(0, 12);
+  const topCandidates = scoredMovies.slice(0, 20);
   const shuffled = shuffleArray(topCandidates);
-  const recommendations = shuffled.slice(0, 6);
+  const recommendations = shuffled.slice(0, 10);
 
   // prepare trailers map
   const trailers = {};

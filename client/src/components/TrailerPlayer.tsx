@@ -514,18 +514,18 @@ export default function TrailerPlayer({
               <button
                 onClick={thumbUp}
                 className={`px-3 py-2 rounded-lg ${thumbs[current.id] === 1 ? "bg-cyan-700" : "bg-neutral-800 hover:bg-neutral-700"}`}
-                title="Thumbs up"
+                title="I like this"
                 data-testid="button-thumb-up"
               >
-                👍 Like
+                👍
               </button>
               <button
                 onClick={thumbDown}
                 className={`px-3 py-2 rounded-lg ${thumbs[current.id] === -1 ? "bg-red-700" : "bg-neutral-800 hover:bg-neutral-700"}`}
-                title="Thumbs down"
+                title="I dislike this"
                 data-testid="button-thumb-down"
               >
-                👎 Dislike
+                👎
               </button>
             </div>
             <div className="flex gap-2">
@@ -578,7 +578,7 @@ export default function TrailerPlayer({
         const recs = items
           .filter((t) => (t.genres || []).some((g) => focusGenres.includes(g)))
           .sort((a,b)=> (b.popularity||0) - (a.popularity||0))
-          .slice(0, 5);
+          .slice(0, 10);
         if (!recs.length) return null;
         return (
           <div className="mt-6">

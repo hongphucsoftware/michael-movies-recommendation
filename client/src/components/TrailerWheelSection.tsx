@@ -118,12 +118,14 @@ export default function TrailerWheelSection({
               <button 
                 className="glass-card hover:bg-red-600 px-4 py-3 rounded-lg transition-colors"
                 onClick={handleDislike}
+                title="I dislike this"
                 data-testid="button-dislike"
               >
                 <ThumbsDown size={16} />
               </button>
               <button 
                 className="glass-card hover:bg-green-600 px-4 py-3 rounded-lg transition-colors"
+                title="I like this"
                 data-testid="button-like"
               >
                 <ThumbsUp size={16} />
