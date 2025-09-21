@@ -3,6 +3,10 @@
 // Import full SEED data
 import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5 } from './seed-data.js';
 
+// Gemini API configuration
+const GEMINI_API_KEY = 'AIzaSyDn0eaMpQSwbN_sQjDqm7R65tQ9-8Y6UOw';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-pro:generateContent';
+
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
 
@@ -75,7 +79,120 @@ function shuffleArray(array) {
   return shuffled;
 }
 
-function handleScoreRound(winners, catalogue) {
+async function getGeminiRecommendations(userSelections) {
+  try {
+    const prompt = `You are a movie concierge. Given a user's selections, infer their taste across genre, vibe, pacing, tone, director/actors, and recommend 5 fresh movies they will likely enjoy next. Avoid duplicates from the input. Output JSON only.`;
+    
+    const userSelectionsText = `User selections:\n${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}`;
+    
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            { text: userSelectionsText }
+          ]
+        }
+      ],
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
+    };
+
+    const response = await fetch(GEMINI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': GEMINI_API_KEY
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const recommendationsText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (!recommendationsText) {
+      throw new Error('No recommendations received from Gemini API');
+    }
+
+    const recommendations = JSON.parse(recommendationsText);
+    return recommendations;
+  } catch (error) {
+    console.error('Error calling Gemini API:', error);
+    throw error;
+  }
+}
+
+async function handleScoreRound(winners, catalogue) {
+  try {
+    // Get the winning movies from the catalogue
+    const winningMovies = winners
+      .map(winnerId => findMovieById(winnerId, catalogue))
+      .filter(movie => movie !== undefined);
+
+    if (winningMovies.length === 0) {
+      throw new Error('No valid winning movies found');
+    }
+
+    // Get recommendations from Gemini
+    const geminiRecommendations = await getGeminiRecommendations(winningMovies);
+    
+    // Convert Gemini recommendations to our movie format
+    const recommendations = [];
+    const trailers = {};
+    
+    for (const geminiRec of geminiRecommendations) {
+      // Try to find a matching movie in our catalogue by title and year
+      const matchingMovie = catalogue.find(movie => 
+        movie.title.toLowerCase() === geminiRec.title.toLowerCase() && 
+        movie.year === geminiRec.year
+      );
+      
+      if (matchingMovie) {
+        recommendations.push(matchingMovie);
+        trailers[matchingMovie.id] = matchingMovie.trailerUrl;
+      } else {
+        // If not found in catalogue, create a placeholder movie object
+        const placeholderMovie = {
+          id: hashCode(geminiRec.title + geminiRec.year),
+          imdbId: null,
+          title: geminiRec.title,
+          overview: "",
+          genres: [],
+          year: geminiRec.year,
+          era: toEra(geminiRec.year),
+          popularity: 50,
+          voteAverage: 7.0,
+          voteCount: 1000,
+          posterUrl: null,
+          backdropUrl: null,
+          trailerUrl: null,
+          topActors: [],
+          director: null,
+          sourceListIds: []
+        };
+        recommendations.push(placeholderMovie);
+        trailers[placeholderMovie.id] = null;
+      }
+    }
+
+    return {
+      ok: true,
+      recs: recommendations,
+      trailers: trailers
+    };
+  } catch (error) {
+    console.error('Error in handleScoreRound:', error);
+    // Fallback to original scoring system if Gemini fails
+    return handleScoreRoundFallback(winners, catalogue);
+  }
+}
+
+function handleScoreRoundFallback(winners, catalogue) {
   // Process each winner-loser pair
   for (const winnerId of winners) {
     const winner = findMovieById(winnerId, catalogue);
@@ -165,7 +282,7 @@ export default (req, res) => {
       body += chunk.toString();
     });
     
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const { winners } = JSON.parse(body);
         
@@ -177,8 +294,8 @@ export default (req, res) => {
         const seedIndex = req.query.seedIndex ? parseInt(req.query.seedIndex) : DEFAULT_SEED_INDEX;
         const catalogue = buildCatalogue(seedIndex);
         
-        // Process winners and generate recommendations
-        const result = handleScoreRound(winners, catalogue);
+        // Process winners and generate recommendations using Gemini
+        const result = await handleScoreRound(winners, catalogue);
         
         res.status(200).json(result);
       } catch (parseError) {
