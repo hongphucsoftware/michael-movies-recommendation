@@ -183,7 +183,7 @@ export default function PosterPair() {
             </button>
           </div>
 
-          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={5} />
+          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={6} />
         </div>
       )}
     </div>
