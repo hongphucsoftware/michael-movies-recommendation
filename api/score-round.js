@@ -42,8 +42,9 @@ function pickRandomN(arr, n) {
 function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
   const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5];
   const listIds = ["ls094921320", "ls003501243", "ls002065120", "ls000873904", "ls005747458"];
-  const currentSeed = seeds[seedIndex] || SEED_LIST_1;
-  const picked = pickRandomN(currentSeed, Math.min(24, currentSeed.length));
+  // Use all 5 seed lists combined for maximum coverage
+  const allSeeds = [...SEED_LIST_1, ...SEED_LIST_2, ...SEED_LIST_3, ...SEED_LIST_4, ...SEED_LIST_5];
+  const picked = pickRandomN(allSeeds, Math.min(100, allSeeds.length));
   const movies = picked.map(s => ({
     id: hashCode(s.tt),
     imdbId: s.tt,
@@ -61,6 +62,8 @@ function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
     topActors: s.actors,
     director: s.director,
     sourceListIds: [listIds[seedIndex] || listIds[0]],
+    imdbUrl: s.imdbUrl,
+    watchUrl: s.watchUrl,
   }));
   
   return movies;
@@ -173,7 +176,9 @@ async function handleScoreRound(winners, catalogue) {
           trailerUrl: null,
           topActors: [],
           director: null,
-          sourceListIds: []
+          sourceListIds: [],
+          imdbUrl: null,
+          watchUrl: `https://www.justwatch.com/us/search?q=${encodeURIComponent(geminiRec.title)}`
         };
         recommendations.push(placeholderMovie);
         trailers[placeholderMovie.id] = null;

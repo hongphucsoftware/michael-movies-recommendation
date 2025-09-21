@@ -530,7 +530,7 @@ export default function TrailerPlayer({
             </div>
             <div className="flex gap-2">
               <a
-                href={current.trailerUrl || current.backdropUrl || current.posterUrl || "#"}
+                href={current.watchUrl || current.trailerUrl || current.backdropUrl || current.posterUrl || "#"}
                 target="_blank" rel="noreferrer"
                 className="px-3 py-2 rounded-lg bg-electric-blue hover:bg-blue-600"
                 data-testid="button-watch-now"
