@@ -504,6 +504,37 @@ export default function TrailerPlayer({
     persistThumbs(next);
   }, [current, thumbs]);
 
+  function labelForGenre(g: any): string | null {
+    if (typeof g === "string") {
+      const s = g.trim();
+      return s ? s : null;
+    }
+    if (typeof g === "number") {
+      switch (g) {
+        case 28: return "Action";
+        case 12: return "Adventure";
+        case 16: return "Animation";
+        case 35: return "Comedy";
+        case 80: return "Crime";
+        case 99: return "Documentary";
+        case 18: return "Drama";
+        case 10751: return "Family";
+        case 14: return "Fantasy";
+        case 36: return "History";
+        case 27: return "Horror";
+        case 10402: return "Music";
+        case 9648: return "Mystery";
+        case 10749: return "Romance";
+        case 878: return "Sci-Fi";
+        case 53: return "Thriller";
+        case 10752: return "War";
+        case 37: return "Western";
+        default: return null;
+      }
+    }
+    return null;
+  }
+
   return (
     <div className="w-full max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-3">
@@ -641,18 +672,24 @@ export default function TrailerPlayer({
                         <div className="p-3">
                           <div className="text-sm font-medium line-clamp-2">{t.title}</div>
                           <div className="text-xs opacity-70 mt-1">{t.releaseDate?.slice(0,4) || ""}</div>
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {(t.genres || []).slice(0,2).map((g) => (
-                              <span key={g as any} className="px-2 py-0.5 rounded-full text-[10px] bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
-                                {g}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="mt-3 flex gap-2">
+                          {(() => {
+                            const labels = (t.genres || []).map(labelForGenre).filter((s): s is string => !!s);
+                            if (labels.length < 2) return null;
+                            return (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {labels.slice(0,2).map((g) => (
+                                  <span key={g} className="px-2 py-0.5 rounded-full text-[10px] bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
+                                    {g}
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                          <div className="mt-3 flex flex-col gap-2">
                             <a
                               href={(t as any).watchUrl || t.trailerUrl || t.backdropUrl || t.posterUrl || "#"}
                               target="_blank" rel="noreferrer"
-                              className="text-xs px-2 py-1 rounded-md bg-electric-blue hover:bg-blue-600"
+                              className="w-3/4 self-start text-xs px-2 py-1 rounded-md bg-electric-blue hover:bg-blue-600"
                             >
                               Watch Now
                             </a>
@@ -660,7 +697,7 @@ export default function TrailerPlayer({
                               <a
                                 href={t.trailerUrl}
                                 target="_blank" rel="noreferrer"
-                                className="text-xs px-2 py-1 rounded-md bg-neutral-800 hover:bg-neutral-700"
+                                className="w-3/4 self-start text-xs px-2 py-1 rounded-md bg-electric-blue hover:bg-blue-600"
                               >
                                 Trailer
                               </a>
