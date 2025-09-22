@@ -391,7 +391,7 @@ export default function TrailerPlayer({
       const match = items.find(i => i.id === r.id) || null;
       const poster = r.posterUrl ? `/api/proxy-img?u=${encodeURIComponent(r.posterUrl)}&lang=en-US` : (match?.image || match?.posterUrl || null);
       const releaseDate = r.year ? `${r.year}-01-01` : (match?.releaseDate || null);
-      const genres = match?.genres || []; // keep numeric genre ids if available
+      const genres = (Array.isArray(r?.genres) && r.genres.length) ? r.genres : (match?.genres || []);
       return {
         ...(match || {}),
         id: r.id || (match?.id as any),
