@@ -82,30 +82,40 @@ function shuffleArray(array) {
   return shuffled;
 }
 
-function getDatasetRecommendations(winners, catalogue) {
+function getDatasetRecommendations(winners, catalogue, count = 5) {
   // Simple scoring system for dataset recommendations
+  const winnerSet = new Set(winners);
   const scoredMovies = [];
   
   for (const movie of catalogue) {
-    let score = 0;
-    
     // Skip winning movies
-    if (winners.includes(movie.id)) {
-      continue;
-    }
-    
+    if (winnerSet.has(movie.id)) continue;
+    let score = 0;
     // Basic popularity score
     score += movie.popularity || 50;
-    
     // Random factor for diversity
     score += Math.random() * 20;
-    
     scoredMovies.push({ movie, score });
   }
-  
-  // Sort by score and take top 5
+  // Sort by score and take top N
   scoredMovies.sort((a, b) => b.score - a.score);
-  return scoredMovies.slice(0, 5).map(item => item.movie);
+  return scoredMovies.slice(0, count).map(item => item.movie);
+}
+
+function topUpWithDataset(current, winners, catalogue, target = 6) {
+  if ((current || []).length >= target) return current.slice(0, target);
+  const have = new Set((current || []).map(m => m.id));
+  const winnerSet = new Set(winners);
+  const scored = [];
+  for (const movie of catalogue) {
+    if (have.has(movie.id) || winnerSet.has(movie.id)) continue;
+    let score = (movie.popularity || 50) + Math.random() * 20;
+    scored.push({ movie, score });
+  }
+  scored.sort((a,b)=>b.score-a.score);
+  const need = target - current.length;
+  const extra = scored.slice(0, Math.max(0, need)).map(x=>x.movie);
+  return current.concat(extra).slice(0, target);
 }
 
 function deduplicateMovies(movies) {
@@ -231,7 +241,7 @@ async function handleScoreRound(winners, catalogue) {
     }
 
     // Step 1: Get 5 movies from dataset using existing logic
-    const datasetFive = getDatasetRecommendations(winners, catalogue);
+    const datasetFive = getDatasetRecommendations(winners, catalogue, 5);
     
     // Step 2: Get 5 movies from Gemini
     let geminiFive = [];
@@ -275,9 +285,9 @@ async function handleScoreRound(winners, catalogue) {
       }
     } catch (geminiError) {
       console.error('Gemini API failed:', geminiError);
-      // Fallback: if Gemini fails, use 10 from dataset and a local summary
-      const fallbackTen = getDatasetRecommendations(winners, catalogue);
-      const sliced = fallbackTen.slice(0, 6);
+      // Fallback: if Gemini fails, use dataset and top up to 6 with dedupe
+      const fallbackPool = getDatasetRecommendations(winners, catalogue, 10);
+      const sliced = topUpWithDataset(fallbackPool.slice(0, 6), winners, catalogue, 6);
       const trailers = {};
       for (const rec of sliced) { trailers[rec.id] = rec.trailerUrl; }
       const summary = localSummaryFrom(winningMovies);
@@ -290,8 +300,8 @@ async function handleScoreRound(winners, catalogue) {
     // Step 4: Deduplicate by title/year
     const uniqueRecommendations = deduplicateMovies(allRecommendations);
 
-    // Take exactly 6 in the original order for consistency
-    const finalSix = uniqueRecommendations.slice(0, 6);
+    // Ensure exactly 6 by topping up from dataset if dedupe reduced the count
+    const finalSix = topUpWithDataset(uniqueRecommendations, winners, catalogue, 6);
     
     // Prepare trailers map
     const trailers = {};
@@ -313,7 +323,8 @@ async function handleScoreRound(winners, catalogue) {
     // Fallback to original scoring system if everything fails
     const fb = handleScoreRoundFallback(winners, catalogue);
     // Ensure 6 and attach basic summary
-    const sliced = (fb.recs || []).slice(0, 6);
+    const base = (fb.recs || []).slice(0, 6);
+    const sliced = topUpWithDataset(base, winners, catalogue, 6);
     const winningMovies = winners.map(wid => findMovieById(wid, catalogue)).filter(Boolean);
     const summary = localSummaryFrom(winningMovies);
     return { ok: true, summary, recommendations: sliced, recs: sliced, trailers: fb.trailers };
