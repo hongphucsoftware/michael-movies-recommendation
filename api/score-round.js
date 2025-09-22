@@ -82,9 +82,61 @@ function shuffleArray(array) {
   return shuffled;
 }
 
+function getDatasetRecommendations(winners, catalogue) {
+  // Simple scoring system for dataset recommendations
+  const scoredMovies = [];
+  
+  for (const movie of catalogue) {
+    let score = 0;
+    
+    // Skip winning movies
+    if (winners.includes(movie.id)) {
+      continue;
+    }
+    
+    // Basic popularity score
+    score += movie.popularity || 50;
+    
+    // Random factor for diversity
+    score += Math.random() * 20;
+    
+    scoredMovies.push({ movie, score });
+  }
+  
+  // Sort by score and take top 5
+  scoredMovies.sort((a, b) => b.score - a.score);
+  return scoredMovies.slice(0, 5).map(item => item.movie);
+}
+
+function deduplicateMovies(movies) {
+  const seen = new Set();
+  const unique = [];
+  
+  for (const movie of movies) {
+    const key = `${movie.title.toLowerCase()}-${movie.year}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(movie);
+    }
+  }
+  
+  return unique;
+}
+
 async function getGeminiRecommendations(userSelections) {
   try {
-    const prompt = `You are a movie concierge. Given a user's selections, infer their taste across genre, vibe, pacing, tone, director/actors, and recommend 10 fresh movies they will likely enjoy next. Avoid duplicates from the input. Output JSON only.`;
+    const prompt = `You are a movie concierge. Based on the user's A/B test selections, infer their taste (genre, vibe, pacing, tone, director/actors) and recommend 5 fresh movies they will likely enjoy next. 
+Avoid duplicates. Output JSON only with this structure:
+
+[
+  {
+    "title": "Movie Title",
+    "year": 2000,
+    "genres": ["Genre1","Genre2"],
+    "poster": "https://link-to-poster",
+    "watchUrl": "https://link-to-streaming-provider"
+  }
+]`;
     
     const userSelectionsText = `User selections:\n${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}`;
     
@@ -130,6 +182,43 @@ async function getGeminiRecommendations(userSelections) {
   }
 }
 
+async function getGeminiSummary(userSelections) {
+  try {
+    const summaryPrompt = `You are a movie concierge. Analyze the user's A/B selections to infer their taste: preferred genres, vibe, tone, pacing, notable directors/actors, and the dominant decade based on release years. Return a single short sentence (max 30 words) suitable for end-users.`;
+    const selectionsText = `User selections:\n${userSelections.map(m => `- ${m.title} (${m.year || ''})`).join('\n')}`;
+    const requestBody = {
+      contents: [
+        { parts: [ { text: summaryPrompt }, { text: selectionsText } ] }
+      ],
+      generationConfig: { responseMimeType: "text/plain" }
+    };
+    const response = await fetch(GEMINI_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+      body: JSON.stringify(requestBody)
+    });
+    if (!response.ok) throw new Error(`Gemini summary HTTP ${response.status}`);
+    const data = await response.json();
+    const cand = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    return cand.trim();
+  } catch (e) {
+    return "";
+  }
+}
+
+function localSummaryFrom(winningMovies) {
+  try {
+    const years = winningMovies.map(w => Number(w.year)).filter(n => Number.isFinite(n));
+    const decade = years.length ? `${Math.floor((years.reduce((a,b)=>a+b,0)/years.length)/10)*10}s` : "various decades";
+    const genreCounts = new Map();
+    for (const w of winningMovies) for (const g of (w.genres || [])) genreCounts.set(g, (genreCounts.get(g)||0)+1);
+    const topGenres = Array.from(genreCounts.entries()).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([g])=>g).join(", ");
+    return `Based on your A/B picks, you leaned toward ${topGenres || 'a mix of genres'} with a ${decade} feel. Here are 6 films that match that profile.`;
+  } catch {
+    return "Based on your A/B picks, here are 6 films that match your profile.";
+  }
+}
+
 async function handleScoreRound(winners, catalogue) {
   try {
     // Get the winning movies from the catalogue
@@ -141,59 +230,93 @@ async function handleScoreRound(winners, catalogue) {
       throw new Error('No valid winning movies found');
     }
 
-    // Get recommendations from Gemini
-    const geminiRecommendations = await getGeminiRecommendations(winningMovies);
+    // Step 1: Get 5 movies from dataset using existing logic
+    const datasetFive = getDatasetRecommendations(winners, catalogue);
     
-    // Convert Gemini recommendations to our movie format
-    const recommendations = [];
-    const trailers = {};
-    
-    for (const geminiRec of geminiRecommendations) {
-      // Try to find a matching movie in our catalogue by title and year
-      const matchingMovie = catalogue.find(movie => 
-        movie.title.toLowerCase() === geminiRec.title.toLowerCase() && 
-        movie.year === geminiRec.year
-      );
+    // Step 2: Get 5 movies from Gemini
+    let geminiFive = [];
+    try {
+      const geminiRecommendations = await getGeminiRecommendations(winningMovies);
       
-      if (matchingMovie) {
-        recommendations.push(matchingMovie);
-        trailers[matchingMovie.id] = matchingMovie.trailerUrl;
-      } else {
-        // If not found in catalogue, create a placeholder movie object
-        const placeholderMovie = {
-          id: hashCode(geminiRec.title + geminiRec.year),
-          imdbId: null,
-          title: geminiRec.title,
-          overview: "",
-          genres: [],
-          year: geminiRec.year,
-          era: toEra(geminiRec.year),
-          popularity: 50,
-          voteAverage: 7.0,
-          voteCount: 1000,
-          posterUrl: null,
-          backdropUrl: null,
-          trailerUrl: null,
-          topActors: [],
-          director: null,
-          sourceListIds: [],
-          imdbUrl: null,
-          watchUrl: `https://www.justwatch.com/us/search?q=${encodeURIComponent(geminiRec.title)}`
-        };
-        recommendations.push(placeholderMovie);
-        trailers[placeholderMovie.id] = null;
+      // Convert Gemini recommendations to our movie format
+      for (const geminiRec of geminiRecommendations) {
+        // Try to find a matching movie in our catalogue by title and year
+        const matchingMovie = catalogue.find(movie => 
+          movie.title.toLowerCase() === geminiRec.title.toLowerCase() && 
+          movie.year === geminiRec.year
+        );
+        
+        if (matchingMovie) {
+          geminiFive.push(matchingMovie);
+        } else {
+          // If not found in catalogue, create a placeholder movie object
+          const placeholderMovie = {
+            id: hashCode(geminiRec.title + geminiRec.year),
+            imdbId: null,
+            title: geminiRec.title,
+            overview: "",
+            genres: geminiRec.genres || [],
+            year: geminiRec.year,
+            era: toEra(geminiRec.year),
+            popularity: 50,
+            voteAverage: 7.0,
+            voteCount: 1000,
+            posterUrl: geminiRec.poster || null,
+            backdropUrl: null,
+            trailerUrl: null,
+            topActors: [],
+            director: null,
+            sourceListIds: [],
+            imdbUrl: null,
+            watchUrl: geminiRec.watchUrl || `https://www.justwatch.com/us/search?q=${encodeURIComponent(geminiRec.title)}`
+          };
+          geminiFive.push(placeholderMovie);
+        }
       }
+    } catch (geminiError) {
+      console.error('Gemini API failed:', geminiError);
+      // Fallback: if Gemini fails, use 10 from dataset and a local summary
+      const fallbackTen = getDatasetRecommendations(winners, catalogue);
+      const sliced = fallbackTen.slice(0, 6);
+      const trailers = {};
+      for (const rec of sliced) { trailers[rec.id] = rec.trailerUrl; }
+      const summary = localSummaryFrom(winningMovies);
+      return { ok: true, summary, recommendations: sliced, recs: sliced, trailers };
     }
+    
+    // Step 3: Merge [...datasetFive, ...geminiFive]
+    const allRecommendations = [...datasetFive, ...geminiFive];
+    
+    // Step 4: Deduplicate by title/year
+    const uniqueRecommendations = deduplicateMovies(allRecommendations);
+
+    // Take exactly 6 in the original order for consistency
+    const finalSix = uniqueRecommendations.slice(0, 6);
+    
+    // Prepare trailers map
+    const trailers = {};
+    for (const rec of finalSix) { trailers[rec.id] = rec.trailerUrl; }
+
+    // Build summary (Gemini → fallback to local)
+    const aiSummary = await getGeminiSummary(winningMovies);
+    const summary = aiSummary || localSummaryFrom(winningMovies);
 
     return {
       ok: true,
-      recs: recommendations,
-      trailers: trailers
+      summary,
+      recommendations: finalSix,
+      recs: finalSix, // backward compatibility for existing clients
+      trailers
     };
   } catch (error) {
     console.error('Error in handleScoreRound:', error);
-    // Fallback to original scoring system if Gemini fails
-    return handleScoreRoundFallback(winners, catalogue);
+    // Fallback to original scoring system if everything fails
+    const fb = handleScoreRoundFallback(winners, catalogue);
+    // Ensure 6 and attach basic summary
+    const sliced = (fb.recs || []).slice(0, 6);
+    const winningMovies = winners.map(wid => findMovieById(wid, catalogue)).filter(Boolean);
+    const summary = localSummaryFrom(winningMovies);
+    return { ok: true, summary, recommendations: sliced, recs: sliced, trailers: fb.trailers };
   }
 }
 

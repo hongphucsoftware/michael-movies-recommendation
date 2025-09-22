@@ -359,10 +359,12 @@ type Props = {
   recentChosenIds: number[]; // TMDB ids the user picked in A/B
   avoidIds?: number[];       // optional: avoid repeating
   count?: number;            // number of trailers to queue (default 5)
+  fixedRecs?: any[];         // optional: final 6 recs from API to use for both sections
+  summaryText?: string;      // optional: summary text from Gemini
 };
 
 export default function TrailerPlayer({
-  items, learnedVec, recentChosenIds, avoidIds = [], count = 5,
+  items, learnedVec, recentChosenIds, avoidIds = [], count = 5, fixedRecs, summaryText,
 }: Props) {
   const [queue, setQueue] = useState<Title[]>([]);
   const [embeds, setEmbeds] = useState<Record<number, string|null>>({});
@@ -381,8 +383,35 @@ export default function TrailerPlayer({
     [items, JSON.stringify(recentChosenIds)]
   );
 
-  // ------- Build recommendations using stateless similarity -------
+  // If fixedRecs are provided, map them into Title-like objects from our catalogue format.
+  const fixedPicks: Title[] | null = useMemo(() => {
+    if (!fixedRecs || !Array.isArray(fixedRecs) || !fixedRecs.length) return null;
+    return fixedRecs.map((r: any) => {
+      // Try to hydrate from catalogue if present to keep fields aligned
+      const match = items.find(i => i.id === r.id) || null;
+      const poster = r.posterUrl ? `/api/proxy-img?u=${encodeURIComponent(r.posterUrl)}&lang=en-US` : (match?.image || match?.posterUrl || null);
+      const releaseDate = r.year ? `${r.year}-01-01` : (match?.releaseDate || null);
+      const genres = match?.genres || []; // keep numeric genre ids if available
+      return {
+        ...(match || {}),
+        id: r.id || (match?.id as any),
+        title: r.title || (match as any)?.title,
+        releaseDate,
+        posterUrl: poster as any,
+        backdropUrl: match?.backdropUrl || null,
+        trailerUrl: r.trailerUrl || match?.trailerUrl || null,
+        watchUrl: r.watchUrl || (match as any)?.watchUrl || null,
+        genres,
+      } as any as Title;
+    }).filter(Boolean);
+  }, [JSON.stringify(fixedRecs), JSON.stringify(items)]);
+
+  // ------- Build recommendations -------
   const picks = useMemo(() => {
+    if (fixedPicks && fixedPicks.length) {
+      console.log("[Reco] Using fixed 6 recommendations from API");
+      return fixedPicks.slice(0, count);
+    }
     // Get all movies with images (don't exclude A/B items since we only have 24 total)
     const byId = new Map<number, Title>();
     for (const t of items) if (bestImageUrl(t)) byId.set(t.id, t);
@@ -393,7 +422,7 @@ export default function TrailerPlayer({
     // Use stateless recommendation engine with preference for non-A/B items
     return computeStatelessRecommendations(pool, recentChosenIds, count, avoidIds);
 
-  }, [items, JSON.stringify(recentChosenIds), JSON.stringify(avoidIds), JSON.stringify(learnedVec), count]);
+  }, [items, JSON.stringify(recentChosenIds), JSON.stringify(avoidIds), JSON.stringify(fixedPicks), count]);
 
   // ⬇️ Debug rows using the same genre weights as the picker
   const debugRows: DebugRow[] = useMemo(() => {
@@ -568,21 +597,28 @@ export default function TrailerPlayer({
 
       {/* You feel like watching… swipable picks */}
       {(() => {
-        // Determine top genres from recent choices, default to Action(28)
-        const chosenSet = new Set(recentChosenIds);
-        const chosen = items.filter((t) => chosenSet.has(t.id));
-        const counts = new Map<number, number>();
-        for (const t of chosen) for (const g of (t.genres || [])) counts.set(g, (counts.get(g) || 0) + 1);
-        const top = Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]).map(([g])=>g);
-        const focusGenres = (top.length ? top : [28]).slice(0,3);
-        const recs = items
-          .filter((t) => (t.genres || []).some((g) => focusGenres.includes(g)))
-          .sort((a,b)=> (b.popularity||0) - (a.popularity||0))
-          .slice(0, 10);
+        // If fixed picks provided, use them directly to ensure consistency
+        const recs = (fixedPicks && fixedPicks.length) ? fixedPicks.slice(0, 6) : (() => {
+          // Fallback to existing heuristic if not fixed
+          const chosenSet = new Set(recentChosenIds);
+          const chosen = items.filter((t) => chosenSet.has(t.id));
+          const counts = new Map<number, number>();
+          for (const t of chosen) for (const g of (t.genres || [])) counts.set(g, (counts.get(g) || 0) + 1);
+          const top = Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]).map(([g])=>g);
+          const focusGenres = (top.length ? top : [28]).slice(0,3);
+          return items
+            .filter((t) => (t.genres || []).some((g) => focusGenres.includes(g)))
+            .sort((a,b)=> (b.popularity||0) - (a.popularity||0))
+            .slice(0, 6);
+        })();
         if (!recs.length) return null;
         return (
           <div className="mt-6">
-            <div className="text-sm opacity-80 mb-2">You feel like watching…</div>
+            {summaryText ? (
+              <div className="text-sm opacity-80 mb-2">{summaryText}</div>
+            ) : (
+              <div className="text-sm opacity-80 mb-2">You feel like watching…</div>
+            )}
             <Carousel className="w-full">
               <CarouselContent>
                 {recs.map((t) => (
@@ -591,7 +627,10 @@ export default function TrailerPlayer({
                       <div className="rounded-xl overflow-hidden bg-white/5 border border-white/10 hover:border-white/20 transition">
                         <div className="aspect-[2/3] w-full bg-black/40">
                           {(() => {
-                            const img = bestImageUrl(t);
+                            const raw = t.posterUrl || t.image || "";
+                            const img = raw
+                              ? (raw.startsWith('/api/proxy-img') ? `${raw}&lang=en-US` : `/api/proxy-img?u=${encodeURIComponent(raw)}&lang=en-US`)
+                              : bestImageUrl(t);
                             return img ? (
                               <img src={img} alt={t.title} className="w-full h-full object-cover" loading="lazy" />
                             ) : (
@@ -604,14 +643,14 @@ export default function TrailerPlayer({
                           <div className="text-xs opacity-70 mt-1">{t.releaseDate?.slice(0,4) || ""}</div>
                           <div className="mt-2 flex flex-wrap gap-1">
                             {(t.genres || []).slice(0,2).map((g) => (
-                              <span key={g} className="px-2 py-0.5 rounded-full text-[10px] bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
+                              <span key={g as any} className="px-2 py-0.5 rounded-full text-[10px] bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
                                 {g}
                               </span>
                             ))}
                           </div>
                           <div className="mt-3 flex gap-2">
                             <a
-                              href={t.trailerUrl || t.backdropUrl || t.posterUrl || "#"}
+                              href={(t as any).watchUrl || t.trailerUrl || t.backdropUrl || t.posterUrl || "#"}
                               target="_blank" rel="noreferrer"
                               className="text-xs px-2 py-1 rounded-md bg-electric-blue hover:bg-blue-600"
                             >

@@ -2,7 +2,7 @@
 // Replit Agent: This component must render TWO posters per round,
 // randomise their left/right position, and call like()/skip() on click.
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useEnhancedCatalogue, useLearnedVector, bestImageUrl } from "../hooks/useEnhancedCatalogue";
 import { useQuickPicks } from "../hooks/useQuickPicks";
 import { useABHistory } from "../hooks/useABHistory";
@@ -38,6 +38,34 @@ export default function PosterPair() {
   const { pair, choose, done, progress, reset } = useQuickPicks(items, 12);
   const { chosen: chosenIds, seen: seenIds, record, reset: resetAB } = useABHistory();
   const [rebuilding, setRebuilding] = useState(false);
+  const [finalSix, setFinalSix] = useState<any[] | null>(null);
+  const [finalSummary, setFinalSummary] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!done || !chosenIds.length) return;
+      try {
+        // Call score-round to get exactly the 6 recommendations
+        const res = await fetch("/api/score-round", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ winners: chosenIds })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (cancelled) return;
+        const recs = (json?.recommendations || json?.recs || []).slice(0, 6);
+        setFinalSix(recs);
+        setFinalSummary(typeof json?.summary === "string" ? json.summary : "");
+      } catch (e) {
+        console.error("Failed to load final 6 recommendations:", e);
+        setFinalSix(null);
+        setFinalSummary("");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [done, JSON.stringify(chosenIds)]);
 
   if (loading) return <div className="opacity-80">Loading catalogue…</div>;
   if (error) return <div className="text-red-400">Error: {error}</div>;
@@ -183,7 +211,7 @@ export default function PosterPair() {
             </button>
           </div>
 
-          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={6} />
+          <TrailerPlayer items={items} learnedVec={learned} recentChosenIds={chosenIds} avoidIds={seenIds} count={6} fixedRecs={finalSix || undefined} summaryText={finalSummary || undefined} />
         </div>
       )}
     </div>
