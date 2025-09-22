@@ -656,6 +656,15 @@ export default function TrailerPlayer({
                             >
                               Watch Now
                             </a>
+                            {t.trailerUrl ? (
+                              <a
+                                href={t.trailerUrl}
+                                target="_blank" rel="noreferrer"
+                                className="text-xs px-2 py-1 rounded-md bg-neutral-800 hover:bg-neutral-700"
+                              >
+                                Trailer
+                              </a>
+                            ) : null}
                           </div>
                         </div>
                       </div>
