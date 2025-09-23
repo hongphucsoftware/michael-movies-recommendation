@@ -135,21 +135,10 @@ function deduplicateMovies(movies) {
 
 async function getGeminiRecommendations(userSelections) {
   try {
-    const prompt = `You are a movie concierge. Based on the user's A/B test selections, infer their taste (genre, vibe, pacing, tone, director/actors) and recommend 5 fresh movies they will likely enjoy next. 
-Avoid duplicates. Output JSON only with this structure:
+    const prompt = `You are a movie concierge. Based on the 12 selected movies, infer user preferences (tone, pace, humor style, aesthetics, weirdness tolerance, era, setting).\nRecommend exactly 6 fresh movies that match this profile. Provide a short rationale summary (but DO NOT include it here).\nOutput JSON only, exactly this array of 6 objects with fields: title, year (number), poster, trailer, watchUrl.`;
 
-[
-  {
-    "title": "Movie Title",
-    "year": 2000,
-    "genres": ["Genre1","Genre2"],
-    "poster": "https://link-to-poster",
-    "watchUrl": "https://link-to-streaming-provider"
-  }
-]`;
-    
-    const userSelectionsText = `User selections:\n${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}`;
-    
+    const userSelectionsText = `User selections (title, year):\n${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}`;
+
     const requestBody = {
       contents: [
         {
@@ -178,14 +167,11 @@ Avoid duplicates. Output JSON only with this structure:
     }
 
     const data = await response.json();
-    const recommendationsText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!recommendationsText) {
-      throw new Error('No recommendations received from Gemini API');
-    }
-
-    const recommendations = JSON.parse(recommendationsText);
-    return recommendations;
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error('No recommendations received from Gemini API');
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) throw new Error('Gemini did not return an array');
+    return parsed.slice(0, 6);
   } catch (error) {
     console.error('Error calling Gemini API:', error);
     throw error;
@@ -194,7 +180,7 @@ Avoid duplicates. Output JSON only with this structure:
 
 async function getGeminiSummary(userSelections) {
   try {
-    const summaryPrompt = `You are a movie concierge. Analyze the user's A/B selections to infer their taste: preferred genres, vibe, tone, pacing, notable directors/actors, and the dominant decade based on release years. Return a single short sentence (max 30 words) suitable for end-users.`;
+    const summaryPrompt = `You are a movie concierge. Based on the 12 selected films, return one short sentence explaining the taste profile and why these 6 recommendations fit. Max 30 words.`;
     const selectionsText = `User selections:\n${userSelections.map(m => `- ${m.title} (${m.year || ''})`).join('\n')}`;
     const requestBody = {
       contents: [
@@ -285,11 +271,20 @@ async function handleScoreRound(winners, catalogue) {
       }
     } catch (geminiError) {
       console.error('Gemini API failed:', geminiError);
-      // Fallback: if Gemini fails, use dataset and top up to 6 with dedupe
-      const fallbackPool = getDatasetRecommendations(winners, catalogue, 10);
-      const sliced = topUpWithDataset(fallbackPool.slice(0, 6), winners, catalogue, 6);
-      const trailers = {};
-      for (const rec of sliced) { trailers[rec.id] = rec.trailerUrl; }
+      // Fallback: if Gemini fails, prefer 6 random picks from curated 50 within catalogue
+      const curatedKeys = new Set([
+        // title|year keys for curated 50
+        "the shining|1980","raiders of the lost ark|1981","blade runner|1982","the thing|1982","this is spinal tap|1984","the princess bride|1987","die hard|1988","do the right thing|1989","when harry met sally…|1989","aliens|1986",
+        "the silence of the lambs|1991","groundhog day|1993","jurassic park|1993","pulp fiction|1994","se7en|1995","heat|1995","fargo|1996","the big lebowski|1998","the matrix|1999","before sunrise|1995",
+        "spirited away|2001","city of god|2002","lost in translation|2003","eternal sunshine of the spotless mind|2004","pan’s labyrinth|2006","the departed|2006","no country for old men|2007","there will be blood|2007","superbad|2007","the dark knight|2008",
+        "the social network|2010","drive|2011","her|2013","the grand budapest hotel|2014","whiplash|2014","mad max: fury road|2015","get out|2017","call me by your name|2017","spider-man: into the spider-verse|2018","parasite|2019",
+        "dune|2021","everything everywhere all at once|2022","top gun: maverick|2022","the banshees of inisherin|2022","aftersun|2022","the menu|2022","past lives|2023","oppenheimer|2023","barbie|2023","the northman|2022"
+      ]);
+      const key = (m) => `${(m.title||'').toLowerCase()}|${m.year||''}`;
+      const curatedPool = catalogue.filter(m => curatedKeys.has(key(m)));
+      const shuffled = shuffleArray(curatedPool.length ? curatedPool : catalogue);
+      const sliced = shuffled.slice(0, 6);
+      const trailers = {}; for (const rec of sliced) { trailers[rec.id] = rec.trailerUrl; }
       const summary = localSummaryFrom(winningMovies);
       return { ok: true, summary, recommendations: sliced, recs: sliced, trailers };
     }
