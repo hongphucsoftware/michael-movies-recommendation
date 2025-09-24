@@ -76,71 +76,22 @@ const CURATED_50_TITLES: Array<{ title: string; year: number }> = [
 ];
 
 function buildLanePairs(allItems: QuickPickItem[], rounds: number) {
-  // Restrict to curated 50 by title+year
-  const byKey = new Map<string, QuickPickItem>();
-  for (const it of allItems) byKey.set(toKey(it.title, Number((it as any).year) || Number((it as any).releaseDate?.slice?.(0,4))), it);
-  const curated: QuickPickItem[] = [];
-  for (const t of CURATED_50_TITLES) {
-    const found = byKey.get(toKey(t.title, t.year));
-    if (found) curated.push(found);
-  }
-  const pool = curated.length ? curated : allItems;
-
-  // Shuffle and lane split
-  const shuffled = shuffle(pool);
-  const laneA = shuffled.filter(x => (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) >= 1980 && (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) <= 2004);
-  const laneB = shuffled.filter(x => (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) >= 2005 && (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) <= 2025);
-
-  const neededPairs = 12; // Always generate exactly 12 pairs
-  const pairs: Array<{ left: QuickPickItem; right: QuickPickItem }> = [];
-
-  let aIdx = 0, bIdx = 0;
-  while (pairs.length < neededPairs && (aIdx < laneA.length || bIdx < laneB.length)) {
-    let a = aIdx < laneA.length ? laneA[aIdx++] : null as any;
-    let b = bIdx < laneB.length ? laneB[bIdx++] : null as any;
-
-    if (!a || !b) {
-      // if one lane ran out, pair remaining randomly
-      const remaining = shuffled.filter(m => !pairs.some(p => p.left.id === m.id || p.right.id === m.id) && (!a || m.id !== a.id) && (!b || m.id !== b.id));
-      if (!a && remaining.length) a = remaining.shift()!;
-      if (!b && remaining.length) b = remaining.shift()!;
-    }
-    if (!a || !b || a.id === b.id) break;
-
-    // Avoid same-director matchup by swapping B with next different director if possible
-    if (a.director && b.director && a.director === b.director) {
-      let swapped = false;
-      for (let j = bIdx; j < laneB.length; j++) {
-        if (laneB[j].director && laneB[j].director !== a.director) {
-          const tmp = laneB[j];
-          laneB[j] = b;
-          b = tmp;
-          swapped = true;
-          bIdx = j + 1; // advance past swapped
-          break;
-        }
-      }
-      if (!swapped) {
-        // try swap A instead
-        for (let i = aIdx; i < laneA.length; i++) {
-          if (laneA[i].director && laneA[i].director !== b.director) {
-            const tmp = laneA[i];
-            laneA[i] = a;
-            a = tmp;
-            aIdx = i + 1;
-            break;
-          }
-        }
+  // Use all available items and ensure we have enough for 12 pairs
+  const shuffled = shuffle(allItems);
+  
+  // If we have enough movies, use them directly
+  if (shuffled.length >= 24) {
+    const deck: number[] = [];
+    for (let i = 0; i < 24; i += 2) {
+      if (i + 1 < shuffled.length) {
+        deck.push(shuffled[i].id, shuffled[i + 1].id);
       }
     }
-
-    pairs.push({ left: a, right: b });
+    return deck;
   }
-
-  // Flatten into deck order [L1, R1, L2, R2, ...]
-  const deck: number[] = [];
-  for (const p of pairs) { deck.push(p.left.id, p.right.id); }
-  return deck;
+  
+  // If not enough movies, return empty array (will be handled by API)
+  return [];
 }
 
 /**
@@ -156,9 +107,16 @@ export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
   // Rebuild deck when items change
   useEffect(() => {
     const deck = buildLanePairs(items, rounds);
+    console.log(`[useQuickPicks] Built deck with ${deck.length} movies, need 24 for 12 pairs`);
     // Ensure we always have exactly 24 movies (12 pairs)
-    const need = Math.min(deck.length, 24);
-    deckRef.current = deck.slice(0, need);
+    if (deck.length >= 24) {
+      deckRef.current = deck.slice(0, 24);
+      console.log(`[useQuickPicks] Using exactly 24 movies for 12 pairs`);
+    } else {
+      // If we don't have enough movies, pad with duplicates or use all available
+      deckRef.current = deck.length > 0 ? deck : [];
+      console.log(`[useQuickPicks] WARNING: Only ${deck.length} movies available, may not complete 12 pairs`);
+    }
     setRound(0);
     setDone(false);
   }, [items, rounds]);
@@ -175,18 +133,21 @@ export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
       return;
     }
     
-    if (idx + 1 >= ids.length) {
+    // Don't complete early - ensure we have enough movies for 12 pairs
+    if (idx + 1 >= ids.length || ids.length < 24) {
       setPair(null);
-      setDone(true);
+      setDone(false); // Don't complete if we don't have enough movies
       return;
     }
+    
     const a = items.find((x) => x.id === ids[idx]);
     const b = items.find((x) => x.id === ids[idx + 1]);
     if (!a || !b) {
       setPair(null);
-      setDone(true);
+      setDone(false); // Don't complete if we can't find movies
       return;
     }
+    
     // coin flip: which goes left/right this round
     if (Math.random() < 0.5) setPair({ left: a, right: b });
     else setPair({ left: b, right: a });

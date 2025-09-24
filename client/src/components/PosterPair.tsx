@@ -35,17 +35,46 @@ function genreName(id: number): string {
 export default function PosterPair() {
   const { items, total, loading, error, stats } = useEnhancedCatalogue();
   const { learned, like, skip, resetLearning } = useLearnedVector(12);
-  const { pair, choose, done, progress, reset } = useQuickPicks(items, 12);
   const { chosen: chosenIds, seen: seenIds, record, reset: resetAB } = useABHistory();
   const [rebuilding, setRebuilding] = useState(false);
   const [finalSix, setFinalSix] = useState<any[] | null>(null);
   const [finalSummary, setFinalSummary] = useState<string>("");
+  
+  // A/B pairs state
+  const [abPairs, setAbPairs] = useState<any[]>([]);
+  const [currentPairIndex, setCurrentPairIndex] = useState(0);
+  const [abLoading, setAbLoading] = useState(false);
+  const [abDone, setAbDone] = useState(false);
 
+  // Fetch A/B pairs from API
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (abPairs.length > 0) return; // Already loaded
+      try {
+        setAbLoading(true);
+        const res = await fetch("/api/ab/round");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (cancelled) return;
+        console.log(`Loaded ${json.pairs?.length || 0} A/B pairs from API`);
+        setAbPairs(json.pairs || []);
+      } catch (e) {
+        console.error("Failed to load A/B pairs:", e);
+        setAbPairs([]);
+      } finally {
+        setAbLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Handle A/B test completion
   useEffect(() => {
     let cancelled = false;
     (async () => {
       // Only call API when done AND we have exactly 12 winners
-      if (!done || !chosenIds.length || chosenIds.length !== 12) return;
+      if (!abDone || !chosenIds.length || chosenIds.length !== 12) return;
       try {
         console.log(`Calling Gemini API with ${chosenIds.length} winners...`);
         // Call score-round to get exactly the 6 recommendations
@@ -67,19 +96,30 @@ export default function PosterPair() {
       }
     })();
     return () => { cancelled = true; };
-  }, [done, JSON.stringify(chosenIds)]);
+  }, [abDone, JSON.stringify(chosenIds)]);
 
   if (loading) return <div className="opacity-80">Loading catalogue…</div>;
   if (error) return <div className="text-red-400">Error: {error}</div>;
   if (!items.length) return <div>No titles found.</div>;
 
   function pick(side: "left" | "right") {
-    const result = choose(side);
-    if (!result) return;
-    const { chosen, other } = result;
-    like(chosen as any);
-    skip(other as any);
-    record((chosen as any).id, (other as any).id);  // Track A/B history for personalized reel
+    if (currentPairIndex >= abPairs.length) return;
+    
+    const currentPair = abPairs[currentPairIndex];
+    const chosen = side === "left" ? currentPair.left : currentPair.right;
+    const other = side === "left" ? currentPair.right : currentPair.left;
+    
+    // Record the choice
+    record(chosen.id, other.id);
+    
+    // Move to next pair
+    const nextIndex = currentPairIndex + 1;
+    setCurrentPairIndex(nextIndex);
+    
+    // Check if A/B test is complete
+    if (nextIndex >= abPairs.length) {
+      setAbDone(true);
+    }
   }
 
   async function doRebuild() {
@@ -138,8 +178,15 @@ export default function PosterPair() {
   function hardReset() { 
     resetLearning(); 
     resetAB(); 
-    reset(); 
+    setAbPairs([]);
+    setCurrentPairIndex(0);
+    setAbDone(false);
+    setFinalSix(null);
+    setFinalSummary("");
   }
+
+  const currentPair = abPairs[currentPairIndex];
+  const progress = { current: currentPairIndex, total: abPairs.length };
 
   return (
     <div className="space-y-6">
@@ -155,22 +202,27 @@ export default function PosterPair() {
         />
       </div>
 
+      {/* Loading state */}
+      {abLoading && (
+        <div className="opacity-80">Loading A/B pairs...</div>
+      )}
+
       {/* The A/B cards */}
-      {!done && pair && (
+      {!abDone && currentPair && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <button
             className="rounded-2xl overflow-hidden bg-black/20 shadow hover:shadow-lg ring-2 ring-transparent hover:ring-cyan-400 transition"
             onClick={() => pick("left")}
           >
             <img
-              src={bestImageUrl(pair.left as any) || ""}
-              alt={(pair.left as any).title}
+              src={currentPair.left.posterUrl || ""}
+              alt={currentPair.left.title}
               className="w-full h-[520px] object-cover"
               loading="lazy"
             />
             <div className="p-3 text-center">
-              <div className="font-medium">{(pair.left as any).title}</div>
-              <div className="text-xs opacity-70">{(pair.left as any).releaseDate?.slice(0,4) || ""}</div>
+              <div className="font-medium">{currentPair.left.title}</div>
+              <div className="text-xs opacity-70">{currentPair.left.year || ""}</div>
             </div>
           </button>
 
@@ -179,21 +231,21 @@ export default function PosterPair() {
             onClick={() => pick("right")}
           >
             <img
-              src={bestImageUrl(pair.right as any) || ""}
-              alt={(pair.right as any).title}
+              src={currentPair.right.posterUrl || ""}
+              alt={currentPair.right.title}
               className="w-full h-[520px] object-cover"
               loading="lazy"
             />
             <div className="p-3 text-center">
-              <div className="font-medium">{(pair.right as any).title}</div>
-              <div className="text-xs opacity-70">{(pair.right as any).releaseDate?.slice(0,4) || ""}</div>
+              <div className="font-medium">{currentPair.right.title}</div>
+              <div className="text-xs opacity-70">{currentPair.right.year || ""}</div>
             </div>
           </button>
         </div>
       )}
 
-      {/* When the deck is done, reveal the Trailer Reel */}
-      {done && (
+      {/* When the A/B test is done, reveal the Trailer Reel */}
+      {abDone && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold">Perfect! Your personalised Trailer Reel</h2>
