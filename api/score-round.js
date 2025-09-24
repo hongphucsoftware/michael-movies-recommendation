@@ -4,7 +4,7 @@
 import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5 } from './seed-data.js';
 
 // AI API configuration
-const GEMINI_API_KEY = 'AIzaSyDn0eaMpQSwbN_sQjDqm7R65tQ9-8Y6UOw';
+const GEMINI_API_KEY = 'AIzaSyAiNrX5leE7hYEW__m-bIm0CM88pa-kdyA';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent';
 const OPENAI_API_KEY = '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';
 

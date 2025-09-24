@@ -137,44 +137,33 @@ export default function PosterPair() {
 
   async function newRound() {
     try {
-      // Call API to switch to next seed
-      const response = await fetch('/api/next-seed', { 
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
+      setRebuilding(true);
       
-      // Check if response is ok
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
+      // Reset A/B state to get fresh pairs from the same curated 50
+      setAbPairs([]);
+      setCurrentPairIndex(0);
+      setAbDone(false);
+      setAbLoading(true);
       
-      // Check if response is JSON
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('Non-JSON response:', text);
-        throw new Error('Server returned non-JSON response');
-      }
+      // Fetch new A/B pairs (will shuffle the same 50 curated movies)
+      const response = await fetch('/api/ab/round');
+      const data = await response.json();
       
-      const result = await response.json();
-      
-      if (result.ok) {
-        console.log(`Switched to ${result.seedName}, seedIndex: ${result.seedIndex}`);
-        // Store the new seed index in localStorage
-        localStorage.setItem('currentSeedIndex', result.seedIndex.toString());
-        console.log(`[NewRound] Stored seedIndex ${result.seedIndex} in localStorage`);
-        // Instead of reloading, trigger a refresh of the catalogue data
-        window.location.href = `/?seedIndex=${result.seedIndex}`;
+      if (data.ok && data.pairs) {
+        setAbPairs(data.pairs);
+        setCurrentPairIndex(0);
+        setAbDone(false);
+        setAbLoading(false);
+        console.log(`[NewRound] Got ${data.pairs.length} fresh pairs from curated 50`);
       } else {
-        console.error('Failed to switch seed:', result.error);
+        console.error('Failed to get new A/B pairs:', data.error);
+        setAbLoading(false);
       }
     } catch (error) {
-      console.error('Error switching seed:', error);
-      // Fallback: just reload the page anyway
-      console.log('Falling back to page reload...');
-      window.location.reload();
+      console.error('Error getting new A/B pairs:', error);
+      setAbLoading(false);
+    } finally { 
+      setRebuilding(false); 
     }
   }
 
@@ -282,7 +271,7 @@ export default function PosterPair() {
             <button
               onClick={newRound}
               className="text-xs rounded-full px-3 py-1 bg-white/10 hover:bg-white/20 transition"
-              title="New round with fresh A/B pairs from next seed list"
+              title="New round with fresh A/B pairs from curated 50 movies"
             >
               New Round
             </button>
