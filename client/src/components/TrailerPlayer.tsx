@@ -646,10 +646,34 @@ export default function TrailerPlayer({
         return (
           <div className="mt-6">
             {summaryText ? (
-              <div className="text-sm opacity-80 mb-2">{summaryText}</div>
+              <div className="text-sm opacity-80 mb-1">{summaryText}</div>
             ) : (
-              <div className="text-sm opacity-80 mb-2">You feel like watching…</div>
+              <div className="text-sm opacity-80 mb-1">You feel like watching…</div>
             )}
+            {(() => {
+              try {
+                // Infer user-preference details from the 6 recs we are about to show
+                const years = recs.map((t:any) => Number(t.year || t.releaseYear || t.releaseDate?.slice(0,4))).filter((n:number) => Number.isFinite(n));
+                const decade = years.length ? `${Math.floor((years.reduce((a:number,b:number)=>a+b,0)/years.length)/10)*10}s` : undefined;
+                const genreCounts = new Map<string, number>();
+                for (const t of recs) {
+                  for (const g of (t.genres || [])) {
+                    if (typeof g === 'string') genreCounts.set(g, (genreCounts.get(g)||0)+1);
+                  }
+                }
+                const topGenres = Array.from(genreCounts.entries()).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([g])=>g);
+                if (!topGenres.length && !decade) return null;
+                return (
+                  <div className="text-xs opacity-70 mb-2">
+                    {topGenres.length ? (<span>Genres: {topGenres.join(', ')}</span>) : null}
+                    {topGenres.length && decade ? <span> • </span> : null}
+                    {decade ? (<span>Era: {decade}</span>) : null}
+                  </div>
+                );
+              } catch {
+                return null;
+              }
+            })()}
             <Carousel className="w-full">
               <CarouselContent>
                 {recs.map((t) => (
