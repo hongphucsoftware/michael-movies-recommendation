@@ -6,7 +6,7 @@ import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5 } from 
 // AI API configuration
 // Read Gemini key from environment (set in .env or Vercel Project Settings)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 // Read OpenAI key from environment (set in .env or Vercel Project Settings)
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
