@@ -91,7 +91,7 @@ function buildLanePairs(allItems: QuickPickItem[], rounds: number) {
   const laneA = shuffled.filter(x => (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) >= 1980 && (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) <= 2004);
   const laneB = shuffled.filter(x => (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) >= 2005 && (Number((x as any).year) || Number((x as any).releaseDate?.slice?.(0,4))) <= 2025);
 
-  const neededPairs = Math.min(rounds, 12);
+  const neededPairs = 12; // Always generate exactly 12 pairs
   const pairs: Array<{ left: QuickPickItem; right: QuickPickItem }> = [];
 
   let aIdx = 0, bIdx = 0;
@@ -156,7 +156,8 @@ export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
   // Rebuild deck when items change
   useEffect(() => {
     const deck = buildLanePairs(items, rounds);
-    const need = Math.min(deck.length, rounds * 2);
+    // Ensure we always have exactly 24 movies (12 pairs)
+    const need = Math.min(deck.length, 24);
     deckRef.current = deck.slice(0, need);
     setRound(0);
     setDone(false);
@@ -166,6 +167,14 @@ export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
   useEffect(() => {
     const ids = deckRef.current;
     const idx = round * 2;
+    
+    // Only complete after exactly 12 rounds (24 movies)
+    if (round >= 12) {
+      setPair(null);
+      setDone(true);
+      return;
+    }
+    
     if (idx + 1 >= ids.length) {
       setPair(null);
       setDone(true);
@@ -196,6 +205,6 @@ export function useQuickPicks(items: QuickPickItem[], rounds = 12) {
     setDone(false);
   }
 
-  const progress = { current: Math.min(round, Math.floor(deckRef.current.length / 2)), total: Math.floor(deckRef.current.length / 2) };
+  const progress = { current: Math.min(round, 12), total: 12 };
   return { pair, round, done, choose, reset, progress };
 }

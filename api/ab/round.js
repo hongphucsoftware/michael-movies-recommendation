@@ -39,8 +39,9 @@ function pickRandomN(arr, n) {
 function buildCatalogue(seedIndex = DEFAULT_SEED_INDEX) {
   const seeds = [SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5];
   const listIds = ["ls094921320", "ls003501243", "ls002065120", "ls000873904", "ls005747458"];
-  const currentSeed = seeds[seedIndex] || SEED_LIST_1;
-  const picked = pickRandomN(currentSeed, Math.min(24, currentSeed.length));
+  // Use all 5 seed lists combined for maximum coverage
+  const allSeeds = [...SEED_LIST_1, ...SEED_LIST_2, ...SEED_LIST_3, ...SEED_LIST_4, ...SEED_LIST_5];
+  const picked = pickRandomN(allSeeds, Math.min(24, allSeeds.length));
   const movies = picked.map(s => ({
     id: hashCode(s.tt),
     imdbId: s.tt,
@@ -102,64 +103,33 @@ function handleABRound(catalogue) {
   let attempts = 0;
   const maxAttempts = 100; // Prevent infinite loops
 
-  // Generate pairs more systematically
+  // Generate exactly 12 pairs using simple random selection
+  const shuffled = shuffleArray(eligible);
   const usedMovies = new Set();
   
   for (let i = 0; i < 12 && pairs.length < 12; i++) {
-    // pick champion from top quartile
-    const topQuartileSize = Math.max(1, Math.floor(sorted.length / 4));
-    const topQuartile = sorted.slice(0, topQuartileSize);
-    const availableChampions = topQuartile.filter(m => !usedMovies.has(m.id));
+    // Find two unused movies
+    let left = null, right = null;
     
-    if (availableChampions.length === 0) break;
-    
-    const champion = pickRandom(availableChampions);
-    if (!champion) break;
-
-    // find challengers within ~40–120 Elo of champion
-    const championScore = movieScores[champion.id];
-    const challengers = eligible.filter(c => {
-      if (c.id === champion.id || usedMovies.has(c.id)) return false;
-      const scoreDiff = Math.abs(movieScores[c.id] - championScore);
-      return scoreDiff >= 40 && scoreDiff <= 120;
-    });
-
-    // if no good challengers, fall back to random eligible
-    const challenger = challengers.length > 0
-      ? pickRandom(challengers)
-      : pickRandom(eligible.filter(c => c.id !== champion.id && !usedMovies.has(c.id)));
-
-    if (!challenger) break;
-
-    // add pair
-    pairs.push({
-      left: champion,
-      right: challenger
-    });
-    
-    // mark movies as used
-    usedMovies.add(champion.id);
-    usedMovies.add(challenger.id);
-  }
-
-  // If we couldn't generate enough pairs, fill with random pairs
-  while (pairs.length < 12 && eligible.length >= 2) {
-    const shuffled = shuffleArray(eligible);
-    const left = shuffled[0];
-    const right = shuffled[1];
-    
-    if (left && right && left.id !== right.id) {
-      const key = makePairKey(left.id, right.id);
-      if (!pairsShown.has(key)) {
-        pairs.push({ left, right });
-        pairsShown.add(key);
-        recent.push(left.id, right.id);
-        if (recent.length > 20) {
-          recent = recent.slice(-20);
+    for (let j = 0; j < shuffled.length; j++) {
+      if (!usedMovies.has(shuffled[j].id)) {
+        if (!left) {
+          left = shuffled[j];
+        } else if (!right) {
+          right = shuffled[j];
+          break;
         }
       }
     }
-    break; // Prevent infinite loop
+    
+    if (left && right) {
+      pairs.push({ left, right });
+      usedMovies.add(left.id);
+      usedMovies.add(right.id);
+    } else {
+      // If we can't find enough unused movies, break
+      break;
+    }
   }
 
   return {

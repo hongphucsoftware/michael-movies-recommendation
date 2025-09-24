@@ -44,8 +44,10 @@ export default function PosterPair() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!done || !chosenIds.length) return;
+      // Only call API when done AND we have exactly 12 winners
+      if (!done || !chosenIds.length || chosenIds.length !== 12) return;
       try {
+        console.log(`Calling Gemini API with ${chosenIds.length} winners...`);
         // Call score-round to get exactly the 6 recommendations
         const res = await fetch("/api/score-round", {
           method: "POST",
