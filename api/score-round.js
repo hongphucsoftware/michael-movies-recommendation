@@ -4,9 +4,11 @@
 import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5 } from './seed-data.js';
 
 // AI API configuration
-const GEMINI_API_KEY = 'AIzaSyAiNrX5leE7hYEW__m-bIm0CM88pa-kdyA';
+// Read Gemini key from environment (set in .env or Vercel Project Settings)
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent';
-const OPENAI_API_KEY = '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';
+// Read OpenAI key from environment (set in .env or Vercel Project Settings)
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
