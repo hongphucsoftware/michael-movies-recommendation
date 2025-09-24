@@ -3,9 +3,10 @@
 // Import full SEED data
 import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5 } from './seed-data.js';
 
-// Gemini API configuration
+// AI API configuration
 const GEMINI_API_KEY = 'AIzaSyDn0eaMpQSwbN_sQjDqm7R65tQ9-8Y6UOw';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent';
+const OPENAI_API_KEY = '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';
 
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
@@ -133,6 +134,84 @@ function deduplicateMovies(movies) {
   return unique;
 }
 
+async function getOpenAIRecommendations(userSelections) {
+  const maxRetries = 3;
+  const baseDelay = 1000; // 1 second
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const prompt = `You are a movie recommender that infers subjective vibe (tone, pacing, aesthetics, themes, era, star/director signatures) from only the user's 12 picks.
+Return 5 widely-released films from anywhere (no candidate pool), each with a concise vibe-based reason, plus a 1–2 sentence summary.
+Output strict JSON matching the requested schema—no extra prose.
+
+Here are the 12 winners from the A/B test:
+${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
+
+{
+  "summary": "Based on your A/B picks, ...",
+  "derived_vibe_profile": {
+    "pace": "slow-burn",
+    "tone": ["bleak"],
+    "aesthetic": ["desaturated"],
+    "narrative_feel": ["investigation"],
+    "era_bias": ["90s"],
+    "weirdness": "grounded"
+  },
+  "recommendations": [
+    {"title":"Zodiac","year":2007,"reason":"...","similarity":0.86},
+    {"title":"Prisoners","year":2013,"reason":"...","similarity":0.84},
+    {"title":"The Insider","year":1999,"reason":"...","similarity":0.82},
+    {"title":"Sicario","year":2015,"reason":"...","similarity":0.81},
+    {"title":"Heat","year":1995,"reason":"...","similarity":0.80}
+  ]
+}`;
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4.1-mini',
+          messages: [
+            { role: 'system', content: prompt }
+          ],
+          temperature: 0.7,
+          response_format: { type: 'json_object' }
+        })
+      });
+
+      if (response.status === 429) {
+        // Rate limited - wait and retry
+        const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
+        console.log(`OpenAI rate limited, waiting ${delay}ms before retry ${attempt + 1}/${maxRetries}`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content;
+      if (!text) throw new Error('No recommendations received from OpenAI API');
+      const parsed = JSON.parse(text);
+      if (!parsed.recommendations || !Array.isArray(parsed.recommendations)) {
+        throw new Error('OpenAI did not return recommendations array');
+      }
+      return parsed;
+    } catch (error) {
+      if (attempt === maxRetries - 1) {
+        console.error('OpenAI API failed after all retries:', error);
+        throw error;
+      }
+      console.log(`OpenAI API attempt ${attempt + 1} failed, retrying...`);
+    }
+  }
+}
+
 async function getGeminiRecommendations(userSelections) {
   try {
     const prompt = `You are a movie recommender that infers subjective vibe (tone, pacing, aesthetics, themes, era, star/director signatures) from only the user's 12 picks.
@@ -238,7 +317,7 @@ function localSummaryFrom(winningMovies) {
   }
 }
 
-async function handleScoreRound(winners, catalogue) {
+async function handleScoreRound(winners, catalogue, model = 'openai') {
   try {
     // Get the winning movies from the catalogue
     const winningMovies = winners
@@ -249,32 +328,36 @@ async function handleScoreRound(winners, catalogue) {
       throw new Error('No valid winning movies found');
     }
 
-    // Step 1: Get Gemini recommendations (5 movies from anywhere)
-    let geminiResponse = null;
+    // Step 1: Get AI recommendations (5 movies from anywhere)
+    let aiResponse = null;
     try {
-      geminiResponse = await getGeminiRecommendations(winningMovies);
+      if (model === 'gemini') {
+        aiResponse = await getGeminiRecommendations(winningMovies);
+      } else {
+        aiResponse = await getOpenAIRecommendations(winningMovies);
+      }
       
-      // Convert Gemini recommendations to our movie format
-      const geminiMovies = [];
-      for (const geminiRec of geminiResponse.recommendations) {
+      // Convert AI recommendations to our movie format
+      const aiMovies = [];
+      for (const aiRec of aiResponse.recommendations) {
         // Try to find a matching movie in our catalogue by title and year
         const matchingMovie = catalogue.find(movie => 
-          movie.title.toLowerCase() === geminiRec.title.toLowerCase() && 
-          movie.year === geminiRec.year
+          movie.title.toLowerCase() === aiRec.title.toLowerCase() && 
+          movie.year === aiRec.year
         );
         
         if (matchingMovie) {
-          geminiMovies.push(matchingMovie);
+          aiMovies.push(matchingMovie);
         } else {
           // If not found in catalogue, create a placeholder movie object
           const placeholderMovie = {
-            id: hashCode(geminiRec.title + geminiRec.year),
+            id: hashCode(aiRec.title + aiRec.year),
             imdbId: null,
-            title: geminiRec.title,
+            title: aiRec.title,
             overview: "",
             genres: [],
-            year: geminiRec.year,
-            era: toEra(geminiRec.year),
+            year: aiRec.year,
+            era: toEra(aiRec.year),
             popularity: 50,
             voteAverage: 7.0,
             voteCount: 1000,
@@ -285,17 +368,17 @@ async function handleScoreRound(winners, catalogue) {
             director: null,
             sourceListIds: [],
             imdbUrl: null,
-            watchUrl: `https://www.justwatch.com/us/search?q=${encodeURIComponent(geminiRec.title)}`,
-            reason: geminiRec.reason,
-            similarity: geminiRec.similarity
+            watchUrl: `https://www.justwatch.com/us/search?q=${encodeURIComponent(aiRec.title)}`,
+            reason: aiRec.reason,
+            similarity: aiRec.similarity
           };
-          geminiMovies.push(placeholderMovie);
+          aiMovies.push(placeholderMovie);
         }
       }
       
       // Add 1 movie from dataset to reach 6 total
       const datasetOne = getDatasetRecommendations(winners, catalogue, 1);
-      const allRecommendations = [...geminiMovies, ...datasetOne];
+      const allRecommendations = [...aiMovies, ...datasetOne];
       
       // Prepare trailers map
       const trailers = {};
@@ -303,15 +386,81 @@ async function handleScoreRound(winners, catalogue) {
 
       return {
         ok: true,
-        summary: geminiResponse.summary,
-        derived_vibe_profile: geminiResponse.derived_vibe_profile,
+        summary: aiResponse.summary,
+        derived_vibe_profile: aiResponse.derived_vibe_profile,
         recommendations: allRecommendations.slice(0, 6),
         recs: allRecommendations.slice(0, 6), // backward compatibility
         trailers
       };
-    } catch (geminiError) {
-      console.error('Gemini API failed:', geminiError);
-      // Fallback: if Gemini fails, prefer 6 random picks from curated 50 within catalogue
+    } catch (aiError) {
+      console.error(`${model.toUpperCase()} API failed:`, aiError);
+      
+      // Check if it's a quota error
+      if (aiError.message.includes('quota') || aiError.message.includes('429')) {
+        console.log(`Switching to ${model === 'openai' ? 'Gemini' : 'OpenAI'} due to quota limits`);
+        // Try the other model
+        try {
+          const fallbackModel = model === 'openai' ? 'gemini' : 'openai';
+          const fallbackResponse = fallbackModel === 'gemini' 
+            ? await getGeminiRecommendations(winningMovies)
+            : await getOpenAIRecommendations(winningMovies);
+          
+          // Convert fallback recommendations
+          const fallbackMovies = [];
+          for (const rec of fallbackResponse.recommendations) {
+            const matchingMovie = catalogue.find(movie => 
+              movie.title.toLowerCase() === rec.title.toLowerCase() && 
+              movie.year === rec.year
+            );
+            
+            if (matchingMovie) {
+              fallbackMovies.push(matchingMovie);
+            } else {
+              const placeholderMovie = {
+                id: hashCode(rec.title + rec.year),
+                imdbId: null,
+                title: rec.title,
+                overview: "",
+                genres: [],
+                year: rec.year,
+                era: toEra(rec.year),
+                popularity: 50,
+                voteAverage: 7.0,
+                voteCount: 1000,
+                posterUrl: null,
+                backdropUrl: null,
+                trailerUrl: null,
+                topActors: [],
+                director: null,
+                sourceListIds: [],
+                imdbUrl: null,
+                watchUrl: `https://www.justwatch.com/us/search?q=${encodeURIComponent(rec.title)}`,
+                reason: rec.reason,
+                similarity: rec.similarity
+              };
+              fallbackMovies.push(placeholderMovie);
+            }
+          }
+          
+          const datasetOne = getDatasetRecommendations(winners, catalogue, 1);
+          const allRecommendations = [...fallbackMovies, ...datasetOne];
+          const trailers = {};
+          for (const rec of allRecommendations) { trailers[rec.id] = rec.trailerUrl; }
+
+          return {
+            ok: true,
+            summary: `${fallbackResponse.summary} (Note: Switched to ${fallbackModel.toUpperCase()} due to quota limits)`,
+            derived_vibe_profile: fallbackResponse.derived_vibe_profile,
+            recommendations: allRecommendations.slice(0, 6),
+            recs: allRecommendations.slice(0, 6),
+            trailers
+          };
+        } catch (fallbackError) {
+          console.error(`Fallback ${fallbackModel.toUpperCase()} also failed:`, fallbackError);
+        }
+      }
+      
+      // Fallback: if both AI models fail, prefer 6 random picks from curated 50 within catalogue
       const curatedKeys = new Set([
         // title|year keys for curated 50
         "the shining|1980","raiders of the lost ark|1981","blade runner|1982","the thing|1982","this is spinal tap|1984","the princess bride|1987","die hard|1988","do the right thing|1989","when harry met sally…|1989","aliens|1986",
@@ -433,18 +582,23 @@ export default (req, res) => {
     
     req.on('end', async () => {
       try {
-        const { winners } = JSON.parse(body);
+        const { winners, model = 'openai' } = JSON.parse(body);
         
         if (!winners || !Array.isArray(winners)) {
           return res.status(400).json({ ok: false, error: 'Invalid winners data' });
+        }
+        
+        // Validate model parameter
+        if (!['openai', 'gemini'].includes(model)) {
+          return res.status(400).json({ ok: false, error: 'Invalid model. Must be "openai" or "gemini"' });
         }
         
         // Get seed index from query parameter or use default
         const seedIndex = req.query.seedIndex ? parseInt(req.query.seedIndex) : DEFAULT_SEED_INDEX;
         const catalogue = buildCatalogue(seedIndex);
         
-        // Process winners and generate recommendations using Gemini
-        const result = await handleScoreRound(winners, catalogue);
+        // Process winners and generate recommendations using selected AI model
+        const result = await handleScoreRound(winners, catalogue, model);
         
         res.status(200).json(result);
       } catch (parseError) {
