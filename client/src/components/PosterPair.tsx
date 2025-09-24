@@ -46,8 +46,7 @@ export default function PosterPair() {
   const [abLoading, setAbLoading] = useState(false);
   const [abDone, setAbDone] = useState(false);
   
-  // AI model state
-  const [selectedModel, setSelectedModel] = useState<'openai' | 'gemini'>('openai');
+  // AI model state removed; Gemini-only
 
   // Fetch A/B pairs from API
   useEffect(() => {
@@ -79,12 +78,12 @@ export default function PosterPair() {
       // Only call API when done AND we have exactly 12 winners
       if (!abDone || !chosenIds.length || chosenIds.length !== 12) return;
       try {
-        console.log(`Calling ${selectedModel.toUpperCase()} API with ${chosenIds.length} winners...`);
+        console.log(`Calling GEMINI API with ${chosenIds.length} winners...`);
         // Call score-round to get exactly the 6 recommendations
         const res = await fetch("/api/score-round", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ winners: chosenIds, model: selectedModel })
+          body: JSON.stringify({ winners: chosenIds })
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
@@ -182,32 +181,7 @@ export default function PosterPair() {
 
   return (
     <div className="space-y-6">
-      {/* AI Model Selector */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm">AI Model</div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setSelectedModel('openai')}
-            className={`px-3 py-1 rounded text-xs transition ${
-              selectedModel === 'openai' 
-                ? 'bg-blue-500 text-white' 
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            OpenAI
-          </button>
-          <button
-            onClick={() => setSelectedModel('gemini')}
-            className={`px-3 py-1 rounded text-xs transition ${
-              selectedModel === 'gemini' 
-                ? 'bg-blue-500 text-white' 
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            Gemini
-          </button>
-        </div>
-      </div>
+      {/* AI Model Selector removed - Gemini-only */}
 
       {/* Progress + controls */}
       <div className="flex items-center justify-between">
