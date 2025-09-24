@@ -135,16 +135,37 @@ function deduplicateMovies(movies) {
 
 async function getGeminiRecommendations(userSelections) {
   try {
-    const prompt = `You are a movie concierge. Based on the 12 selected movies, infer user preferences (tone, pace, humor style, aesthetics, weirdness tolerance, era, setting).\nRecommend exactly 6 fresh movies that match this profile. Provide a short rationale summary (but DO NOT include it here).\nOutput JSON only, exactly this array of 6 objects with fields: title, year (number), poster, trailer, watchUrl.`;
+    const prompt = `You are a movie recommender that infers subjective vibe (tone, pacing, aesthetics, themes, era, star/director signatures) from only the user's 12 picks.
+Return 5 widely-released films from anywhere (no candidate pool), each with a concise vibe-based reason, plus a 1–2 sentence summary.
+Output strict JSON matching the requested schema—no extra prose.
 
-    const userSelectionsText = `User selections (title, year):\n${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}`;
+Here are the 12 winners from the A/B test:
+${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
+
+{
+  "summary": "Based on your A/B picks, ...",
+  "derived_vibe_profile": {
+    "pace": "slow-burn",
+    "tone": ["bleak"],
+    "aesthetic": ["desaturated"],
+    "narrative_feel": ["investigation"],
+    "era_bias": ["90s"],
+    "weirdness": "grounded"
+  },
+  "recommendations": [
+    {"title":"Zodiac","year":2007,"reason":"...","similarity":0.86},
+    {"title":"Prisoners","year":2013,"reason":"...","similarity":0.84},
+    {"title":"The Insider","year":1999,"reason":"...","similarity":0.82},
+    {"title":"Sicario","year":2015,"reason":"...","similarity":0.81},
+    {"title":"Heat","year":1995,"reason":"...","similarity":0.80}
+  ]
+}`;
 
     const requestBody = {
       contents: [
         {
           parts: [
-            { text: prompt },
-            { text: userSelectionsText }
+            { text: prompt }
           ]
         }
       ],
@@ -170,8 +191,10 @@ async function getGeminiRecommendations(userSelections) {
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error('No recommendations received from Gemini API');
     const parsed = JSON.parse(text);
-    if (!Array.isArray(parsed)) throw new Error('Gemini did not return an array');
-    return parsed.slice(0, 6);
+    if (!parsed.recommendations || !Array.isArray(parsed.recommendations)) {
+      throw new Error('Gemini did not return recommendations array');
+    }
+    return parsed;
   } catch (error) {
     console.error('Error calling Gemini API:', error);
     throw error;
@@ -226,16 +249,14 @@ async function handleScoreRound(winners, catalogue) {
       throw new Error('No valid winning movies found');
     }
 
-    // Step 1: Get 5 movies from dataset using existing logic
-    const datasetFive = getDatasetRecommendations(winners, catalogue, 5);
-    
-    // Step 2: Get 5 movies from Gemini
-    let geminiFive = [];
+    // Step 1: Get Gemini recommendations (5 movies from anywhere)
+    let geminiResponse = null;
     try {
-      const geminiRecommendations = await getGeminiRecommendations(winningMovies);
+      geminiResponse = await getGeminiRecommendations(winningMovies);
       
       // Convert Gemini recommendations to our movie format
-      for (const geminiRec of geminiRecommendations) {
+      const geminiMovies = [];
+      for (const geminiRec of geminiResponse.recommendations) {
         // Try to find a matching movie in our catalogue by title and year
         const matchingMovie = catalogue.find(movie => 
           movie.title.toLowerCase() === geminiRec.title.toLowerCase() && 
@@ -243,7 +264,7 @@ async function handleScoreRound(winners, catalogue) {
         );
         
         if (matchingMovie) {
-          geminiFive.push(matchingMovie);
+          geminiMovies.push(matchingMovie);
         } else {
           // If not found in catalogue, create a placeholder movie object
           const placeholderMovie = {
@@ -251,24 +272,43 @@ async function handleScoreRound(winners, catalogue) {
             imdbId: null,
             title: geminiRec.title,
             overview: "",
-            genres: geminiRec.genres || [],
+            genres: [],
             year: geminiRec.year,
             era: toEra(geminiRec.year),
             popularity: 50,
             voteAverage: 7.0,
             voteCount: 1000,
-            posterUrl: geminiRec.poster || null,
+            posterUrl: null,
             backdropUrl: null,
             trailerUrl: null,
             topActors: [],
             director: null,
             sourceListIds: [],
             imdbUrl: null,
-            watchUrl: geminiRec.watchUrl || `https://www.justwatch.com/us/search?q=${encodeURIComponent(geminiRec.title)}`
+            watchUrl: `https://www.justwatch.com/us/search?q=${encodeURIComponent(geminiRec.title)}`,
+            reason: geminiRec.reason,
+            similarity: geminiRec.similarity
           };
-          geminiFive.push(placeholderMovie);
+          geminiMovies.push(placeholderMovie);
         }
       }
+      
+      // Add 1 movie from dataset to reach 6 total
+      const datasetOne = getDatasetRecommendations(winners, catalogue, 1);
+      const allRecommendations = [...geminiMovies, ...datasetOne];
+      
+      // Prepare trailers map
+      const trailers = {};
+      for (const rec of allRecommendations) { trailers[rec.id] = rec.trailerUrl; }
+
+      return {
+        ok: true,
+        summary: geminiResponse.summary,
+        derived_vibe_profile: geminiResponse.derived_vibe_profile,
+        recommendations: allRecommendations.slice(0, 6),
+        recs: allRecommendations.slice(0, 6), // backward compatibility
+        trailers
+      };
     } catch (geminiError) {
       console.error('Gemini API failed:', geminiError);
       // Fallback: if Gemini fails, prefer 6 random picks from curated 50 within catalogue
@@ -288,31 +328,6 @@ async function handleScoreRound(winners, catalogue) {
       const summary = localSummaryFrom(winningMovies);
       return { ok: true, summary, recommendations: sliced, recs: sliced, trailers };
     }
-    
-    // Step 3: Merge [...datasetFive, ...geminiFive]
-    const allRecommendations = [...datasetFive, ...geminiFive];
-    
-    // Step 4: Deduplicate by title/year
-    const uniqueRecommendations = deduplicateMovies(allRecommendations);
-
-    // Ensure exactly 6 by topping up from dataset if dedupe reduced the count
-    const finalSix = topUpWithDataset(uniqueRecommendations, winners, catalogue, 6);
-    
-    // Prepare trailers map
-    const trailers = {};
-    for (const rec of finalSix) { trailers[rec.id] = rec.trailerUrl; }
-
-    // Build summary (Gemini → fallback to local)
-    const aiSummary = await getGeminiSummary(winningMovies);
-    const summary = aiSummary || localSummaryFrom(winningMovies);
-
-    return {
-      ok: true,
-      summary,
-      recommendations: finalSix,
-      recs: finalSix, // backward compatibility for existing clients
-      trailers
-    };
   } catch (error) {
     console.error('Error in handleScoreRound:', error);
     // Fallback to original scoring system if everything fails
