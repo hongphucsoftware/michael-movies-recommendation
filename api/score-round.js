@@ -319,7 +319,7 @@ function localSummaryFrom(winningMovies) {
   }
 }
 
-async function handleScoreRound(winners, catalogue, model = 'gemini') {
+async function handleScoreRound(winners, catalogue, model = 'openai') {
   try {
     // Get the winning movies from the catalogue
     const winningMovies = winners
@@ -333,8 +333,17 @@ async function handleScoreRound(winners, catalogue, model = 'gemini') {
     // Step 1: Get AI recommendations (5 movies from anywhere)
     let aiResponse = null;
     try {
-      // Force Gemini for recommendations
-      aiResponse = await getGeminiRecommendations(winningMovies);
+      // Default to OpenAI first; fall back to Gemini on failure
+      if (model === 'gemini') {
+        aiResponse = await getGeminiRecommendations(winningMovies);
+      } else {
+        try {
+          aiResponse = await getOpenAIRecommendations(winningMovies);
+        } catch (openAiErr) {
+          console.error('OPENAI API failed, falling back to GEMINI:', openAiErr);
+          aiResponse = await getGeminiRecommendations(winningMovies);
+        }
+      }
       
       // Convert AI recommendations to our movie format
       const aiMovies = [];
@@ -392,7 +401,7 @@ async function handleScoreRound(winners, catalogue, model = 'gemini') {
         trailers
       };
     } catch (aiError) {
-      console.error(`GEMINI API failed:`, aiError);
+      console.error(`AI recommendation stage failed:`, aiError);
       
       // Fallback: if both AI models fail, prefer 6 random picks from curated 50 within catalogue
       const curatedKeys = new Set([
@@ -526,8 +535,8 @@ export default (req, res) => {
         const seedIndex = req.query.seedIndex ? parseInt(req.query.seedIndex) : DEFAULT_SEED_INDEX;
         const catalogue = buildCatalogue(seedIndex);
         
-        // Process winners and generate recommendations (Gemini-only)
-        const result = await handleScoreRound(winners, catalogue, 'gemini');
+        // Process winners and generate recommendations (OpenAI default)
+        const result = await handleScoreRound(winners, catalogue, 'openai');
         
         res.status(200).json(result);
       } catch (parseError) {
