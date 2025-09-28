@@ -5,10 +5,10 @@ import { SEED_LIST_1, SEED_LIST_2, SEED_LIST_3, SEED_LIST_4, SEED_LIST_5 } from 
 
 // AI API configuration
 // Read Gemini key from environment (set in .env or Vercel Project Settings)
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBvQZ8QZ8QZ8QZ8QZ8QZ8QZ8QZ8QZ8QZ8Q';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 // Read OpenAI key from environment (set in .env or Vercel Project Settings)
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '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';
 
 // Default seed index (can be overridden by query parameter)
 const DEFAULT_SEED_INDEX = 0;
@@ -136,6 +136,68 @@ function deduplicateMovies(movies) {
   return unique;
 }
 
+function ensureConsistency(aiResponse, userSelections) {
+  console.log(`[CONSISTENCY] Input userSelections:`, userSelections.map(m => `${m.title} (${m.year})`));
+  
+  // Analyze user selections to determine dominant era and genres
+  const years = userSelections.map(m => m.year).filter(y => y);
+  const genres = {};
+  userSelections.forEach(m => {
+    (m.genres || []).forEach(g => genres[g] = (genres[g] || 0) + 1);
+  });
+  
+  console.log(`[CONSISTENCY] Years:`, years);
+  console.log(`[CONSISTENCY] Genres:`, genres);
+  
+  // Find dominant era (most common decade)
+  const decadeCounts = {};
+  years.forEach(year => {
+    const decade = Math.floor(year / 10) * 10;
+    decadeCounts[decade] = (decadeCounts[decade] || 0) + 1;
+  });
+  const dominantDecade = Object.keys(decadeCounts).reduce((a, b) => 
+    decadeCounts[a] > decadeCounts[b] ? a : b
+  );
+  const dominantEra = `${dominantDecade}s`;
+  
+  console.log(`[CONSISTENCY] Decade counts:`, decadeCounts);
+  console.log(`[CONSISTENCY] Dominant decade:`, dominantDecade, '->', dominantEra);
+  
+  // Find top 2 genres
+  const topGenres = Object.entries(genres)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 2)
+    .map(([g]) => g);
+  
+  console.log(`[CONSISTENCY] Top genres:`, topGenres);
+  
+  // Filter recommendations to match dominant era
+  const eraFiltered = aiResponse.recommendations.filter(rec => {
+    const recDecade = Math.floor(rec.year / 10) * 10;
+    const matches = recDecade.toString() === dominantDecade;
+    console.log(`[CONSISTENCY] ${rec.title} (${rec.year}) -> decade ${recDecade}, matches ${dominantDecade}: ${matches}`);
+    return matches;
+  });
+  
+  console.log(`[CONSISTENCY] Era filtered count:`, eraFiltered.length);
+  
+  // If we don't have enough era-consistent recommendations, use all but update summary
+  const finalRecs = eraFiltered.length >= 3 ? eraFiltered : aiResponse.recommendations;
+  
+  // Update summary to be consistent
+  const genreText = topGenres.length ? topGenres.join(', ') : 'a mix of genres';
+  const eraText = eraFiltered.length >= 3 ? dominantEra : 'various decades';
+  
+  console.log(`[CONSISTENCY] Final summary: ${genreText} with ${eraText} feel`);
+  
+  return {
+    ...aiResponse,
+    summary: `Based on your A/B picks, you leaned toward ${genreText} with a ${eraText} feel. Here are 6 films that match that profile.`,
+    recommendations: finalRecs.slice(0, 5),
+    debug_winners: userSelections.map(m => `${m.title} (${m.year})`)
+  };
+}
+
 async function getOpenAIRecommendations(userSelections) {
   const maxRetries = 3;
   const baseDelay = 1000; // 1 second
@@ -146,11 +208,16 @@ async function getOpenAIRecommendations(userSelections) {
 Return 5 widely-released films from anywhere (no candidate pool), each with a concise vibe-based reason, plus a 1–2 sentence summary.
 Output strict JSON matching the requested schema—no extra prose.
 
+CRITICAL CONSISTENCY RULES:
+1. The recommendations MUST match the genres and era you identify in the summary. If you say "Drama, Comedy from the 2000s", then ALL 5 recommendations should be Drama/Comedy films from the 2000s era.
+2. Era consistency is MANDATORY. If you identify a dominant era (e.g., "2000s feel"), ALL 5 recommendations must be from that same era.
+3. Genre consistency is MANDATORY. If you identify genres (e.g., "Drama, Thriller"), ALL 5 recommendations must contain those genres.
+
 Here are the 12 winners from the A/B test:
 ${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
 
 {
-  "summary": "Based on your A/B picks, ...",
+  "summary": "Based on your A/B picks, you leaned toward [SPECIFIC_GENRES] with a [SPECIFIC_ERA] feel. Here are 6 films that match that profile.",
   "derived_vibe_profile": {
     "pace": "slow-burn",
     "tone": ["bleak"],
@@ -160,11 +227,11 @@ ${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
     "weirdness": "grounded"
   },
   "recommendations": [
-    {"title":"Zodiac","year":2007,"reason":"...","similarity":0.86},
-    {"title":"Prisoners","year":2013,"reason":"...","similarity":0.84},
-    {"title":"The Insider","year":1999,"reason":"...","similarity":0.82},
-    {"title":"Sicario","year":2015,"reason":"...","similarity":0.81},
-    {"title":"Heat","year":1995,"reason":"...","similarity":0.80}
+    {"title":"Zodiac","year":2007,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.86},
+    {"title":"Prisoners","year":2013,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.84},
+    {"title":"The Insider","year":1999,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.82},
+    {"title":"Sicario","year":2015,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.81},
+    {"title":"Heat","year":1995,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.80}
   ]
 }`;
 
@@ -203,7 +270,10 @@ ${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
       if (!parsed.recommendations || !Array.isArray(parsed.recommendations)) {
         throw new Error('OpenAI did not return recommendations array');
       }
-      return parsed;
+      
+      // Post-process to ensure consistency
+      const processed = ensureConsistency(parsed, userSelections);
+      return processed;
     } catch (error) {
       if (attempt === maxRetries - 1) {
         console.error('OpenAI API failed after all retries:', error);
@@ -220,11 +290,16 @@ async function getGeminiRecommendations(userSelections) {
 Return 5 widely-released films from anywhere (no candidate pool), each with a concise vibe-based reason, plus a 1–2 sentence summary.
 Output strict JSON matching the requested schema—no extra prose.
 
+CRITICAL CONSISTENCY RULES:
+1. The recommendations MUST match the genres and era you identify in the summary. If you say "Drama, Comedy from the 2000s", then ALL 5 recommendations should be Drama/Comedy films from the 2000s era.
+2. Era consistency is MANDATORY. If you identify a dominant era (e.g., "2000s feel"), ALL 5 recommendations must be from that same era.
+3. Genre consistency is MANDATORY. If you identify genres (e.g., "Drama, Thriller"), ALL 5 recommendations must contain those genres.
+
 Here are the 12 winners from the A/B test:
 ${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
 
 {
-  "summary": "Based on your A/B picks, ...",
+  "summary": "Based on your A/B picks, you leaned toward [SPECIFIC_GENRES] with a [SPECIFIC_ERA] feel. Here are 6 films that match that profile.",
   "derived_vibe_profile": {
     "pace": "slow-burn",
     "tone": ["bleak"],
@@ -234,11 +309,11 @@ ${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
     "weirdness": "grounded"
   },
   "recommendations": [
-    {"title":"Zodiac","year":2007,"reason":"...","similarity":0.86},
-    {"title":"Prisoners","year":2013,"reason":"...","similarity":0.84},
-    {"title":"The Insider","year":1999,"reason":"...","similarity":0.82},
-    {"title":"Sicario","year":2015,"reason":"...","similarity":0.81},
-    {"title":"Heat","year":1995,"reason":"...","similarity":0.80}
+    {"title":"Zodiac","year":2007,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.86},
+    {"title":"Prisoners","year":2013,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.84},
+    {"title":"The Insider","year":1999,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.82},
+    {"title":"Sicario","year":2015,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.81},
+    {"title":"Heat","year":1995,"reason":"Matches your preference for [specific genre/era mentioned in summary]","similarity":0.80}
   ]
 }`;
 
@@ -275,7 +350,10 @@ ${userSelections.map(movie => `- ${movie.title} (${movie.year})`).join('\n')}
     if (!parsed.recommendations || !Array.isArray(parsed.recommendations)) {
       throw new Error('Gemini did not return recommendations array');
     }
-    return parsed;
+    
+    // Post-process to ensure consistency
+    const processed = ensureConsistency(parsed, userSelections);
+    return processed;
   } catch (error) {
     console.error('Error calling Gemini API:', error);
     throw error;
@@ -326,6 +404,9 @@ async function handleScoreRound(winners, catalogue, model = 'openai') {
       .map(winnerId => findMovieById(winnerId, catalogue))
       .filter(movie => movie !== undefined);
 
+    console.log(`[DEBUG] Winners count: ${winners.length}, Found movies: ${winningMovies.length}`);
+    console.log(`[DEBUG] Winning movies:`, winningMovies.map(m => `${m.title} (${m.year})`));
+
     if (winningMovies.length === 0) {
       throw new Error('No valid winning movies found');
     }
@@ -333,19 +414,25 @@ async function handleScoreRound(winners, catalogue, model = 'openai') {
     // Step 1: Get AI recommendations (5 movies from anywhere)
     let aiResponse = null;
     try {
+      console.log(`[DEBUG] Attempting ${model.toUpperCase()} API call...`);
       // Default to OpenAI first; fall back to Gemini on failure
       if (model === 'gemini') {
         aiResponse = await getGeminiRecommendations(winningMovies);
+        console.log(`[DEBUG] Gemini response received:`, aiResponse?.summary);
       } else {
         try {
           aiResponse = await getOpenAIRecommendations(winningMovies);
+          console.log(`[DEBUG] OpenAI response received:`, aiResponse?.summary);
         } catch (openAiErr) {
           console.error('OPENAI API failed, falling back to GEMINI:', openAiErr);
           aiResponse = await getGeminiRecommendations(winningMovies);
+          console.log(`[DEBUG] Gemini fallback response:`, aiResponse?.summary);
         }
       }
       
       // Convert AI recommendations to our movie format
+      console.log(`[DEBUG] AI recommended ${aiResponse.recommendations.length} movies:`, aiResponse.recommendations.map(r => `${r.title} (${r.year})`));
+      
       const aiMovies = [];
       for (const aiRec of aiResponse.recommendations) {
         // Try to find a matching movie in our catalogue by title and year
@@ -355,8 +442,10 @@ async function handleScoreRound(winners, catalogue, model = 'openai') {
         );
         
         if (matchingMovie) {
+          console.log(`[DEBUG] Found catalogue match for: ${aiRec.title} (${aiRec.year})`);
           aiMovies.push(matchingMovie);
         } else {
+          console.log(`[DEBUG] Creating placeholder for: ${aiRec.title} (${aiRec.year})`);
           // If not found in catalogue, create a placeholder movie object
           const placeholderMovie = {
             id: hashCode(aiRec.title + aiRec.year),
